@@ -1,0 +1,7 @@
+/build/
+/.dev/
+/web/node_modules/
+/web/dist/*
+!/web/dist/.gitkeep
+*.syso
+*.exe

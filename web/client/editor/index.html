@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Overlay Composer — Editor</title>
+  <style>
+    :root {
+      --bg: #14151a; --panel: #1b1d24; --panel2: #23262f; --line: #2e323d;
+      --text: #e6e8ee; --muted: #8b90a0; --accent: #7c5cff; --danger: #ff5c6c; --ok: #3ecf8e;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+      font: 13px/1.4 system-ui, -apple-system, Segoe UI, sans-serif; }
+    #app { display: grid; grid-template-rows: 44px 1fr; height: 100%; }
+    header { display: flex; align-items: center; gap: 12px; padding: 0 12px; background: var(--panel);
+      border-bottom: 1px solid var(--line); }
+    header .title { font-weight: 700; }
+    header .spacer { flex: 1; }
+    .badge { padding: 2px 8px; border-radius: 99px; background: var(--panel2); color: var(--muted); font-size: 12px; }
+    #obsBadge { cursor: pointer; }
+    .badge.ok { color: var(--ok); }
+    .badge.bad { color: var(--danger); }
+    main { display: grid; grid-template-columns: 260px 1fr 280px; min-height: 0; }
+    aside { background: var(--panel); overflow: auto; padding: 10px; }
+    aside.left { border-right: 1px solid var(--line); }
+    aside.right { border-left: 1px solid var(--line); }
+    h3 { margin: 14px 0 6px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+    h3:first-child { margin-top: 0; }
+    button, input, select { font: inherit; color: inherit; }
+    button { background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+    button:hover { border-color: var(--accent); }
+    select { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    button.danger:hover { border-color: var(--danger); color: var(--danger); }
+    button:disabled { opacity: .4; cursor: default; }
+    input[type=text], input[type=number], input[type=url], input[type=password] { width: 100%; background: var(--bg); border: 1px solid var(--line);
+      border-radius: 5px; padding: 4px 6px; }
+    input:focus { outline: 1px solid var(--accent); }
+    .row { display: flex; gap: 6px; align-items: center; margin: 4px 0; }
+    .list { display: flex; flex-direction: column; gap: 2px; }
+    .item { display: flex; align-items: center; gap: 6px; padding: 5px 6px; border-radius: 6px; cursor: pointer;
+      border: 1px solid transparent; user-select: none; }
+    .item:hover { background: var(--panel2); }
+    .item.sel { background: color-mix(in srgb, var(--accent) 22%, transparent); border-color: var(--accent); }
+    .item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .item.drop-before { box-shadow: 0 -2px 0 var(--accent); }
+    .item .ib { background: none; border: none; padding: 0 3px; opacity: .7; }
+    .item .ib:hover { opacity: 1; }
+    .item.hidden .name { opacity: .4; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 8px; }
+    .grid2 label { display: flex; flex-direction: column; gap: 2px; color: var(--muted); font-size: 11px; }
+    .empty { color: var(--muted); padding: 6px; }
+    #viewport { position: relative; overflow: hidden; background:
+      repeating-conic-gradient(#1a1c22 0% 25%, #16181d 0% 50%) 0 0 / 24px 24px; }
+    #canvasFrame { position: absolute; outline: 1px solid #4a4f60; background: rgba(0,0,0,.35); }
+    #stage { position: absolute; inset: 0; }
+    #overlayLayer { position: absolute; inset: 0; }
+    .box { position: absolute; border: 1px solid transparent; cursor: move; }
+    .box:hover { border-color: rgba(124,92,255,.6); }
+    .box.sel { border-color: var(--accent); }
+    .box.locked { cursor: not-allowed; }
+    .handle { position: absolute; width: 10px; height: 10px; background: #fff; border: 1px solid var(--accent);
+      border-radius: 2px; transform: translate(-50%, -50%); }
+    .handle.rot { border-radius: 50%; background: var(--accent); cursor: grab; }
+    .rotline { position: absolute; width: 1px; background: var(--accent); transform: translateX(-50%); }
+    dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 16px; width: 380px; }
+    dialog::backdrop { background: rgba(0,0,0,.55); }
+    dialog label { display: block; margin: 8px 0 2px; color: var(--muted); font-size: 11px; }
+    label.chk, dialog label.chk { display: flex; flex-direction: row; gap: 6px; align-items: center; margin: 8px 0 2px; color: var(--text); font-size: 12px; }
+    label.chk input { width: auto; }
+    .hint { color: var(--muted); font-size: 11px; margin: 4px 0; }
+    .hint.warn { color: #ffb454; }
+    code { background: var(--bg); padding: 0 4px; border-radius: 4px; }
+    .toast { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); background: var(--panel2);
+      border: 1px solid var(--line); padding: 8px 14px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+    .toast.show { opacity: 1; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <header>
+      <span class="title">Overlay Composer</span>
+      <label>Layout:
+        <select id="layoutSelect"></select>
+      </label>
+      <span class="badge" id="canvasSize"></span>
+      <span class="spacer"></span>
+      <span class="badge" id="obsBadge">OBS: …</span>
+      <span class="badge" id="sceneBadge"></span>
+      <span class="badge" id="dirtyBadge"></span>
+      <button id="settingsBtn" title="Settings">⚙ Settings</button>
+      <button class="primary" id="saveBtn">Save (Ctrl+S)</button>
+    </header>
+    <main>
+      <aside class="left">
+        <h3>Layouts</h3>
+        <div class="list" id="layoutList"></div>
+        <div class="row">
+          <button id="newLayoutBtn">+ New</button>
+          <button id="dupLayoutBtn">Duplicate</button>
+          <button id="delLayoutBtn" class="danger">Delete</button>
+        </div>
+        <h3>Layers</h3>
+        <div class="list" id="layerList"></div>
+        <div class="row"><button id="addObjBtn">+ Add Source</button></div>
+      </aside>
+      <div id="viewport">
+        <div id="canvasFrame">
+          <div id="stage"></div>
+          <div id="overlayLayer"></div>
+        </div>
+      </div>
+      <aside class="right" id="props"></aside>
+    </main>
+  </div>
+
+  <dialog id="addDialog">
+    <form method="dialog" id="addForm">
+      <strong>Add Source</strong>
+      <label>Existing source</label>
+      <select id="existingSource" style="width:100%"></select>
+      <div class="row" style="margin-top:6px"><button type="button" id="useExistingBtn">Place on layout</button></div>
+      <hr style="border-color:var(--line)">
+      <label>…or new iframe — name</label>
+      <input type="text" id="newName" placeholder="Twitch Chat">
+      <label>URL (http/https or /path)</label>
+      <input type="url" id="newUrl" placeholder="https://example.com/widget">
+      <label class="chk"><input type="checkbox" id="newProxy"> Load via server proxy</label>
+      <div class="hint">Enable if the site refuses to be embedded (“refused to connect”, X-Frame-Options). Best effort: works for pages whose token is in the URL.</div>
+      <div class="grid2">
+        <label>Width<input type="number" id="newW" value="400"></label>
+        <label>Height<input type="number" id="newH" value="300"></label>
+      </div>
+      <div class="row" style="justify-content:flex-end;margin-top:12px">
+        <button value="cancel">Cancel</button>
+        <button type="button" class="primary" id="createBtn">Create &amp; place</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="settingsDialog">
+    <form method="dialog">
+      <strong>Settings</strong>
+      <div class="hint">Saved to <code>config.json</code> (see “Application” below for its location).</div>
+
+      <strong style="font-size:12px">OBS</strong>
+      <div class="hint" id="cfgStatus"></div>
+      <div class="hint">In OBS add a <b>Browser Source</b> with URL <code id="cfgOverlayUrl"></code> — that is where the layouts are drawn.</div>
+
+      <label class="chk"><input type="checkbox" id="cfgObsEnabled"> Connect to OBS via obs-websocket (recommended)</label>
+      <div class="hint">Gives the full list of scenes (to bind layouts to) and the current scene. Without it the overlay can report scenes itself
+        if the Browser Source has <b>Page permissions</b> “Read access to user information” or higher.</div>
+      <div id="cfgObsWsBox" hidden>
+        <label>OBS WebSocket URL</label>
+        <input type="text" id="cfgObsUrl" placeholder="ws://127.0.0.1:4455">
+        <label>OBS WebSocket password</label>
+        <input type="password" id="cfgObsPass" autocomplete="off">
+        <label class="chk" id="cfgObsClearRow"><input type="checkbox" id="cfgObsClear"> Remove saved password</label>
+        <div class="hint">OBS: Tools → WebSocket Server Settings → “Enable WebSocket server”. Applied immediately.</div>
+        <div class="row"><button type="button" id="cfgReconnectBtn">Reconnect now</button></div>
+        <div class="hint" id="cfgWsStatus"></div>
+      </div>
+
+      <hr style="border-color:var(--line)">
+      <strong style="font-size:12px">Import from OBS</strong>
+      <div class="row">
+        <select id="impScene" style="flex:1"></select>
+        <button type="button" id="impBtn">Import as layout</button>
+      </div>
+      <label class="chk"><input type="checkbox" id="impBind" checked> Bind the new layout to this scene (if it is free)</label>
+      <div class="hint" id="impHint"></div>
+      <div class="hint" id="impResult" style="white-space:pre-wrap"></div>
+
+      <hr style="border-color:var(--line)">
+      <label class="chk"><input type="checkbox" id="cfgDebugProxy"> Log proxy traffic to the server console (debug)</label>
+      <div class="hint">Prints every proxied request and WebSocket frame (tokens are masked). Handy when a proxied widget doesn’t react.</div>
+
+      <hr style="border-color:var(--line)">
+      <div class="grid2">
+        <label>Listen on
+          <select id="cfgHost" style="width:100%"></select>
+        </label>
+        <label>Port<input type="number" id="cfgPort" min="1" max="65535"></label>
+      </div>
+      <div class="hint warn" id="cfgHostWarn" hidden>No authentication yet: anyone on your network can open the editor and change settings. Use only on a trusted network.</div>
+      <div class="hint">Listen address and port are applied after restarting the server.</div>
+
+      <hr style="border-color:var(--line)">
+      <strong style="font-size:12px">Application</strong>
+      <div class="hint" id="cfgPaths" style="white-space:pre-wrap;word-break:break-all"></div>
+      <div class="row">
+        <button type="button" id="cfgOpenData">Open data folder</button>
+        <button type="button" id="cfgOpenLogs">Open log folder</button>
+      </div>
+      <label class="chk"><input type="checkbox" id="cfgAutostart"> Start with the system</label>
+      <div class="hint" id="cfgAutostartHint"></div>
+      <div class="hint" id="cfgTrayHint"></div>
+      <div class="row"><button type="button" id="cfgQuit">Quit Overlay Composer</button></div>
+
+      <div class="row" style="justify-content:flex-end;margin-top:12px">
+        <button value="cancel">Cancel</button>
+        <button type="button" class="primary" id="cfgSaveBtn">Save</button>
+      </div>
+    </form>
+  </dialog>
+  <div class="toast" id="toast"></div>
+
+  <script type="module" src="/dist/editor.js"></script>
+</body>
+</html>
