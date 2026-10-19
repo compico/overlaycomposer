@@ -40,6 +40,10 @@ web/shared/types.ts            типы клиента ↔ сервера
 
 ## Модель данных и правила
 - Source: `{id,name,type:"iframe",data:{url,proxy}}`. Object: `{id,name,sourceId,transform{x,y,z,width,height,rotationX/Y/Z,scaleX/Y/Z},opacity,visible,locked,zIndex}`.
+- `Object.instanceId` (необязательный): объекты с одним instanceId в разных layout — один виджет; ключ пула iframe в `scene.ts` = `i:<instanceId>`,
+  иначе `sourceId#n` (n — номер среди объектов source без instanceId). Копирование между layout (`editor/main.ts`: `cloneObject`, `ensureInstanceId`,
+  Copy to layout…, Ctrl+C/V) клиентское: GET целевого layout → push → PUT. «Связанная» копия берёт instanceId оригинала (оригиналу он назначается при копировании
+  и layout сохраняется, если не было несохранённых правок); в тот же layout и повторно в тот же target — всегда независимая.
 - `Object.name` — имя слоя; пусто → имя source. Переименование source слои не меняет.
 - Сцена принадлежит одному layout (PK `layout_scenes.scene`); сохранение layout забирает сцены у других в одной транзакции.
 - `Reresolve` после изменения привязок переключает показ, только если для текущей сцены «положен» другой layout (ручной выбор не сбрасывается).

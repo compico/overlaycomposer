@@ -19,6 +19,8 @@ let obsScenes: string[] = [];
 let defaultLayoutId: string | null = null;
 let activeLayoutId: string | null = null;
 let propSync: (() => void)[] = [];
+/** Буфер Ctrl+C: снимок слоя и layout, из которого он скопирован (живёт, пока открыта страница). */
+let clip: { obj: LayoutObject; fromLayoutId: string } | null = null;
 
 const scene = new OverlayScene($("stage"), { interactive: true });
 
@@ -509,6 +511,86 @@ function removeObject(id: string) {
   renderProps();
 }
 
+// ---------- copy between layouts ----------
+
+/**
+ * Гарантирует у слоя instanceId (нужен для связи копий между layout). Если он был назначен сейчас, а несохранённых правок
+ * не было — сразу сохраняем layout, чтобы связь работала; иначе предупреждаем, что layout надо сохранить.
+ */
+async function ensureInstanceId(o: LayoutObject) {
+  if (o.instanceId) return;
+  const wasDirty = dirty;
+  o.instanceId = uid("inst");
+  markDirty();
+  if (wasDirty) toast("Save this layout (Ctrl+S) so the copy stays linked");
+  else await save();
+}
+
+/** Копия слоя для layout `target`. linked: тот же instanceId (если в target его ещё нет) — виджет не перезагружается при смене сцены. */
+function cloneObject(o: LayoutObject, target: Layout, opts: { linked: boolean; offset?: number; copySuffix?: boolean }): LayoutObject {
+  const c = JSON.parse(JSON.stringify(o)) as LayoutObject;
+  c.id = uid("obj");
+  const canLink = opts.linked && !!o.instanceId && !target.objects.some((x) => x.instanceId === o.instanceId);
+  c.instanceId = canLink ? o.instanceId : uid("inst");
+  c.zIndex = Math.max(0, ...target.objects.map((x) => x.zIndex)) + 1;
+  c.transform.x += opts.offset ?? 0;
+  c.transform.y += opts.offset ?? 0;
+  if (opts.copySuffix) c.name = `${objName(o)} (copy)`;
+  return c;
+}
+
+const copyDialog = $<HTMLDialogElement>("copyDialog");
+
+function openCopyDialog() {
+  const o = selected();
+  if (!layout || !o) return toast("Select a layer first");
+  const others = layouts.filter((l) => l.id !== layout!.id);
+  if (others.length === 0) return toast("Create another layout first");
+  $("copyWhat").textContent = `Layer “${objName(o)}” from “${layout.name}”`;
+  $<HTMLSelectElement>("copyTarget").replaceChildren(...others.map((l) => el("option", { value: l.id, textContent: l.name })));
+  copyDialog.showModal();
+}
+
+$("copyObjBtn").addEventListener("click", openCopyDialog);
+
+$("copyGoBtn").addEventListener("click", async () => {
+  const o = selected();
+  const targetId = $<HTMLSelectElement>("copyTarget").value;
+  if (!layout || !o || !targetId) return;
+  const linked = $<HTMLInputElement>("copyLinked").checked;
+  copyDialog.close();
+  try {
+    if (linked) await ensureInstanceId(o);
+    const target = await api<Layout>(`/api/layouts/${encodeURIComponent(targetId)}`);
+    target.objects.push(cloneObject(o, target, { linked }));
+    await api(`/api/layouts/${encodeURIComponent(targetId)}`, "PUT", target);
+    await loadLayouts();
+    renderLayouts();
+    toast(`Copied to “${target.name}”`);
+  } catch (e) { fail(e); }
+});
+
+async function copySelected() {
+  const o = selected();
+  if (!layout || !o) return;
+  await ensureInstanceId(o);
+  clip = { obj: JSON.parse(JSON.stringify(o)) as LayoutObject, fromLayoutId: layout.id };
+  toast(`Copied “${objName(o)}” — Ctrl+V pastes it into the open layout`);
+}
+
+function pasteClip() {
+  if (!layout || !clip) return;
+  const same = clip.fromLayoutId === layout.id;
+  // В тот же layout — независимая копия со сдвигом; в другой — связанная (тот же виджет).
+  const c = cloneObject(clip.obj, layout, { linked: !same, offset: same ? 20 : 0, copySuffix: same });
+  layout.objects.push(c);
+  selectedId = c.id;
+  markDirty();
+  refreshCanvas();
+  renderLayers();
+  renderProps();
+}
+
 // ---------- add source ----------
 
 const addDialog = $<HTMLDialogElement>("addDialog");
@@ -959,6 +1041,16 @@ addEventListener("keydown", (e) => {
   }
   const tag = (e.target as HTMLElement).tagName;
   if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "c" && selected()) {
+    e.preventDefault();
+    copySelected().catch(fail);
+    return;
+  }
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "v" && clip) {
+    e.preventDefault();
+    pasteClip();
+    return;
+  }
   const o = selected();
   if (!o) return;
   if (e.key === "Escape") return select(null);

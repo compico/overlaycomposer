@@ -35,6 +35,11 @@ export interface LayoutObject {
   /** Имя слоя в списке Layers; пусто — берётся имя source. Переименование source слои не затрагивает. */
   name?: string;
   sourceId: string;
+  /**
+   * Общий идентификатор «экземпляра» виджета. Объекты с одним instanceId в разных layout — один и тот же виджет
+   * в разных местах: при смене сцены его iframe не перезагружается. Нет поля — сопоставление по порядку внутри source.
+   */
+  instanceId?: string;
   /** Координаты в пикселях canvas layout. x/y — левый верхний угол до вращения. */
   transform: Transform;
   opacity: number;

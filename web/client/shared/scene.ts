@@ -99,8 +99,9 @@ export class OverlayScene {
 
     if (sizeChanged) this.#applyCanvas();
 
-    // Ключ пула: sourceId#n. Один и тот же source в соседних layout
-    // переиспользует тот же iframe (чат не перезагружается при смене сцены).
+    // Ключ пула: instanceId (явная связь, в т.ч. копии между layout) либо sourceId#n (n — порядковый номер среди объектов
+    // этого source без instanceId). Один и тот же ключ в соседних layout переиспользует тот же iframe
+    // (виджет не перезагружается при смене сцены). Если ключ в layout уже занят — добавляем суффикс.
     const counters = new Map<string, number>();
     const used = new Set<string>();
 
@@ -108,9 +109,15 @@ export class OverlayScene {
       const src = this.#sources.get(o.sourceId);
       const url = src && src.type === "iframe" ? frameUrl(src) : null;
       if (!src || !url) continue;
-      const n = counters.get(o.sourceId) ?? 0;
-      counters.set(o.sourceId, n + 1);
-      const key = `${o.sourceId}#${n}`;
+      let key: string;
+      if (o.instanceId) {
+        key = `i:${o.instanceId}`;
+      } else {
+        const n = counters.get(o.sourceId) ?? 0;
+        counters.set(o.sourceId, n + 1);
+        key = `${o.sourceId}#${n}`;
+      }
+      for (let j = 1, base = key; used.has(key); j++) key = `${base}~${j}`;
       used.add(key);
 
       let e = this.#pool.get(key);

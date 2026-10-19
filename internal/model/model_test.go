@@ -50,3 +50,25 @@ func TestLayoutValidateJSONShape(t *testing.T) {
 		t.Error("canvas validation")
 	}
 }
+
+func TestObjectInstanceID(t *testing.T) {
+	l := Layout{ID: "l", Name: "L", Canvas: Canvas{Width: 1920, Height: 1080}, Objects: []Object{{ID: "o1", SourceID: "s", InstanceID: "inst_ab12"}}}
+	if msg := l.Validate(); msg != "" {
+		t.Fatalf("валидный instanceId отклонён: %s", msg)
+	}
+	b, err := json.Marshal(l.Objects[0])
+	if err != nil || !strings.Contains(string(b), `"instanceId":"inst_ab12"`) {
+		t.Fatalf("instanceId потерян при сериализации: %s %v", b, err)
+	}
+	var back Object
+	if err := json.Unmarshal(b, &back); err != nil || back.InstanceID != "inst_ab12" {
+		t.Fatalf("instanceId потерян при чтении: %+v %v", back, err)
+	}
+	l.Objects[0].InstanceID = "bad id/../"
+	if msg := l.Validate(); msg == "" {
+		t.Fatal("невалидный instanceId должен отклоняться")
+	}
+	if b, _ := json.Marshal(Object{ID: "o2"}); strings.Contains(string(b), "instanceId") {
+		t.Fatalf("пустой instanceId не должен попадать в JSON: %s", b)
+	}
+}
