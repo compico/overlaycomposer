@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { CSS3DObject, CSS3DRenderer } from "three/addons/renderers/CSS3DRenderer.js";
 import type { Layout, LayoutObject, Source } from "../../shared/types.ts";
+import { visibleBox } from "../../shared/types.ts";
 
 const FOV = 50;
 
@@ -169,7 +170,7 @@ export class OverlayScene {
     frame.src = url;
     frame.loading = "eager";
     if (FRAME_ALLOW) frame.allow = FRAME_ALLOW;
-    frame.style.cssText = "width:100%;height:100%;border:0;background:transparent;display:block;";
+    frame.style.cssText = "position:absolute;left:0;top:0;width:100%;height:100%;border:0;background:transparent;display:block;";
     frame.setAttribute("allowtransparency", "true");
     // В редакторе iframe не должен перехватывать мышь — иначе нельзя выделять/двигать.
     if (this.opts.interactive) frame.style.pointerEvents = "none";
@@ -188,15 +189,21 @@ export class OverlayScene {
     const t = o.transform;
     const W = layout.canvas.width;
     const H = layout.canvas.height;
-    e.el.style.width = `${t.width}px`;
-    e.el.style.height = `${t.height}px`;
+    // Обрезка: контейнер — видимая часть (overflow:hidden), iframe полного размера сдвинут внутри него.
+    const v = visibleBox(t);
+    e.el.style.width = `${v.w}px`;
+    e.el.style.height = `${v.h}px`;
+    e.frame.style.left = `${-v.cl}px`;
+    e.frame.style.top = `${-v.ct}px`;
+    e.frame.style.width = `${t.width}px`;
+    e.frame.style.height = `${t.height}px`;
     e.el.style.opacity = String(o.opacity);
 
     // Пиксели canvas (y вниз, начало слева сверху) -> мировые координаты (y вверх, центр).
     // Небольшой z-сдвиг по zIndex упорядочивает копланарные элементы.
     e.obj3d.position.set(
-      t.x + t.width / 2 - W / 2,
-      -(t.y + t.height / 2 - H / 2),
+      v.cx - W / 2,
+      -(v.cy - H / 2),
       t.z + o.zIndex * 0.01,
     );
     e.obj3d.rotation.set(

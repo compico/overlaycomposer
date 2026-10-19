@@ -44,6 +44,10 @@ web/shared/types.ts            типы клиента ↔ сервера
   иначе `sourceId#n` (n — номер среди объектов source без instanceId). Копирование между layout (`editor/main.ts`: `cloneObject`, `ensureInstanceId`,
   Copy to layout…, Ctrl+C/V) клиентское: GET целевого layout → push → PUT. «Связанная» копия берёт instanceId оригинала (оригиналу он назначается при копировании
   и layout сохраняется, если не было несохранённых правок); в тот же layout и повторно в тот же target — всегда независимая.
+- Crop: `transform.cropLeft/Top/Right/Bottom` (px виджета до масштаба, ≥0, видимая часть ≥ 1; пусто = 0). `x/y/width/height` — весь виджет, а видимая часть
+  (`visibleBox` в `web/shared/types.ts`) — прямоугольник внутри; поворот и масштаб — вокруг центра **видимой части**. Рендер (`scene.ts`): контейнер = видимая часть
+  с `overflow:hidden`, iframe полного размера смещён на `-crop`. Редактор: Alt+ручка → `startCrop` (содержимое остаётся на месте: `contentCenter`/`placeByContentCenter`),
+  поля Crop в панели свойств; resize-ручки меняют размер видимой части. Геометрия проверяется `web/shared/geometry.test.ts` (`node --experimental-strip-types`).
 - `Object.name` — имя слоя; пусто → имя source. Переименование source слои не меняет.
 - Сцена принадлежит одному layout (PK `layout_scenes.scene`); сохранение layout забирает сцены у других в одной транзакции.
 - `Reresolve` после изменения привязок переключает показ, только если для текущей сцены «положен» другой layout (ручной выбор не сбрасывается).

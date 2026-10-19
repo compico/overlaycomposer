@@ -28,6 +28,27 @@ export interface Transform {
   scaleX: number;
   scaleY: number;
   scaleZ: number;
+  /**
+   * Обрезка как в OBS: сколько пикселей виджета (до масштаба) скрыто с каждой стороны; не задано = 0.
+   * x/y/width/height описывают весь виджет, а видимая часть — прямоугольник внутри него (см. visibleBox).
+   */
+  cropLeft?: number;
+  cropTop?: number;
+  cropRight?: number;
+  cropBottom?: number;
+}
+
+/**
+ * Видимая часть слоя. cx/cy — её центр на canvas (вокруг него работают поворот и масштаб), w/h — размер до масштаба,
+ * ox/oy — смещение центра видимой части от центра всего виджета в его локальных пикселях.
+ * Без обрезки совпадает с прежним поведением (центр виджета).
+ */
+export function visibleBox(t: Transform) {
+  const cl = Math.max(0, t.cropLeft ?? 0), cr = Math.max(0, t.cropRight ?? 0);
+  const ct = Math.max(0, t.cropTop ?? 0), cb = Math.max(0, t.cropBottom ?? 0);
+  const w = Math.max(1, t.width - cl - cr), h = Math.max(1, t.height - ct - cb);
+  const ox = (cl - cr) / 2, oy = (ct - cb) / 2;
+  return { cl, cr, ct, cb, w, h, ox, oy, cx: t.x + t.width / 2 + ox, cy: t.y + t.height / 2 + oy };
 }
 
 export interface LayoutObject {
@@ -64,6 +85,29 @@ export interface Project {
   sources: Source[];
   /** layout, который показывается для сцен без собственного layout */
   defaultLayoutId?: string | null;
+}
+
+/** Физический центр всего виджета (вместе с обрезанной частью) на canvas — он не должен двигаться при обрезке. */
+export function contentCenter(t: Transform): { x: number; y: number } {
+  const v = visibleBox(t);
+  const o = localToCanvas(t, v.ox, v.oy);
+  return { x: v.cx - o.x, y: v.cy - o.y };
+}
+
+/** Подбирает x/y так, чтобы физический центр виджета остался в точке f (после изменения обрезки). */
+export function placeByContentCenter(t: Transform, f: { x: number; y: number }) {
+  const v = visibleBox(t);
+  const o = localToCanvas(t, v.ox, v.oy);
+  t.x = Math.round(f.x + o.x - v.ox - t.width / 2);
+  t.y = Math.round(f.y + o.y - v.oy - t.height / 2);
+}
+
+/** Вектор из локальных пикселей виджета в пиксели canvas: масштаб, затем поворот по часовой. */
+export function localToCanvas(t: Transform, lx: number, ly: number) {
+  const th = (t.rotationZ * Math.PI) / 180;
+  const cos = Math.cos(th), sin = Math.sin(th);
+  const sx = lx * (t.scaleX || 1), sy = ly * (t.scaleY || 1);
+  return { x: sx * cos - sy * sin, y: sx * sin + sy * cos };
 }
 
 /**

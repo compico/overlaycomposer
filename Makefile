@@ -24,6 +24,7 @@ dev: client
 test:
 	go vet ./...
 	go test ./...
+	node --experimental-strip-types web/shared/geometry.test.ts
 
 windows:
 	go run ./cmd/build bin windows
