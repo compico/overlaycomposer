@@ -103,7 +103,7 @@
         </div>
         <h3>Layers</h3>
         <div class="list" id="layerList"></div>
-        <div class="row"><button id="addObjBtn">+ Add Source</button></div>
+        <div class="row"><button id="addObjBtn">+ Add Source</button><button id="copyObjBtn" title="Copy the selected layer to another layout (Ctrl+C, then Ctrl+V in another layout does the same)">Copy to layout…</button></div>
       </aside>
       <div id="viewport">
         <div id="canvasFrame">
@@ -135,6 +135,21 @@
       <div class="row" style="justify-content:flex-end;margin-top:12px">
         <button value="cancel">Cancel</button>
         <button type="button" class="primary" id="createBtn">Create &amp; place</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="copyDialog">
+    <form method="dialog">
+      <strong>Copy to layout</strong>
+      <div class="hint" id="copyWhat"></div>
+      <label>Target layout</label>
+      <select id="copyTarget" style="width:100%"></select>
+      <label class="chk"><input type="checkbox" id="copyLinked" checked> Keep linked (same widget instance)</label>
+      <div class="hint">A linked copy is the same widget in another place: when the scene changes it is moved, not reloaded, so alerts and chats
+        keep their state. Untick to get an independent widget (it reloads on every switch).</div>
+      <div class="row" style="justify-content:flex-end;margin-top:12px">
+        <button value="cancel">Cancel</button>
+        <button type="button" class="primary" id="copyGoBtn">Copy</button>
       </div>
     </form>
   </dialog>

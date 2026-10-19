@@ -22,14 +22,17 @@ type Transform struct {
 }
 
 type Object struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name,omitempty"` // имя слоя; пусто — берётся имя source
-	SourceID  string    `json:"sourceId"`
-	Transform Transform `json:"transform"`
-	Opacity   float64   `json:"opacity"`
-	Visible   bool      `json:"visible"`
-	Locked    bool      `json:"locked"`
-	ZIndex    int       `json:"zIndex"`
+	ID       string `json:"id"`
+	Name     string `json:"name,omitempty"` // имя слоя; пусто — берётся имя source
+	SourceID string `json:"sourceId"`
+	// InstanceID связывает «один и тот же виджет» в разных layout (копия «со связью»): при смене сцены такой
+	// iframe не перезагружается, а переносится на новое место. Пусто — виджеты сопоставляются по порядку внутри source.
+	InstanceID string    `json:"instanceId,omitempty"`
+	Transform  Transform `json:"transform"`
+	Opacity    float64   `json:"opacity"`
+	Visible    bool      `json:"visible"`
+	Locked     bool      `json:"locked"`
+	ZIndex     int       `json:"zIndex"`
 }
 
 type Canvas struct {
@@ -148,6 +151,11 @@ func (l *Layout) Validate() string {
 	l.Scenes = NormalizeScenes(l.Scenes)
 	if l.Objects == nil {
 		l.Objects = []Object{}
+	}
+	for _, o := range l.Objects {
+		if o.InstanceID != "" && !IsValidID(o.InstanceID) {
+			return "invalid instanceId"
+		}
 	}
 	return ""
 }
