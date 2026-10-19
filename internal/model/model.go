@@ -2,6 +2,7 @@
 package model
 
 import (
+	"math"
 	"net/url"
 	"regexp"
 	"strings"
@@ -19,6 +20,24 @@ type Transform struct {
 	ScaleX    float64 `json:"scaleX"`
 	ScaleY    float64 `json:"scaleY"`
 	ScaleZ    float64 `json:"scaleZ"`
+	// Обрезка, как crop в OBS: сколько пикселей виджета (до масштаба) скрыто с каждой стороны. Width/Height — полный размер виджета.
+	CropLeft   float64 `json:"cropLeft,omitempty"`
+	CropTop    float64 `json:"cropTop,omitempty"`
+	CropRight  float64 `json:"cropRight,omitempty"`
+	CropBottom float64 `json:"cropBottom,omitempty"`
+}
+
+// validCrop: обрезка неотрицательна и оставляет видимую часть.
+func (t Transform) validCrop() bool {
+	for _, c := range []float64{t.CropLeft, t.CropTop, t.CropRight, t.CropBottom} {
+		if c < 0 || math.IsNaN(c) || math.IsInf(c, 0) {
+			return false
+		}
+	}
+	if t.CropLeft == 0 && t.CropTop == 0 && t.CropRight == 0 && t.CropBottom == 0 {
+		return true
+	}
+	return t.CropLeft+t.CropRight < t.Width && t.CropTop+t.CropBottom < t.Height
 }
 
 type Object struct {
@@ -155,6 +174,9 @@ func (l *Layout) Validate() string {
 	for _, o := range l.Objects {
 		if o.InstanceID != "" && !IsValidID(o.InstanceID) {
 			return "invalid instanceId"
+		}
+		if !o.Transform.validCrop() {
+			return "invalid crop"
 		}
 	}
 	return ""

@@ -1,5 +1,5 @@
-import type { Layout, LayoutObject, ObsInfo, ServerMessage, Source } from "../../shared/types.ts";
-import { defaultTransform, uid } from "../../shared/types.ts";
+import type { Layout, LayoutObject, ObsInfo, ServerMessage, Source, Transform } from "../../shared/types.ts";
+import { contentCenter, defaultTransform, placeByContentCenter, uid, visibleBox } from "../../shared/types.ts";
 import { OverlayScene } from "../shared/scene.ts";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -213,7 +213,8 @@ function renderOverlay() {
         h.addEventListener("pointerdown", (ev) => {
           if (ev.button !== 0) return;
           ev.stopPropagation();
-          startResize(ev, o, dirx, diry);
+          if (ev.altKey) startCrop(ev, o, dirx, diry); // Alt+ручка — обрезка, как в OBS
+          else startResize(ev, o, dirx, diry);
         });
         box.append(h);
       }
@@ -245,9 +246,10 @@ function objectsAt(ev: PointerEvent): LayoutObject[] {
     .sort((a, b) => b.zIndex - a.zIndex)
     .filter((o) => {
       const t = o.transform;
-      const hw = (t.width * Math.abs(t.scaleX)) / 2, hh = (t.height * Math.abs(t.scaleY)) / 2;
+      const v = visibleBox(t);
+      const hw = (v.w * Math.abs(t.scaleX)) / 2, hh = (v.h * Math.abs(t.scaleY)) / 2;
       const a = (-t.rotationZ * Math.PI) / 180;
-      const dx = px - (t.x + t.width / 2), dy = py - (t.y + t.height / 2);
+      const dx = px - v.cx, dy = py - v.cy;
       const lx = dx * Math.cos(a) - dy * Math.sin(a), ly = dx * Math.sin(a) + dy * Math.cos(a);
       return Math.abs(lx) <= hw && Math.abs(ly) <= hh;
     });
@@ -255,12 +257,11 @@ function objectsAt(ev: PointerEvent): LayoutObject[] {
 
 function positionBox(box: HTMLElement, o: LayoutObject) {
   const t = o.transform;
-  const w = t.width * Math.abs(t.scaleX) * k;
-  const h = t.height * Math.abs(t.scaleY) * k;
-  const cx = (t.x + t.width / 2) * k;
-  const cy = (t.y + t.height / 2) * k;
-  box.style.left = `${cx - w / 2}px`;
-  box.style.top = `${cy - h / 2}px`;
+  const v = visibleBox(t); // рамка — видимая (необрезанная) часть
+  const w = v.w * Math.abs(t.scaleX) * k;
+  const h = v.h * Math.abs(t.scaleY) * k;
+  box.style.left = `${v.cx * k - w / 2}px`;
+  box.style.top = `${v.cy * k - h / 2}px`;
   box.style.width = `${w}px`;
   box.style.height = `${h}px`;
   box.style.transform = `rotate(${t.rotationZ}deg)`;
@@ -291,10 +292,11 @@ function track(ev: PointerEvent, onMove: (dx: number, dy: number, e: PointerEven
 
 function startResize(ev: PointerEvent, o: LayoutObject, dirx: number, diry: number) {
   const t = o.transform;
+  const v0 = visibleBox(t);
   const sxAbs = Math.abs(t.scaleX) || 1;
   const syAbs = Math.abs(t.scaleY) || 1;
-  const w0 = t.width * sxAbs, h0 = t.height * syAbs;
-  const cx0 = t.x + t.width / 2, cy0 = t.y + t.height / 2;
+  const w0 = v0.w * sxAbs, h0 = v0.h * syAbs; // видимая часть на canvas
+  const cx0 = v0.cx, cy0 = v0.cy;
   const th = (t.rotationZ * Math.PI) / 180;
   const cos = Math.cos(th), sin = Math.sin(th);
 
@@ -313,17 +315,73 @@ function startResize(ev: PointerEvent, o: LayoutObject, dirx: number, diry: numb
     const ly = (diry * (h - h0)) / 2;
     const cx = cx0 + lx * cos - ly * sin;
     const cy = cy0 + lx * sin + ly * cos;
-    t.width = Math.round(w / sxAbs);
-    t.height = Math.round(h / syAbs);
-    t.x = Math.round(cx - t.width / 2);
-    t.y = Math.round(cy - t.height / 2);
+    // меняется размер видимой части; обрезка остаётся, полный размер виджета растёт вместе с ней
+    t.width = Math.round(w / sxAbs) + v0.cl + v0.cr;
+    t.height = Math.round(h / syAbs) + v0.ct + v0.cb;
+    t.x = Math.round(cx - v0.ox - t.width / 2);
+    t.y = Math.round(cy - v0.oy - t.height / 2);
+    touch(o);
+  });
+}
+
+type CropSide = "cropLeft" | "cropTop" | "cropRight" | "cropBottom";
+
+/** Задать одну сторону обрезки с ограничениями (≥ 0, остаётся видимая часть) и сохранением положения содержимого. */
+function setCrop(t: Transform, side: CropSide, value: number, keep = contentCenter(t)) {
+  const other = side === "cropLeft" ? t.cropRight : side === "cropRight" ? t.cropLeft : side === "cropTop" ? t.cropBottom : t.cropTop;
+  const total = side === "cropLeft" || side === "cropRight" ? t.width : t.height;
+  const max = Math.max(0, total - (other ?? 0) - MIN_SIZE);
+  t[side] = Math.round(Math.min(max, Math.max(0, value)));
+  placeByContentCenter(t, keep);
+}
+
+function cropField(label: string, t: Transform, side: CropSide): HTMLLabelElement {
+  const input = el("input", { type: "number" });
+  input.min = "0";
+  const sync = () => {
+    if (document.activeElement !== input) input.value = String(t[side] ?? 0);
+  };
+  sync();
+  propSync.push(sync);
+  input.addEventListener("input", () => {
+    const v = parseFloat(input.value);
+    if (Number.isNaN(v)) return;
+    setCrop(t, side, v);
+    markDirty();
+    scene.setLayout(layout!);
+    renderOverlay();
+    propSync.forEach((f) => f());
+  });
+  return el("label", {}, label, input);
+}
+
+/**
+ * Alt+перетаскивание ручки — обрезка (как в OBS). Угол обрезает сразу две стороны. Содержимое виджета остаётся на месте,
+ * сдвигается только граница видимой части; поворот и масштаб учитываются.
+ */
+function startCrop(ev: PointerEvent, o: LayoutObject, dirx: number, diry: number) {
+  const t = o.transform;
+  const c0 = visibleBox(t);
+  const f = contentCenter(t);
+  const th = (t.rotationZ * Math.PI) / 180;
+  const cos = Math.cos(th), sin = Math.sin(th);
+  const sx = Math.abs(t.scaleX) || 1, sy = Math.abs(t.scaleY) || 1;
+
+  track(ev, (dx, dy) => {
+    // дельта указателя в локальных пикселях виджета (до масштаба)
+    const ldx = (dx * cos + dy * sin) / sx;
+    const ldy = (-dx * sin + dy * cos) / sy;
+    if (dirx < 0) setCrop(t, "cropLeft", c0.cl + ldx, f);
+    if (dirx > 0) setCrop(t, "cropRight", c0.cr - ldx, f);
+    if (diry < 0) setCrop(t, "cropTop", c0.ct + ldy, f);
+    if (diry > 0) setCrop(t, "cropBottom", c0.cb - ldy, f);
     touch(o);
   });
 }
 
 function startRotate(ev: PointerEvent, o: LayoutObject) {
   const t = o.transform;
-  const cx = t.x + t.width / 2, cy = t.y + t.height / 2;
+  const { cx, cy } = visibleBox(t); // вращение вокруг центра видимой части (как в OBS)
   const rect = $("canvasFrame").getBoundingClientRect();
   track(ev, (_dx, _dy, e) => {
     const px = (e.clientX - rect.left) / k;
@@ -700,14 +758,30 @@ function renderProps() {
     g.append(
       numField("X", () => t.x, (v) => (t.x = v)),
       numField("Y", () => t.y, (v) => (t.y = v)),
-      numField("Width", () => t.width, (v) => (t.width = Math.max(1, v))),
-      numField("Height", () => t.height, (v) => (t.height = Math.max(1, v))),
+      numField("Width", () => t.width, (v) => (t.width = Math.max(1, v, (t.cropLeft ?? 0) + (t.cropRight ?? 0) + 1))),
+      numField("Height", () => t.height, (v) => (t.height = Math.max(1, v, (t.cropTop ?? 0) + (t.cropBottom ?? 0) + 1))),
       numField("Rotation °", () => t.rotationZ, (v) => (t.rotationZ = v), 0.5),
       numField("Opacity %", () => o.opacity * 100, (v) => (o.opacity = Math.min(1, Math.max(0, v / 100))), 5),
       numField("Scale X", () => t.scaleX, (v) => (t.scaleX = v), 0.05),
       numField("Scale Y", () => t.scaleY, (v) => (t.scaleY = v), 0.05),
     );
     root.append(g);
+
+    root.append(el("h3", { textContent: "Crop (px)" }));
+    const cropGrid = el("div", { class: "grid2" });
+    cropGrid.append(
+      cropField("Left", t, "cropLeft"), cropField("Right", t, "cropRight"),
+      cropField("Top", t, "cropTop"), cropField("Bottom", t, "cropBottom"),
+    );
+    const resetCrop = el("button", { textContent: "Reset crop" });
+    resetCrop.addEventListener("click", () => {
+      const f = contentCenter(t);
+      t.cropLeft = t.cropRight = t.cropTop = t.cropBottom = 0;
+      placeByContentCenter(t, f);
+      touch(o);
+      renderProps();
+    });
+    root.append(cropGrid, el("div", { class: "row" }, resetCrop), el("div", { class: "empty", textContent: "Alt+drag a handle crops, like in OBS." }));
 
     const rm = el("button", { textContent: "Remove from layout" });
     rm.addEventListener("click", () => removeObject(o.id));

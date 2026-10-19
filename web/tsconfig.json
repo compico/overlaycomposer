@@ -9,5 +9,6 @@
     "allowImportingTsExtensions": true,
     "skipLibCheck": true
   },
-  "include": ["client", "shared"]
+  "include": ["client", "shared"],
+  "exclude": ["**/*.test.ts"]
 }

@@ -72,3 +72,31 @@ func TestObjectInstanceID(t *testing.T) {
 		t.Fatalf("пустой instanceId не должен попадать в JSON: %s", b)
 	}
 }
+
+func TestTransformCrop(t *testing.T) {
+	mk := func(tr Transform) Layout {
+		return Layout{ID: "l", Name: "L", Canvas: Canvas{Width: 1920, Height: 1080}, Objects: []Object{{ID: "o", SourceID: "s", Transform: tr}}}
+	}
+	ok := mk(Transform{Width: 400, Height: 300, CropLeft: 100, CropBottom: 50})
+	if msg := ok.Validate(); msg != "" {
+		t.Fatalf("валидная обрезка отклонена: %s", msg)
+	}
+	for name, tr := range map[string]Transform{
+		"отрицательная":    {Width: 400, Height: 300, CropLeft: -1},
+		"съела всю ширину": {Width: 400, Height: 300, CropLeft: 200, CropRight: 200},
+		"съела всю высоту": {Width: 400, Height: 300, CropTop: 300},
+	} {
+		l := mk(tr)
+		if msg := l.Validate(); msg != "invalid crop" {
+			t.Errorf("%s: Validate() = %q, want invalid crop", name, msg)
+		}
+	}
+	zero := mk(Transform{}) // старые данные без размера и обрезки остаются валидными
+	if msg := zero.Validate(); msg != "" {
+		t.Errorf("пустой transform: %s", msg)
+	}
+	b, _ := json.Marshal(Transform{Width: 1, Height: 1})
+	if strings.Contains(string(b), "crop") {
+		t.Errorf("нулевая обрезка не должна попадать в JSON: %s", b)
+	}
+}
