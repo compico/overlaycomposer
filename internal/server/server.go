@@ -18,6 +18,7 @@ import (
 	"github.com/gofiber/contrib/v3/websocket"
 	"github.com/gofiber/fiber/v3"
 
+	"github.com/compico/overlaycomposer/internal/auth"
 	"github.com/compico/overlaycomposer/internal/config"
 	"github.com/compico/overlaycomposer/internal/hub"
 	"github.com/compico/overlaycomposer/internal/obs"
@@ -48,6 +49,7 @@ type Deps struct {
 	Obs     *obs.Client
 	Proxy   *proxy.Proxy
 	Plugins *plugins.Registry
+	Auth    *auth.Manager
 	App     App
 }
 
@@ -102,6 +104,9 @@ func (s *Server) routes() {
 	app := s.app
 	// 0. журнал доступа к страницам и бандлам: видно, дошёл ли OBS до /overlay, /dist/* и /ws
 	app.Use(s.accessLog)
+	// 0.1 доступ с других устройств только по токену (с localhost — свободно)
+	app.Use(s.authGuard)
+	s.authRoutes()
 
 	// 1. прокси (маршруты /proxy*, затем запросы со страниц, открытых через прокси)
 	s.d.Proxy.Register(app)

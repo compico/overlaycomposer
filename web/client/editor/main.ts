@@ -1122,6 +1122,40 @@ function showStatus(c: ConfigView) {
 
 async function refreshStatus() {
   try { showStatus(await api<ConfigView>("/api/config")); } catch { /* сервер перезапускается */ }
+  loadDevices();
+}
+
+interface DevicesView {
+  code: string;
+  expiresIn: number;
+  devices: { id: string; name: string; createdAt: string; lastSeen: string; lastIp: string }[];
+  remoteEnabled: boolean;
+  pairUrl: string;
+}
+
+// Раздел «Remote devices»: код сопряжения и список устройств. Доступен только с этого компьютера (с других сервер отвечает 403).
+async function loadDevices() {
+  const box = $("devBox");
+  let v: DevicesView;
+  try { v = await api<DevicesView>("/api/devices"); } catch { box.hidden = true; return; }
+  box.hidden = false;
+  $("devHint").textContent = v.remoteEnabled
+    ? "Devices that entered the code can open the editor and overlay from the network."
+    : "Server listens on this computer only. To connect other devices, set “Listen on” to “All network interfaces” and restart.";
+  $("devCode").textContent = v.code;
+  $("devLeft").textContent = `changes in ${v.expiresIn}s`;
+  $("devUrl").textContent = v.pairUrl.replace("127.0.0.1", location.hostname === "127.0.0.1" || location.hostname === "localhost" ? "<this-computer-ip>" : location.hostname);
+  const list = $("devList");
+  list.replaceChildren(...v.devices.map((d) => {
+    const seen = new Date(d.lastSeen).toLocaleString();
+    const rm = el("button", { type: "button", textContent: "Revoke" });
+    rm.addEventListener("click", async () => {
+      if (!confirm(`Revoke access for “${d.name}”?`)) return;
+      try { await api(`/api/devices/${encodeURIComponent(d.id)}`, "DELETE"); loadDevices(); } catch (e) { fail(e); }
+    });
+    return el("div", { class: "row", style: "justify-content:space-between" },
+      el("span", { class: "hint", textContent: `${d.name} · ${d.lastIp} · seen ${seen}` }), rm);
+  }));
 }
 
 // Пока открыт диалог — обновляем статус, чтобы было видно результат Reconnect.
@@ -1171,6 +1205,7 @@ $("settingsBtn").addEventListener("click", async () => {
     showStatus(c);
     loadAppInfo();
     loadImportScenes();
+    loadDevices();
     settingsDialog.showModal();
     clearInterval(statusTimer);
     statusTimer = setInterval(refreshStatus, 2000) as unknown as number;

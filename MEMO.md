@@ -28,6 +28,7 @@ internal/hub                   состояние: active layout, scene, спи�
 internal/obs                   клиент obs-websocket 5.x (fasthttp/websocket): сцены, смена, переименование, GetSceneItemList…
 internal/obsimport             импорт OBS-сцены как layout (матрицы, alignment, поворот по часовой, группы разворачиваются в плоский список)
 internal/proxy                 прокси (см. ниже)
+internal/auth                  доступ извне: одноразовый код (6 букв, 1 мин) → JWT HS256 (бессрочный, жив пока устройство в таблице devices), лимит перебора
 internal/plugins               плагины-виджеты: plugin.json (схема настроек), Registry (builtin + папка plugins/), CleanSettings; builtin/twitch-chat
 internal/rewrite               NeutralizeFrameChecks — скрыть проверки «я во фрейме» (RE2 без lookaround)
 internal/server                Fiber: server.go (routes, accessLog), api.go (REST), import.go, pluginFile (/plugins/:id/*)
@@ -113,3 +114,10 @@ hub — один владелец состояния, одна блокиров�
 - SQLite + GORM, а не clover (документная БД не упрощает «сцена → один layout»; `store` за интерфейсом — замена возможна).
 - Перезагрузка виджета при смене сцены допустима (скрытые не держим в памяти) — но копии одного виджета в разных layout надо не перезагружать (см. TODO «Общий экземпляр»).
 - Один бинарник, трей, автозапуск, AppData; прокси встроен.
+
+## Авторизация внешних устройств
+- `server/auth.go`: `authGuard` — middleware до всех маршрутов. Локальный запрос (loopback и нет `X-Forwarded-*`/`Forwarded`/`X-Real-Ip`) пропускается; остальным нужен токен (`Authorization: Bearer` или cookie `oc_token`). Открыты: `/pair`, `POST /api/pair`, `/plugins/*` (iframe плагина в sandbox — origin непрозрачный, cookie к подзапросам не уходит; файлы публичны).
+- `/api/devices` (GET код+список, DELETE отзыв) — только с localhost (`localOnly`), даже сопряжённое устройство не может управлять доступом.
+- Секрет подписи — в таблице settings (`auth_secret`), устройства — таблица `devices`. Отзыв = удаление строки (токен без срока, но проверяется по списку).
+- `/pair` — страница на ES5/XHR без зависимостей (должна открываться на старых браузерах, iPad/Safari 9).
+- Тесты: `internal/auth` (код, ротация, одноразовость, лимиты, подделка, отзыв), `internal/server/auth_test.go` (guard на Fiber, `app.Test` — клиент не loopback, поэтому «локальная» ветка проверяется только вручную).
