@@ -75,3 +75,7 @@ make linux            # build/overlay-composer-linux-amd64
 Иконку в exe вшивает `rsrc` (`go run github.com/akavel/rsrc@v0.10.2`, нужен доступ к proxy.golang.org); без неё exe соберётся без иконки, в трее она всё равно есть.
 
 Структура: `cmd/overlay-composer` (запуск), `cmd/build` (сборщик), `internal/*` (сервер, хаб, прокси, OBS, хранилище, трей), `web/` (TypeScript-клиент). Подробности для разработки — в `MEMO.md`, планы — в `TODO.md`.
+
+## Лицензия
+
+[MIT](LICENSE)
