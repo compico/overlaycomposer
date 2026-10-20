@@ -1,4 +1,4 @@
-import type { Layout, LayoutObject, ObsInfo, ServerMessage, Source, Transform } from "../../shared/types.ts";
+import type { Layout, LayoutObject, ObsInfo, PluginManifest, PluginSetting, ServerMessage, Source, Transform } from "../../shared/types.ts";
 import { contentCenter, defaultTransform, placeByContentCenter, uid, visibleBox } from "../../shared/types.ts";
 import { OverlayScene } from "../shared/scene.ts";
 
@@ -10,6 +10,7 @@ const MIN_SIZE = 20;
 
 let layouts: Layout[] = [];
 let sources: Source[] = [];
+let plugins: PluginManifest[] = [];
 let layout: Layout | null = null; // рабочая копия, сохраняется кнопкой Save
 let selectedId: string | null = null;
 let dirty = false;
@@ -90,6 +91,10 @@ async function loadSources() {
   scene.setSources(sources);
 }
 
+async function loadPlugins() {
+  plugins = await api<PluginManifest[]>("/api/plugins"); // сервер пересматривает папку plugins/ при каждом запросе
+}
+
 async function loadLayouts() {
   const [list, def] = await Promise.all([
     api<Layout[]>("/api/layouts"),
@@ -112,7 +117,7 @@ async function openLayout(id: string, force = false) {
 }
 
 async function init() {
-  await Promise.all([loadSources(), loadLayouts()]);
+  await Promise.all([loadSources(), loadLayouts(), loadPlugins()]);
   if (layouts.length === 0) {
     const l = await api<Layout>("/api/layouts", "POST", { name: "Layout 1" });
     layouts = [l];
@@ -653,7 +658,39 @@ function pasteClip() {
 
 const addDialog = $<HTMLDialogElement>("addDialog");
 
-$("addObjBtn").addEventListener("click", () => {
+function renderPluginPicker() {
+  const sel = $<HTMLSelectElement>("pluginSelect");
+  sel.replaceChildren(...plugins.map((p) => el("option", { value: p.id, textContent: `${p.name}${p.builtin ? "" : " (custom)"}` })));
+  $("usePluginBtn").toggleAttribute("disabled", plugins.length === 0);
+  $("pluginHint").textContent = plugins.length === 0
+    ? "No plugins found. Put a plugin folder (with plugin.json) into the plugins folder."
+    : (plugins[0].description ?? "");
+}
+
+$("pluginSelect").addEventListener("change", () => {
+  const p = plugins.find((x) => x.id === $<HTMLSelectElement>("pluginSelect").value);
+  $("pluginHint").textContent = p?.description ?? "";
+});
+
+$("openPluginsBtn").addEventListener("click", () => api("/api/app/open", "POST", { what: "plugins" }).catch(fail));
+
+$("usePluginBtn").addEventListener("click", async () => {
+  const p = plugins.find((x) => x.id === $<HTMLSelectElement>("pluginSelect").value);
+  if (!p) return;
+  try {
+    let name = p.name, n = 2;
+    while (sources.some((x) => x.name === name)) name = `${p.name} ${n++}`;
+    const id = uid("src");
+    await api("/api/sources", "POST", { id, name, type: "plugin", data: { plugin: p.id, settings: {} } });
+    await loadSources();
+    placeObject(id, p.defaultSize.width, p.defaultSize.height);
+    addDialog.close();
+  } catch (e) { fail(e); }
+});
+
+$("addObjBtn").addEventListener("click", async () => {
+  await loadPlugins().catch(fail);
+  renderPluginPicker();
   const sel = $<HTMLSelectElement>("existingSource");
   sel.replaceChildren(...sources.map((s) => el("option", { value: s.id, textContent: s.name })));
   $("useExistingBtn").toggleAttribute("disabled", sources.length === 0);
@@ -724,6 +761,113 @@ function numField(label: string, get: () => number, set: (v: number) => void, st
   return el("label", {}, label, input);
 }
 
+// ---------- plugin settings form ----------
+
+const COMMON_FONTS = ["Segoe UI", "Arial", "Verdana", "Tahoma", "Trebuchet MS", "Georgia", "Times New Roman", "Courier New", "Consolas",
+  "Impact", "Comic Sans MS", "Roboto", "Open Sans", "Montserrat", "Noto Sans", "system-ui"];
+{
+  const dl = el("datalist", { id: "fontList" }, ...COMMON_FONTS.map((f) => el("option", { value: f })));
+  document.body.append(dl);
+}
+
+type SettingValue = string | number | boolean;
+
+/** Форма настроек плагина-виджета по схеме из plugin.json. Каждое изменение сохраняется сразу (виджет перезагрузится с новыми query). */
+function pluginSettings(src: Source, m: PluginManifest): HTMLElement {
+  const root = el("div");
+  const save = async (key: string, v: SettingValue | undefined) => {
+    const next: Record<string, SettingValue> = { ...(src.data.settings ?? {}) };
+    if (v === undefined) delete next[key]; else next[key] = v;
+    try {
+      const r = await api<Source>(`/api/sources/${encodeURIComponent(src.id)}`, "PUT", { data: { settings: next } });
+      src.data.settings = r.data.settings ?? {};
+    } catch (e) { fail(e); renderProps(); }
+  };
+
+  let group: string | undefined;
+  for (const s of m.settings ?? []) {
+    if (s.group !== group) {
+      group = s.group;
+      if (group) root.append(el("h4", { class: "group", textContent: group }));
+    }
+    root.append(settingControl(s, src.data.settings?.[s.key], save));
+  }
+  if (!m.settings?.length) root.append(el("div", { class: "empty", textContent: "This widget has no settings." }));
+  return root;
+}
+
+function settingControl(s: PluginSetting, current: SettingValue | undefined, save: (key: string, v: SettingValue | undefined) => void): HTMLElement {
+  const val = current ?? s.default;
+  const line = el("div", { class: "line" });
+  let input: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
+
+  switch (s.type) {
+    case "bool": {
+      const chk = el("input", { type: "checkbox", checked: Boolean(val) });
+      chk.addEventListener("change", () => save(s.key, chk.checked));
+      input = chk;
+      break;
+    }
+    case "number":
+    case "range": {
+      const num = el("input", { type: s.type === "range" ? "range" : "number" });
+      if (s.min !== undefined) num.min = String(s.min);
+      if (s.max !== undefined) num.max = String(s.max);
+      num.step = String(s.step ?? 1);
+      num.value = String(val ?? s.min ?? 0);
+      const shown = el("span", { textContent: s.type === "range" ? String(num.value) : "" });
+      num.addEventListener("input", () => (shown.textContent = s.type === "range" ? num.value : ""));
+      num.addEventListener("change", () => {
+        const v = parseFloat(num.value);
+        if (!Number.isNaN(v)) save(s.key, v);
+      });
+      input = num;
+      if (s.type === "range") line.append(num, shown);
+      break;
+    }
+    case "color": {
+      const col = el("input", { type: "color", value: typeof val === "string" && /^#[0-9a-f]{6}$/i.test(val) ? val : "#000000" });
+      col.addEventListener("change", () => save(s.key, col.value));
+      input = col;
+      break;
+    }
+    case "select": {
+      const sel = el("select", {}, ...(s.options ?? []).map((o) => el("option", { value: o.value, textContent: o.label, selected: o.value === val })));
+      sel.addEventListener("change", () => save(s.key, sel.value));
+      input = sel;
+      break;
+    }
+    case "text": {
+      const ta = el("textarea", { value: String(val ?? ""), rows: 3 });
+      ta.addEventListener("change", () => save(s.key, ta.value));
+      input = ta;
+      break;
+    }
+    default: { // string, font
+      const txt = el("input", { type: "text", value: String(val ?? "") });
+      if (s.type === "font") txt.setAttribute("list", "fontList");
+      txt.addEventListener("change", () => save(s.key, txt.value));
+      input = txt;
+    }
+  }
+
+  const isBool = s.type === "bool";
+  if (!(s.type === "range")) line.append(input);
+  const wrap = el("div", { class: "setting" });
+  if (isBool) {
+    wrap.append(el("div", { class: "line" }, el("label", { class: "chk", style: "margin:0" }, input, s.label)));
+  } else {
+    wrap.append(el("span", { textContent: s.label }), line);
+  }
+  if (current !== undefined) { // значение отличается от умолчания → можно сбросить
+    const reset = el("button", { class: "ib", textContent: "↺", title: "Reset to default" });
+    reset.addEventListener("click", () => save(s.key, undefined));
+    (isBool ? wrap.firstElementChild! : line).append(reset);
+  }
+  if (s.help) wrap.append(el("div", { class: "hint", textContent: s.help }));
+  return wrap;
+}
+
 function renderProps() {
   const root = $("props");
   root.replaceChildren();
@@ -735,7 +879,18 @@ function renderProps() {
     const t = o.transform;
     const src = sourceOf(o.sourceId);
     root.append(el("h3", { textContent: "Source" }));
-    if (src) {
+    if (src?.type === "plugin") {
+      const name = el("input", { type: "text", value: src.name });
+      name.addEventListener("change", () => api(`/api/sources/${src.id}`, "PUT", { name: name.value }).catch(fail));
+      root.append(el("div", { class: "row" }, name));
+      const m = plugins.find((p) => p.id === src.data.plugin);
+      if (m) {
+        root.append(el("div", { class: "hint", textContent: `${m.name}${m.version ? ` ${m.version}` : ""}${m.builtin ? "" : " · custom plugin"}` }));
+        root.append(pluginSettings(src, m));
+      } else {
+        root.append(el("div", { class: "hint warn", textContent: `Plugin “${src.data.plugin}” is not installed — the widget will be empty. Put it back into the plugins folder.` }));
+      }
+    } else if (src) {
       const name = el("input", { type: "text", value: src.name });
       name.addEventListener("change", () => api(`/api/sources/${src.id}`, "PUT", { name: name.value }).catch(fail));
       const url = el("input", { type: "text", value: src.data.url ?? "" });

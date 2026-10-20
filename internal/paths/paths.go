@@ -23,6 +23,7 @@ type Paths struct {
 	Mode       string // "home" | "user"
 	ConfigFile string
 	DataDir    string // база данных, импорт и т.п.
+	PluginsDir string // папка пользовательских плагинов-виджетов (каждый плагин — подпапка с plugin.json)
 	LogDir     string
 	LogFile    string
 }
@@ -38,12 +39,12 @@ func Resolve(home string) (Paths, error) {
 		if err != nil {
 			return p, err
 		}
-		p = Paths{Mode: "home", ConfigFile: filepath.Join(root, "config.json"), DataDir: filepath.Join(root, "data"), LogDir: filepath.Join(root, "logs")}
+		p = Paths{Mode: "home", ConfigFile: filepath.Join(root, "config.json"), DataDir: filepath.Join(root, "data"), PluginsDir: filepath.Join(root, "plugins"), LogDir: filepath.Join(root, "logs")}
 	} else {
 		p = userPaths()
 	}
 	p.LogFile = filepath.Join(p.LogDir, "overlay-composer.log")
-	for _, d := range []string{filepath.Dir(p.ConfigFile), p.DataDir, p.LogDir} {
+	for _, d := range []string{filepath.Dir(p.ConfigFile), p.DataDir, p.PluginsDir, p.LogDir} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return p, err
 		}
@@ -62,10 +63,10 @@ func userPaths() Paths {
 			base = filepath.Join(home, "AppData", "Roaming")
 		}
 		root := filepath.Join(base, "OverlayComposer")
-		return Paths{Mode: "user", ConfigFile: filepath.Join(root, "config.json"), DataDir: filepath.Join(root, "data"), LogDir: filepath.Join(root, "logs")}
+		return Paths{Mode: "user", ConfigFile: filepath.Join(root, "config.json"), DataDir: filepath.Join(root, "data"), PluginsDir: filepath.Join(root, "plugins"), LogDir: filepath.Join(root, "logs")}
 	case "darwin":
 		root := filepath.Join(home, "Library", "Application Support", "OverlayComposer")
-		return Paths{Mode: "user", ConfigFile: filepath.Join(root, "config.json"), DataDir: filepath.Join(root, "data"), LogDir: filepath.Join(root, "logs")}
+		return Paths{Mode: "user", ConfigFile: filepath.Join(root, "config.json"), DataDir: filepath.Join(root, "data"), PluginsDir: filepath.Join(root, "plugins"), LogDir: filepath.Join(root, "logs")}
 	default:
 		cfg := env("XDG_CONFIG_HOME")
 		if cfg == "" {
@@ -76,6 +77,6 @@ func userPaths() Paths {
 			data = filepath.Join(home, ".local", "share")
 		}
 		root := filepath.Join(data, AppID)
-		return Paths{Mode: "user", ConfigFile: filepath.Join(cfg, AppID, "config.json"), DataDir: filepath.Join(root, "data"), LogDir: filepath.Join(root, "logs")}
+		return Paths{Mode: "user", ConfigFile: filepath.Join(cfg, AppID, "config.json"), DataDir: filepath.Join(root, "data"), PluginsDir: filepath.Join(root, "plugins"), LogDir: filepath.Join(root, "logs")}
 	}
 }

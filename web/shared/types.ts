@@ -1,7 +1,7 @@
 // Общая модель данных. Source и LayoutObject — разные сущности:
 // Source описывает "что это", LayoutObject — "как и где оно показано в layout".
 
-export type SourceType = "iframe" | "image" | "video" | "text" | "html";
+export type SourceType = "iframe" | "plugin" | "image" | "video" | "text" | "html";
 
 export interface Source {
   id: string;
@@ -12,7 +12,40 @@ export interface Source {
    * proxy: true — загружать страницу через прокси нашего сервера
    * (для сайтов, запрещающих встраивание через X-Frame-Options / CSP frame-ancestors).
    */
-  data: { url?: string; proxy?: boolean; [k: string]: unknown };
+  data: {
+    url?: string;
+    proxy?: boolean;
+    /** type "plugin": id плагина-виджета и его настройки (передаются виджету в query-параметрах) */
+    plugin?: string;
+    settings?: Record<string, string | number | boolean>;
+    [k: string]: unknown;
+  };
+}
+
+/** Настройка плагина-виджета (схема из plugin.json). */
+export interface PluginSetting {
+  key: string;
+  label: string;
+  type: "string" | "text" | "number" | "range" | "bool" | "color" | "font" | "select";
+  group?: string;
+  help?: string;
+  default?: string | number | boolean;
+  options?: { value: string; label: string }[];
+  min?: number;
+  max?: number;
+  step?: number;
+}
+
+export interface PluginManifest {
+  id: string;
+  name: string;
+  version?: string;
+  description?: string;
+  author?: string;
+  entry?: string;
+  defaultSize: { width: number; height: number };
+  settings?: PluginSetting[];
+  builtin: boolean;
 }
 
 export interface Transform {

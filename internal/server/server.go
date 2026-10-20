@@ -4,6 +4,7 @@ package server
 import (
 	"context"
 	"errors"
+	"io"
 	"io/fs"
 	"log/slog"
 	"mime"
@@ -21,6 +22,7 @@ import (
 	"github.com/compico/overlaycomposer/internal/hub"
 	"github.com/compico/overlaycomposer/internal/obs"
 	"github.com/compico/overlaycomposer/internal/paths"
+	"github.com/compico/overlaycomposer/internal/plugins"
 	"github.com/compico/overlaycomposer/internal/proxy"
 	"github.com/compico/overlaycomposer/internal/store"
 	"github.com/compico/overlaycomposer/web"
@@ -45,6 +47,7 @@ type Deps struct {
 	Hub     *hub.Hub
 	Obs     *obs.Client
 	Proxy   *proxy.Proxy
+	Plugins *plugins.Registry
 	App     App
 }
 
@@ -111,9 +114,9 @@ func (s *Server) routes() {
 	app.Get("/", func(c fiber.Ctx) error { return c.Redirect().To("/editor") })
 	app.Get("/editor", s.page(web.EditorHTML))
 	app.Get("/overlay", s.page(web.OverlayHTML))
-	app.Get("/widgets/clock", func(c fiber.Ctx) error { return s.htmlString(c, clockWidget) })
-	app.Get("/widgets/box", func(c fiber.Ctx) error { return s.htmlString(c, boxWidget) })
 	app.Get("/dist/*", s.dist)
+	app.Get("/plugins/:id/*", s.pluginFile)
+	app.Get("/plugins/:id", func(c fiber.Ctx) error { return c.Redirect().To("/plugins/" + c.Params("id") + "/") })
 }
 
 // accessLog пишет в лог запросы к страницам, бандлам и /ws (с User-Agent: так видно, что это именно OBS/CEF).
@@ -180,6 +183,34 @@ func (s *Server) dist(c fiber.Ctx) error {
 	}
 	c.Set("Content-Type", ct)
 	c.Set("Cache-Control", "no-store")
+	return c.Send(b)
+}
+
+// pluginFile раздаёт файлы плагина-виджета: /plugins/<id>/<путь>. Каталог и пустой путь — точка входа плагина.
+// Виджет работает в iframe с sandbox без allow-same-origin (у него «непрозрачный» origin), поэтому для его
+// запросов к своим файлам нужен CORS; файлы плагина публичны, секретов в них нет.
+func (s *Server) pluginFile(c fiber.Ctx) error {
+	p, ok := s.d.Plugins.Get(c.Params("id"))
+	if !ok {
+		return fiber.ErrNotFound
+	}
+	f, name, err := p.Open(c.Params("*"))
+	if err != nil {
+		return fiber.ErrNotFound
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, 64<<20))
+	if err != nil {
+		return fiber.ErrInternalServerError
+	}
+	ct := mime.TypeByExtension(path.Ext(name))
+	if ct == "" {
+		ct = "application/octet-stream"
+	}
+	c.Set("Content-Type", ct)
+	c.Set("Cache-Control", "no-cache")
+	c.Set("Access-Control-Allow-Origin", "*")
+	c.Set("X-Content-Type-Options", "nosniff")
 	return c.Send(b)
 }
 

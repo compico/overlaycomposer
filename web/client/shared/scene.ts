@@ -24,6 +24,14 @@ const FRAME_ALLOW = frameAllow();
  * (/proxy/<id>/<путь на сайте>), который снимает запрет на встраивание.
  */
 function frameUrl(src: Source): string | null {
+  if (src.type === "plugin") {
+    // Плагин-виджет: его файлы раздаёт сервер, а настройки уходят виджету в query (?channel=…&msgSize=…).
+    if (!src.data.plugin) return null;
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(src.data.settings ?? {})) q.set(k, String(v));
+    const qs = q.toString();
+    return `/plugins/${encodeURIComponent(src.data.plugin)}/${qs ? `?${qs}` : ""}`;
+  }
   const url = src.data.url;
   if (!url) return null;
   if (src.data.proxy) {
@@ -108,7 +116,7 @@ export class OverlayScene {
 
     for (const o of layout.objects) {
       const src = this.#sources.get(o.sourceId);
-      const url = src && src.type === "iframe" ? frameUrl(src) : null;
+      const url = src && (src.type === "iframe" || src.type === "plugin") ? frameUrl(src) : null;
       if (!src || !url) continue;
       let key: string;
       if (o.instanceId) {
@@ -127,7 +135,7 @@ export class OverlayScene {
         e = undefined;
       }
       if (!e) {
-        e = this.#createEntry(key, url);
+        e = this.#createEntry(key, url, src.type === "plugin");
         this.#pool.set(key, e);
         this.#scene.add(e.obj3d);
       }
@@ -163,10 +171,12 @@ export class OverlayScene {
     this.root.style.height = `${H}px`;
   }
 
-  #createEntry(key: string, url: string): Entry {
+  #createEntry(key: string, url: string, sandboxed: boolean): Entry {
     const el = document.createElement("div");
     el.style.overflow = "hidden";
     const frame = document.createElement("iframe");
+    // Плагины — чужой код: iframe без allow-same-origin получает «непрозрачный» origin и не может обращаться к API приложения.
+    if (sandboxed) frame.setAttribute("sandbox", "allow-scripts allow-forms allow-popups allow-modals");
     frame.src = url;
     frame.loading = "eager";
     if (FRAME_ALLOW) frame.allow = FRAME_ALLOW;

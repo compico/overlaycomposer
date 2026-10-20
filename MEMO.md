@@ -28,8 +28,9 @@ internal/hub                   состояние: active layout, scene, спи�
 internal/obs                   клиент obs-websocket 5.x (fasthttp/websocket): сцены, смена, переименование, GetSceneItemList…
 internal/obsimport             импорт OBS-сцены как layout (матрицы, alignment, поворот по часовой, группы разворачиваются в плоский список)
 internal/proxy                 прокси (см. ниже)
+internal/plugins               плагины-виджеты: plugin.json (схема настроек), Registry (builtin + папка plugins/), CleanSettings; builtin/twitch-chat
 internal/rewrite               NeutralizeFrameChecks — скрыть проверки «я во фрейме» (RE2 без lookaround)
-internal/server                Fiber: server.go (routes, accessLog), api.go (REST), import.go, widgets.go (demo clock/box)
+internal/server                Fiber: server.go (routes, accessLog), api.go (REST), import.go, pluginFile (/plugins/:id/*)
 internal/tray                  значок в трее, меню
 internal/platform              автозапуск (реестр Windows / .desktop), окно ошибки, открытие браузера
 web/client/editor              редактор (main.ts, index.html): слои, drag/resize/rotate, Alt+клик — перебор объектов под курсором, импорт из OBS
@@ -39,11 +40,16 @@ web/shared/types.ts            типы клиента ↔ сервера
 ```
 
 ## Модель данных и правила
-- Source: `{id,name,type:"iframe",data:{url,proxy}}`. Object: `{id,name,sourceId,transform{x,y,z,width,height,rotationX/Y/Z,scaleX/Y/Z},opacity,visible,locked,zIndex}`.
+- Source: `{id,name,type:"iframe"|"plugin",data:{url,proxy | plugin,settings}}`. Object: `{id,name,sourceId,transform{x,y,z,width,height,rotationX/Y/Z,scaleX/Y/Z},opacity,visible,locked,zIndex}`.
 - `Object.instanceId` (необязательный): объекты с одним instanceId в разных layout — один виджет; ключ пула iframe в `scene.ts` = `i:<instanceId>`,
   иначе `sourceId#n` (n — номер среди объектов source без instanceId). Копирование между layout (`editor/main.ts`: `cloneObject`, `ensureInstanceId`,
   Copy to layout…, Ctrl+C/V) клиентское: GET целевого layout → push → PUT. «Связанная» копия берёт instanceId оригинала (оригиналу он назначается при копировании
   и layout сохраняется, если не было несохранённых правок); в тот же layout и повторно в тот же target — всегда независимая.
+- Плагины-виджеты (`docs/PLUGINS.md`): источник type "plugin" (`data.plugin` = id, `data.settings` = значения по схеме). `scene.ts frameUrl` строит
+  `/plugins/<id>/?k=v…` (в query только сохранённые значения; умолчания знает сам виджет), iframe плагина — с `sandbox` без allow-same-origin.
+  Сервер: `Registry` пересканирует папку при `GET /api/plugins` и при промахе `Get`; `CleanSettings` валидирует значения по схеме (создание/PUT источника).
+  Редактор: `pluginSettings`/`settingControl` строят форму по манифесту, каждое изменение — PUT `data.settings` целиком. Демо-виджетов (clock/box) нет;
+  Seed создаёт только пустой layout «Default». Wasm не используется: виджеты клиентские (WebSocket из iframe), wasm имеет смысл лишь для серверной части плагина.
 - Crop: `transform.cropLeft/Top/Right/Bottom` (px виджета до масштаба, ≥0, видимая часть ≥ 1; пусто = 0). `x/y/width/height` — весь виджет, а видимая часть
   (`visibleBox` в `web/shared/types.ts`) — прямоугольник внутри; поворот и масштаб — вокруг центра **видимой части**. Рендер (`scene.ts`): контейнер = видимая часть
   с `overflow:hidden`, iframe полного размера смещён на `-crop`. Редактор: Alt+ручка → `startCrop` (содержимое остаётся на месте: `contentCenter`/`placeByContentCenter`),
