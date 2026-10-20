@@ -21,6 +21,12 @@
 ### Импорт сцены из OBS
 **⚙ Settings → Import from OBS** → выберите сцену → **Import as layout**. Для каждого Browser Source создаётся виджет и слой с тем же размером, положением, поворотом, порядком и видимостью (группы и вложенные сцены разворачиваются). Внешние сайты подключаются через прокси, `localhost`/`127.0.0.1` — напрямую. Не переносятся: обрезка (crop; задайте в редакторе), отражение, фильтры, локальные файлы и не-браузерные источники — они перечислены в отчёте.
 
+### Виджеты-плагины (чат Twitch и ваши собственные)
+**+ Add Source → a widget plugin** добавляет готовый виджет с настройками прямо в редакторе: выберите слой — справа появится форма
+(шрифт, размер и цвет ника и сообщений, фон, имя канала и т. д.). Сейчас встроен **Twitch Chat** (анонимное чтение чата, эмодзи Twitch, без авторизации).
+Свои плагины кладутся в папку `plugins/` (кнопка **Open plugins folder** там же): плагин — это папка с `plugin.json` и HTML/JS, формат описан в [`docs/PLUGINS.md`](docs/PLUGINS.md).
+Плагин запускает произвольный код — ставьте только проверенные.
+
 ### Виджеты, которые запрещают встраивание (DonationAlerts и подобные)
 Если сайт не показывается внутри overlay, у виджета включите **proxy** — программа откроет его через себя, убрав запрещающие заголовки. Работают HTTP, WebSocket и long-poll. Если после этого что-то не работает, пришлите лог (см. ниже).
 
@@ -37,8 +43,8 @@
 ## Где лежат данные
 | ОС | Конфиг | Данные и логи |
 |---|---|---|
-| Windows | `%APPDATA%\OverlayComposer\config.json` | `%APPDATA%\OverlayComposer\data`, `logs` |
-| Linux | `~/.config/overlay-composer/config.json` | `~/.local/share/overlay-composer/{data,logs}` |
+| Windows | `%APPDATA%\OverlayComposer\config.json` | `%APPDATA%\OverlayComposer\data`, `plugins`, `logs` |
+| Linux | `~/.config/overlay-composer/config.json` | `~/.local/share/overlay-composer/{data,plugins,logs}` |
 | macOS | `~/Library/Application Support/OverlayComposer` | там же |
 
 Адрес и порт меняются в **⚙ Settings** (`Listen on`, `Port`; по умолчанию `127.0.0.1:8000`). Откройте их на другом адресе только если понимаете, зачем: авторизации пока нет.

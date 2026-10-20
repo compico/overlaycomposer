@@ -62,6 +62,7 @@ func (s *Server) api() {
 	app.Put("/api/layouts/:id", s.putLayout)
 	app.Delete("/api/layouts/:id", s.deleteLayout)
 
+	app.Get("/api/plugins", func(c fiber.Ctx) error { return c.JSON(s.d.Plugins.List()) })
 	app.Get("/api/sources", s.listSources)
 	app.Post("/api/sources", s.createSource)
 	app.Put("/api/sources/:id", s.putSource)
@@ -304,14 +305,27 @@ func (s *Server) listSources(c fiber.Ctx) error {
 
 func (s *Server) createSource(c fiber.Ctx) error {
 	var b model.Source
-	if !body(c, &b) || !model.IsValidID(b.ID) || b.Name == "" || b.Type != "iframe" {
-		return bad(c, "invalid source (MVP-1 supports iframe only)")
+	if !body(c, &b) || !model.IsValidID(b.ID) || b.Name == "" || (b.Type != "iframe" && b.Type != "plugin") {
+		return bad(c, "invalid source (type: iframe | plugin)")
 	}
-	if !model.SafeURL(b.Data.URL) {
-		return bad(c, "invalid url (only http/https or /path)")
-	}
-	if b.Data.Proxy && !model.IsAbsHTTP(b.Data.URL) {
-		return bad(c, "proxy needs an absolute http(s) URL")
+	if b.Type == "plugin" {
+		p, ok := s.d.Plugins.Get(b.Data.Plugin)
+		if !ok {
+			return bad(c, "unknown plugin")
+		}
+		settings, err := p.CleanSettings(b.Data.Settings)
+		if err != nil {
+			return bad(c, "invalid settings: "+err.Error())
+		}
+		b.Data = model.SourceData{Plugin: p.ID, Settings: settings} // URL и proxy у плагина не бывает
+	} else {
+		if !model.SafeURL(b.Data.URL) {
+			return bad(c, "invalid url (only http/https or /path)")
+		}
+		if b.Data.Proxy && !model.IsAbsHTTP(b.Data.URL) {
+			return bad(c, "proxy needs an absolute http(s) URL")
+		}
+		b.Data.Plugin, b.Data.Settings = "", nil
 	}
 	if old, err := s.d.Store.GetSource(b.ID); err != nil {
 		return serverErr(c, err)
@@ -333,8 +347,9 @@ func (s *Server) putSource(c fiber.Ctx) error {
 	var b struct {
 		Name string `json:"name"`
 		Data *struct {
-			URL   *string `json:"url"`
-			Proxy *bool   `json:"proxy"`
+			URL      *string        `json:"url"`
+			Proxy    *bool          `json:"proxy"`
+			Settings map[string]any `json:"settings"` // только для плагин-виджетов: заменяет все настройки
 		} `json:"data"`
 	}
 	if cur == nil || !body(c, &b) {
@@ -352,6 +367,17 @@ func (s *Server) putSource(c fiber.Ctx) error {
 		}
 		if b.Data.Proxy != nil {
 			cur.Data.Proxy = *b.Data.Proxy
+		}
+		if b.Data.Settings != nil {
+			p, ok := s.d.Plugins.Get(cur.Data.Plugin)
+			if cur.Type != "plugin" || !ok {
+				return bad(c, "source is not a known plugin widget")
+			}
+			settings, err := p.CleanSettings(b.Data.Settings)
+			if err != nil {
+				return bad(c, "invalid settings: "+err.Error())
+			}
+			cur.Data.Settings = settings
 		}
 	}
 	if cur.Data.Proxy && !model.IsAbsHTTP(cur.Data.URL) {
@@ -402,6 +428,7 @@ func (s *Server) appInfo(c fiber.Ctx) error {
 		"os":            osName,
 		"configFile":    s.d.Paths.ConfigFile,
 		"dataDir":       s.d.Paths.DataDir,
+		"pluginsDir":    s.d.Paths.PluginsDir,
 		"logFile":       s.d.Paths.LogFile,
 		"autostart":     autostart, // null — не поддерживается
 		"tray":          a.TrayRunning != nil && a.TrayRunning(),
@@ -434,8 +461,8 @@ func (s *Server) appOpen(c fiber.Ctx) error {
 	var b struct {
 		What string `json:"what"`
 	}
-	if !body(c, &b) || (b.What != "data" && b.What != "logs") {
-		return bad(c, "what: data | logs")
+	if !body(c, &b) || (b.What != "data" && b.What != "logs" && b.What != "plugins") {
+		return bad(c, "what: data | logs | plugins")
 	}
 	if s.d.App.Open != nil {
 		if err := s.d.App.Open(b.What); err != nil {

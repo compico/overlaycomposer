@@ -71,6 +71,9 @@ type Layout struct {
 type SourceData struct {
 	URL   string `json:"url,omitempty"`
 	Proxy bool   `json:"proxy,omitempty"`
+	// Для type "plugin": id плагина-виджета и его настройки (значения по схеме из plugin.json; передаются виджету в query).
+	Plugin   string         `json:"plugin,omitempty"`
+	Settings map[string]any `json:"settings,omitempty"`
 }
 
 // Source — «что показывать». В MVP только iframe.

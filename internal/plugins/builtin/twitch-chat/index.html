@@ -1,0 +1,207 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Twitch Chat</title>
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+  #chat { position: absolute; inset: 0; display: flex; flex-direction: column; overflow: hidden; }
+  .msg { flex: none; word-wrap: break-word; overflow-wrap: anywhere; transition: opacity .6s; }
+  .msg.fade { opacity: 0; }
+  .msg .emote { height: 1.4em; vertical-align: middle; margin: 0 .05em; }
+  .msg .nick { margin-right: 0; }
+  .msg.action .text { font-style: italic; }
+  #hint[hidden] { display: none; }
+  #hint { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center;
+          color: #fff; font: 16px system-ui, sans-serif; background: rgba(0,0,0,.45); padding: 12px; box-sizing: border-box; }
+</style>
+</head>
+<body>
+<div id="chat"></div>
+<div id="hint" hidden></div>
+<script>
+(function () {
+  "use strict";
+  // Значения по умолчанию совпадают с plugin.json; редактор передаёт только изменённые настройки в query.
+  var Q = new URLSearchParams(location.search);
+  function str(k, d) { return Q.has(k) ? Q.get(k) : d; }
+  function num(k, d) { var v = parseFloat(Q.get(k)); return isFinite(v) ? v : d; }
+  function bool(k, d) { return Q.has(k) ? Q.get(k) === "true" : d; }
+
+  var S = {
+    channel: str("channel", "").trim().replace(/^#/, "").toLowerCase(),
+    maxMessages: Math.max(1, num("maxMessages", 20)), fadeSeconds: Math.max(0, num("fadeSeconds", 0)),
+    direction: str("direction", "bottom"), gap: num("gap", 6),
+    hideCommands: bool("hideCommands", true), showEmotes: bool("showEmotes", true),
+    ignore: str("ignoreUsers", "nightbot,streamelements,moobot").toLowerCase().split(",").map(function (s) { return s.trim(); }).filter(Boolean),
+    msgFont: str("msgFont", "Segoe UI"), msgSize: num("msgSize", 28), msgColor: str("msgColor", "#ffffff"), msgBold: bool("msgBold", false), shadow: bool("shadow", true),
+    nickFont: str("nickFont", "Segoe UI"), nickSize: num("nickSize", 28), nickBold: bool("nickBold", true),
+    useTwitchColor: bool("useTwitchColor", true), nickColor: str("nickColor", "#9146ff"), separator: str("separator", ": "),
+    bgColor: str("bgColor", "#000000"), bgOpacity: num("bgOpacity", 0), padding: num("padding", 6), radius: num("radius", 8),
+    googleFonts: bool("googleFonts", false)
+  };
+
+  var chat = document.getElementById("chat"), hint = document.getElementById("hint");
+  chat.style.justifyContent = S.direction === "top" ? "flex-start" : "flex-end";
+
+  function showHint(t) { if (t) { hint.textContent = t; hint.hidden = false; } else hint.hidden = true; }
+
+  function rgba(hex, a) {
+    var h = hex.replace("#", "");
+    if (h.length === 3) h = h.split("").map(function (c) { return c + c; }).join("");
+    var n = parseInt(h.slice(0, 6), 16);
+    return "rgba(" + (n >> 16 & 255) + "," + (n >> 8 & 255) + "," + (n & 255) + "," + a + ")";
+  }
+  function fontStack(name) { return '"' + name.replace(/["\\]/g, "") + '", system-ui, sans-serif'; }
+
+  if (S.googleFonts) {
+    [S.msgFont, S.nickFont].forEach(function (f) {
+      var l = document.createElement("link");
+      l.rel = "stylesheet";
+      l.href = "https://fonts.googleapis.com/css2?family=" + encodeURIComponent(f).replace(/%20/g, "+") + ":wght@400;700&display=swap";
+      document.head.appendChild(l);
+    });
+  }
+
+  var PALETTE = ["#ff4a4a", "#ff8a1f", "#e6c200", "#3ecf5b", "#1fc7c7", "#4aa3ff", "#a56bff", "#ff5fb0"];
+  function fallbackColor(name) {
+    var h = 0;
+    for (var i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+    return PALETTE[h % PALETTE.length];
+  }
+
+  function parseTags(s) {
+    var o = {};
+    s.split(";").forEach(function (kv) {
+      var i = kv.indexOf("=");
+      o[i < 0 ? kv : kv.slice(0, i)] = i < 0 ? "" : kv.slice(i + 1).replace(/\\s/g, " ").replace(/\\:/g, ";").replace(/\\\\/g, "\\");
+    });
+    return o;
+  }
+
+  // Текст сообщения → фрагменты (строки и эмодзи) по индексам из тега emotes (индексы — в символах Unicode).
+  function pieces(text, emotes) {
+    var chars = Array.from(text), spans = [];
+    if (S.showEmotes && emotes) {
+      emotes.split("/").forEach(function (e) {
+        var p = e.split(":"); if (p.length < 2) return;
+        p[1].split(",").forEach(function (r) {
+          var se = r.split("-").map(Number);
+          if (isFinite(se[0]) && isFinite(se[1])) spans.push({ s: se[0], e: se[1], id: p[0] });
+        });
+      });
+    }
+    spans.sort(function (a, b) { return a.s - b.s; });
+    var out = [], pos = 0;
+    spans.forEach(function (sp) {
+      if (sp.s < pos) return;
+      if (sp.s > pos) out.push({ t: chars.slice(pos, sp.s).join("") });
+      out.push({ emote: sp.id, alt: chars.slice(sp.s, sp.e + 1).join("") });
+      pos = sp.e + 1;
+    });
+    if (pos < chars.length) out.push({ t: chars.slice(pos).join("") });
+    return out;
+  }
+
+  function addMessage(tags, nick, text, isAction) {
+    var el = document.createElement("div");
+    el.className = "msg" + (isAction ? " action" : "");
+    if (tags.id) el.dataset.id = tags.id;
+    el.dataset.login = (tags["login"] || nick).toLowerCase();
+    el.style.marginTop = S.direction === "bottom" ? S.gap + "px" : "0";
+    el.style.marginBottom = S.direction === "top" ? S.gap + "px" : "0";
+    el.style.padding = S.padding + "px";
+    el.style.borderRadius = S.radius + "px";
+    el.style.background = S.bgOpacity > 0 ? rgba(S.bgColor, S.bgOpacity / 100) : "transparent";
+    el.style.fontFamily = fontStack(S.msgFont);
+    el.style.fontSize = S.msgSize + "px";
+    el.style.color = S.msgColor;
+    el.style.fontWeight = S.msgBold ? "700" : "400";
+    if (S.shadow) el.style.textShadow = "0 1px 3px rgba(0,0,0,.85), 0 0 2px rgba(0,0,0,.8)";
+
+    var n = document.createElement("span");
+    n.className = "nick";
+    n.textContent = (tags["display-name"] || nick) + S.separator;
+    n.style.fontFamily = fontStack(S.nickFont);
+    n.style.fontSize = S.nickSize + "px";
+    n.style.fontWeight = S.nickBold ? "700" : "400";
+    n.style.color = S.useTwitchColor ? (/^#[0-9a-f]{6}$/i.test(tags.color || "") ? tags.color : fallbackColor(nick)) : S.nickColor;
+
+    var t = document.createElement("span");
+    t.className = "text";
+    pieces(text, tags.emotes).forEach(function (p) {
+      if (p.emote) {
+        var img = document.createElement("img");
+        img.className = "emote"; img.alt = p.alt; img.title = p.alt;
+        img.src = "https://static-cdn.jtvnw.net/emoticons/v2/" + encodeURIComponent(p.emote) + "/default/dark/2.0";
+        t.appendChild(img);
+      } else t.appendChild(document.createTextNode(p.t));
+    });
+    if (isAction) t.style.color = n.style.color;
+
+    el.append(n, t);
+    if (S.direction === "top") chat.insertBefore(el, chat.firstChild); else chat.appendChild(el);
+    trim();
+    if (S.fadeSeconds > 0) {
+      setTimeout(function () { el.classList.add("fade"); setTimeout(function () { el.remove(); }, 700); }, S.fadeSeconds * 1000);
+    }
+  }
+
+  // Убираем самые старые сообщения: по количеству и пока всё не помещается по высоте.
+  function trim() {
+    var old = function () { return S.direction === "top" ? chat.lastElementChild : chat.firstElementChild; };
+    while (chat.children.length > S.maxMessages) old().remove();
+    while (chat.scrollHeight > chat.clientHeight + 1 && chat.children.length > 1) old().remove();
+  }
+
+  function handleLine(line) {
+    var tags = {}, rest = line;
+    if (rest[0] === "@") { var sp = rest.indexOf(" "); tags = parseTags(rest.slice(1, sp)); rest = rest.slice(sp + 1); }
+    var prefix = "";
+    if (rest[0] === ":") { var sp2 = rest.indexOf(" "); prefix = rest.slice(1, sp2); rest = rest.slice(sp2 + 1); }
+    var trailingAt = rest.indexOf(" :"), params = trailingAt < 0 ? rest : rest.slice(0, trailingAt),
+        trailing = trailingAt < 0 ? "" : rest.slice(trailingAt + 2), parts = params.split(" "), cmd = parts[0];
+
+    if (cmd === "PRIVMSG") {
+      var nick = prefix.split("!")[0], text = trailing, action = false;
+      if (S.ignore.indexOf(nick.toLowerCase()) >= 0) return;
+      if (text.indexOf("\u0001ACTION ") === 0) { action = true; text = text.slice(8).replace(/\u0001$/, ""); }
+      if (S.hideCommands && text[0] === "!") return;
+      addMessage(tags, nick, text, action);
+    } else if (cmd === "CLEARMSG") {
+      var m = chat.querySelector('[data-id="' + (tags["target-msg-id"] || "").replace(/"/g, "") + '"]'); if (m) m.remove();
+    } else if (cmd === "CLEARCHAT") {
+      if (!trailing) chat.replaceChildren();
+      else chat.querySelectorAll(".msg").forEach(function (e) { if (e.dataset.login === trailing.toLowerCase()) e.remove(); });
+    }
+  }
+
+  var ws, retry = 0;
+  function connect() {
+    ws = new WebSocket("wss://irc-ws.chat.twitch.tv:443");
+    ws.onopen = function () {
+      retry = 0;
+      ws.send("CAP REQ :twitch.tv/tags twitch.tv/commands");
+      ws.send("PASS SCHMOOZE");
+      ws.send("NICK justinfan" + (10000 + Math.floor(Math.random() * 80000)));
+      ws.send("JOIN #" + S.channel);
+    };
+    ws.onmessage = function (ev) {
+      String(ev.data).split("\r\n").forEach(function (l) {
+        if (!l) return;
+        if (l.indexOf("PING") === 0) { ws.send("PONG :tmi.twitch.tv"); return; }
+        try { handleLine(l); } catch (e) { console.error(e); }
+      });
+    };
+    ws.onclose = function () { setTimeout(connect, Math.min(30000, 1000 * Math.pow(2, retry++))); };
+    ws.onerror = function () { try { ws.close(); } catch (e) {} };
+  }
+
+  if (!/^[a-z0-9_]{1,25}$/.test(S.channel)) {
+    // Показываем подсказку только пока пусто: в готовом оверлее это сразу видно и в редакторе, и в OBS.
+    showHint(S.channel ? "Invalid Twitch channel name" : "Set the Twitch channel in the widget settings");
+  } else connect();
+})();
+</script>
+</body>
+</html>

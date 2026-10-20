@@ -1,0 +1,39 @@
+{
+  "id": "twitch-chat",
+  "name": "Twitch Chat",
+  "version": "1.0.0",
+  "description": "Чат Twitch без авторизации: ники, эмодзи, шрифты, цвета и фон настраиваются в редакторе.",
+  "defaultSize": { "width": 480, "height": 600 },
+  "settings": [
+    { "key": "channel", "label": "Twitch channel", "type": "string", "group": "Channel", "help": "Имя канала, например shroud (без #)" },
+
+    { "key": "maxMessages", "label": "Max messages", "type": "number", "group": "Messages", "default": 20, "min": 1, "max": 200 },
+    { "key": "fadeSeconds", "label": "Hide after, seconds (0 = never)", "type": "number", "group": "Messages", "default": 0, "min": 0, "max": 3600 },
+    { "key": "direction", "label": "New messages", "type": "select", "group": "Messages", "default": "bottom",
+      "options": [ { "value": "bottom", "label": "appear at the bottom" }, { "value": "top", "label": "appear at the top" } ] },
+    { "key": "gap", "label": "Gap between messages, px", "type": "number", "group": "Messages", "default": 6, "min": 0, "max": 100 },
+    { "key": "hideCommands", "label": "Hide commands (!…)", "type": "bool", "group": "Messages", "default": true },
+    { "key": "ignoreUsers", "label": "Ignore users", "type": "string", "group": "Messages", "default": "nightbot,streamelements,moobot", "help": "Через запятую, регистр не важен" },
+    { "key": "showEmotes", "label": "Show Twitch emotes", "type": "bool", "group": "Messages", "default": true },
+
+    { "key": "msgFont", "label": "Font", "type": "font", "group": "Message text", "default": "Segoe UI" },
+    { "key": "msgSize", "label": "Size, px", "type": "number", "group": "Message text", "default": 28, "min": 8, "max": 200 },
+    { "key": "msgColor", "label": "Color", "type": "color", "group": "Message text", "default": "#ffffff" },
+    { "key": "msgBold", "label": "Bold", "type": "bool", "group": "Message text", "default": false },
+    { "key": "shadow", "label": "Text shadow", "type": "bool", "group": "Message text", "default": true },
+
+    { "key": "nickFont", "label": "Font", "type": "font", "group": "Nickname", "default": "Segoe UI" },
+    { "key": "nickSize", "label": "Size, px", "type": "number", "group": "Nickname", "default": 28, "min": 8, "max": 200 },
+    { "key": "nickBold", "label": "Bold", "type": "bool", "group": "Nickname", "default": true },
+    { "key": "useTwitchColor", "label": "Use the user's Twitch color", "type": "bool", "group": "Nickname", "default": true },
+    { "key": "nickColor", "label": "Color (if not Twitch color)", "type": "color", "group": "Nickname", "default": "#9146ff" },
+    { "key": "separator", "label": "Separator after nickname", "type": "string", "group": "Nickname", "default": ": " },
+
+    { "key": "bgColor", "label": "Message background", "type": "color", "group": "Background", "default": "#000000" },
+    { "key": "bgOpacity", "label": "Background opacity, %", "type": "range", "group": "Background", "default": 0, "min": 0, "max": 100, "step": 1 },
+    { "key": "padding", "label": "Padding, px", "type": "number", "group": "Background", "default": 6, "min": 0, "max": 60 },
+    { "key": "radius", "label": "Corner radius, px", "type": "number", "group": "Background", "default": 8, "min": 0, "max": 60 },
+
+    { "key": "googleFonts", "label": "Load fonts from Google Fonts by name", "type": "bool", "group": "Advanced", "default": false, "help": "Нужен интернет; системные шрифты работают и без этого" }
+  ]
+}

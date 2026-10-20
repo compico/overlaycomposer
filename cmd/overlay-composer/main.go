@@ -25,6 +25,7 @@ import (
 	"github.com/compico/overlaycomposer/internal/obs"
 	"github.com/compico/overlaycomposer/internal/paths"
 	"github.com/compico/overlaycomposer/internal/platform"
+	"github.com/compico/overlaycomposer/internal/plugins"
 	"github.com/compico/overlaycomposer/internal/proxy"
 	"github.com/compico/overlaycomposer/internal/server"
 	"github.com/compico/overlaycomposer/internal/store"
@@ -117,13 +118,17 @@ func run() int {
 
 	srv = server.New(server.Deps{
 		Paths: p, Cfg: cfgStore, Running: cfg, Store: st, Hub: h, Obs: obsClient, Proxy: px,
+		Plugins: plugins.New(plugins.Builtin(), os.DirFS(p.PluginsDir)),
 		App: server.App{
 			OS:           runtime.GOOS,
 			Autostart:    platform.Autostart,
 			SetAutostart: func(on bool) error { err := platform.SetAutostart(on); syncTray(tr); return err },
 			Open: func(what string) error {
-				if what == "logs" {
+				switch what {
+				case "logs":
 					return platform.OpenTarget(p.LogDir)
+				case "plugins":
+					return platform.OpenTarget(p.PluginsDir)
 				}
 				return platform.OpenTarget(p.DataDir)
 			},
@@ -249,7 +254,7 @@ func ours(host string, port int) bool {
 	return resp.StatusCode == 200 && json.NewDecoder(resp.Body).Decode(&v) == nil && v.ConfigFile != ""
 }
 
-// openStore открывает базу и наполняет пустую демо-данными.
+// openStore открывает базу; в пустой создаётся layout по умолчанию.
 func openStore(p paths.Paths) (*store.Store, error) {
 	st, err := store.Open(filepath.Join(p.DataDir, "overlay.db"))
 	if err != nil {

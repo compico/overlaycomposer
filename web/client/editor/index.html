@@ -69,6 +69,12 @@
     dialog label { display: block; margin: 8px 0 2px; color: var(--muted); font-size: 11px; }
     label.chk, dialog label.chk { display: flex; flex-direction: row; gap: 6px; align-items: center; margin: 8px 0 2px; color: var(--text); font-size: 12px; }
     label.chk input { width: auto; }
+    .setting { display: flex; flex-direction: column; gap: 2px; margin: 6px 0; color: var(--muted); font-size: 11px; }
+    .setting .line { display: flex; gap: 4px; align-items: center; }
+    .setting .line > input:not([type=checkbox]), .setting .line > select, .setting .line > textarea { flex: 1; min-width: 0; }
+    .setting input[type=color] { padding: 0; height: 26px; width: 40px; flex: none !important; }
+    .setting .ib { flex: none; }
+    h4.group { margin: 12px 0 2px; font-size: 11px; color: var(--accent); text-transform: uppercase; letter-spacing: .04em; }
     .hint { color: var(--muted); font-size: 11px; margin: 4px 0; }
     .hint.warn { color: #ffb454; }
     code { background: var(--bg); padding: 0 4px; border-radius: 4px; }
@@ -121,6 +127,14 @@
       <label>Existing source</label>
       <select id="existingSource" style="width:100%"></select>
       <div class="row" style="margin-top:6px"><button type="button" id="useExistingBtn">Place on layout</button></div>
+      <hr style="border-color:var(--line)">
+      <label>…or a widget plugin</label>
+      <select id="pluginSelect" style="width:100%"></select>
+      <div class="hint" id="pluginHint"></div>
+      <div class="row">
+        <button type="button" id="usePluginBtn">Create &amp; place plugin</button>
+        <button type="button" id="openPluginsBtn" title="Folder for your own plugins">Open plugins folder</button>
+      </div>
       <hr style="border-color:var(--line)">
       <label>…or new iframe — name</label>
       <input type="text" id="newName" placeholder="Twitch Chat">
