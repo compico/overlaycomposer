@@ -1123,7 +1123,71 @@ function showStatus(c: ConfigView) {
 async function refreshStatus() {
   try { showStatus(await api<ConfigView>("/api/config")); } catch { /* сервер перезапускается */ }
   loadDevices();
+  loadTwitch();
 }
+
+interface TwitchView {
+  clientId: string;
+  hasSecret: boolean;
+  redirectUri: string;
+  accounts: { role: string; login: string; scopes: string[]; error?: string }[];
+}
+
+const TW_ROLES: [string, string][] = [["streamer", "Streamer"], ["bot", "Bot"]];
+let twFormFilled = false;
+
+// Раздел «Twitch accounts»; как и Remote devices, виден только на самом компьютере (с других сервер отвечает 403).
+async function loadTwitch() {
+  const box = $("twBox");
+  let v: TwitchView;
+  try { v = await api<TwitchView>("/api/twitch"); } catch { box.hidden = true; return; }
+  box.hidden = false;
+  $("twRedirect").textContent = v.redirectUri;
+  if (!twFormFilled) { // поля заполняем один раз, чтобы опрос не затирал ввод
+    $<HTMLInputElement>("twClientId").value = v.clientId;
+    $<HTMLInputElement>("twClientSecret").placeholder = v.hasSecret ? "saved — leave empty to keep" : "client secret";
+    twFormFilled = true;
+  }
+  $("twAppHint").textContent = v.clientId && v.hasSecret ? "" : "Enter Client ID and Client Secret, then connect accounts.";
+  const ready = !!v.clientId && v.hasSecret;
+  $("twAccounts").replaceChildren(...TW_ROLES.map(([role, title]) => {
+    const acc = v.accounts.find((a) => a.role === role);
+    const info = el("span", {
+      class: acc?.error ? "hint warn" : "hint",
+      textContent: acc ? `${title}: ${acc.login}${acc.error ? ` — ${acc.error}` : ""}` : `${title}: not connected`,
+    });
+    const connect = el("button", { type: "button", textContent: acc ? "Reconnect" : "Connect", disabled: !ready });
+    connect.addEventListener("click", async () => {
+      try {
+        const r = await api<{ url: string }>(`/api/twitch/connect/${role}`, "POST", {});
+        window.open(r.url, "_blank");
+      } catch (e) { fail(e); }
+    });
+    const btns = el("span", { class: "row" }, connect);
+    if (acc) {
+      const off = el("button", { type: "button", textContent: "Disconnect" });
+      off.addEventListener("click", async () => {
+        if (!confirm(`Disconnect Twitch account “${acc.login}”?`)) return;
+        try { await api(`/api/twitch/accounts/${role}`, "DELETE"); loadTwitch(); } catch (e) { fail(e); }
+      });
+      btns.append(off);
+    }
+    return el("div", { class: "row", style: "justify-content:space-between" }, info, btns);
+  }));
+}
+
+$("twSaveApp").addEventListener("click", async () => {
+  try {
+    await api("/api/twitch/app", "PUT", {
+      clientId: $<HTMLInputElement>("twClientId").value,
+      clientSecret: $<HTMLInputElement>("twClientSecret").value,
+    });
+    $<HTMLInputElement>("twClientSecret").value = "";
+    twFormFilled = false;
+    await loadTwitch();
+    toast("Twitch application saved");
+  } catch (e) { fail(e); }
+});
 
 interface DevicesView {
   code: string;
@@ -1206,6 +1270,8 @@ $("settingsBtn").addEventListener("click", async () => {
     loadAppInfo();
     loadImportScenes();
     loadDevices();
+    twFormFilled = false;
+    loadTwitch();
     settingsDialog.showModal();
     clearInterval(statusTimer);
     statusTimer = setInterval(refreshStatus, 2000) as unknown as number;

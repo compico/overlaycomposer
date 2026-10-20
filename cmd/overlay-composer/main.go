@@ -31,6 +31,7 @@ import (
 	"github.com/compico/overlaycomposer/internal/server"
 	"github.com/compico/overlaycomposer/internal/store"
 	"github.com/compico/overlaycomposer/internal/tray"
+	"github.com/compico/overlaycomposer/internal/twitch"
 )
 
 // version подставляется при сборке: -ldflags "-X main.version=1.2.3"
@@ -127,6 +128,7 @@ func run() int {
 	srv = server.New(server.Deps{
 		Paths: p, Cfg: cfgStore, Running: cfg, Store: st, Hub: h, Obs: obsClient, Proxy: px,
 		Auth:    authMgr,
+		Twitch:  twitch.New(twitch.FromStore(st)),
 		Plugins: plugins.New(plugins.Builtin(), os.DirFS(p.PluginsDir)),
 		App: server.App{
 			OS:           runtime.GOOS,

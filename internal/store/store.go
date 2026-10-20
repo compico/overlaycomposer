@@ -72,7 +72,7 @@ func Open(path string) (*Store, error) {
 	if sqlDB, err := db.DB(); err == nil {
 		sqlDB.SetMaxOpenConns(1) // один писатель: без «database is locked»
 	}
-	if err := db.AutoMigrate(&sourceRow{}, &layoutRow{}, &sceneRow{}, &settingRow{}, &DeviceRow{}); err != nil {
+	if err := db.AutoMigrate(&sourceRow{}, &layoutRow{}, &sceneRow{}, &settingRow{}, &DeviceRow{}, &TwitchAccountRow{}); err != nil {
 		return nil, err
 	}
 	return &Store{db: db}, nil
