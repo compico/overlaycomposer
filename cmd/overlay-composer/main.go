@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/compico/overlaycomposer/internal/auth"
 	"github.com/compico/overlaycomposer/internal/config"
 	"github.com/compico/overlaycomposer/internal/hub"
 	"github.com/compico/overlaycomposer/internal/logx"
@@ -116,8 +117,16 @@ func run() int {
 		})
 	}
 
+	authMgr, err := auth.New(auth.FromStore(st))
+	if err != nil {
+		slog.Error("авторизация устройств", "err", err)
+		platform.ErrorBox(paths.AppTitle, "Не удалось подготовить авторизацию устройств: "+err.Error())
+		return 1
+	}
+
 	srv = server.New(server.Deps{
 		Paths: p, Cfg: cfgStore, Running: cfg, Store: st, Hub: h, Obs: obsClient, Proxy: px,
+		Auth:    authMgr,
 		Plugins: plugins.New(plugins.Builtin(), os.DirFS(p.PluginsDir)),
 		App: server.App{
 			OS:           runtime.GOOS,

@@ -211,8 +211,20 @@
         </label>
         <label>Port<input type="number" id="cfgPort" min="1" max="65535"></label>
       </div>
-      <div class="hint warn" id="cfgHostWarn" hidden>No authentication yet: anyone on your network can open the editor and change settings. Use only on a trusted network.</div>
+      <div class="hint warn" id="cfgHostWarn" hidden>Other devices on your network will be able to reach this server, but only after pairing with a code (see “Remote devices” below). This computer stays open without a code.</div>
       <div class="hint">Listen address and port are applied after restarting the server.</div>
+
+      <div id="devBox" hidden>
+        <hr style="border-color:var(--line)">
+        <strong style="font-size:12px">Remote devices</strong>
+        <div class="hint" id="devHint"></div>
+        <div class="row" style="align-items:baseline">
+          <code id="devCode" style="font-size:26px;letter-spacing:5px"></code>
+          <span class="hint" id="devLeft"></span>
+        </div>
+        <div class="hint">On the other device open <code id="devUrl"></code> and enter the code. The code works once and changes every minute.</div>
+        <div id="devList"></div>
+      </div>
 
       <hr style="border-color:var(--line)">
       <strong style="font-size:12px">Application</strong>
