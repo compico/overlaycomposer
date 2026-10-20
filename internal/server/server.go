@@ -26,6 +26,7 @@ import (
 	"github.com/compico/overlaycomposer/internal/plugins"
 	"github.com/compico/overlaycomposer/internal/proxy"
 	"github.com/compico/overlaycomposer/internal/store"
+	"github.com/compico/overlaycomposer/internal/twitch"
 	"github.com/compico/overlaycomposer/web"
 )
 
@@ -50,6 +51,7 @@ type Deps struct {
 	Proxy   *proxy.Proxy
 	Plugins *plugins.Registry
 	Auth    *auth.Manager
+	Twitch  *twitch.Manager
 	App     App
 }
 
@@ -107,6 +109,7 @@ func (s *Server) routes() {
 	// 0.1 доступ с других устройств только по токену (с localhost — свободно)
 	app.Use(s.authGuard)
 	s.authRoutes()
+	s.twitchRoutes()
 
 	// 1. прокси (маршруты /proxy*, затем запросы со страниц, открытых через прокси)
 	s.d.Proxy.Register(app)

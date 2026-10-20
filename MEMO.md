@@ -29,6 +29,7 @@ internal/obs                   клиент obs-websocket 5.x (fasthttp/websocke
 internal/obsimport             импорт OBS-сцены как layout (матрицы, alignment, поворот по часовой, группы разворачиваются в плоский список)
 internal/proxy                 прокси (см. ниже)
 internal/auth                  доступ извне: одноразовый код (6 букв, 1 мин) → JWT HS256 (бессрочный, жив пока устройство в таблице devices), лимит перебора
+internal/twitch                аккаунты Twitch (роли streamer/bot): Authorization Code Flow, localhost-редирект, хранение и автообновление токенов
 internal/plugins               плагины-виджеты: plugin.json (схема настроек), Registry (builtin + папка plugins/), CleanSettings; builtin/twitch-chat
 internal/rewrite               NeutralizeFrameChecks — скрыть проверки «я во фрейме» (RE2 без lookaround)
 internal/server                Fiber: server.go (routes, accessLog), api.go (REST), import.go, pluginFile (/plugins/:id/*)
@@ -121,3 +122,10 @@ hub — один владелец состояния, одна блокиров�
 - Секрет подписи — в таблице settings (`auth_secret`), устройства — таблица `devices`. Отзыв = удаление строки (токен без срока, но проверяется по списку).
 - `/pair` — страница на ES5/XHR без зависимостей (должна открываться на старых браузерах, iPad/Safari 9).
 - Тесты: `internal/auth` (код, ротация, одноразовость, лимиты, подделка, отзыв), `internal/server/auth_test.go` (guard на Fiber, `app.Test` — клиент не loopback, поэтому «локальная» ветка проверяется только вручную).
+
+## Аккаунты Twitch
+- `internal/twitch.Manager`: Client ID/Secret — в таблице settings, аккаунты — `twitch_accounts` (токены открытым текстом). `AuthURL` (state одноразовый, 10 мин, `force_verify=true`) → `Callback` (обмен code, `/oauth2/validate`) → `Token(role)` (внутренний; обновляет за 5 мин до истечения, при 400/401 на refresh помечает `LastError` — нужно переподключить). Токены не сериализуются в JSON (`json:"-"`).
+- Redirect URI: `http://localhost:<порт>/auth/twitch/callback` (только localhost разрешён для http); смена Client ID сбрасывает аккаунты.
+- `server/twitch.go`: все маршруты `localOnly` (+ `appGuard` для изменяющих). Тест `server/twitch_test.go` идёт по настоящему loopback с поддельным Twitch (`Manager.UseBaseURL`).
+- Подводный камень: `c.Params`/`c.Query` указывают в переиспользуемый буфер — значения, которые сохраняются (state/role), копировать `strings.Clone` (тест поймал «bot» → «kot»).
+- Роли и права (`Scopes`) — в одном месте; новые права потребуют переподключения.

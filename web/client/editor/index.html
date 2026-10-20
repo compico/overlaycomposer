@@ -214,6 +214,23 @@
       <div class="hint warn" id="cfgHostWarn" hidden>Other devices on your network will be able to reach this server, but only after pairing with a code (see “Remote devices” below). This computer stays open without a code.</div>
       <div class="hint">Listen address and port are applied after restarting the server.</div>
 
+      <div id="twBox" hidden>
+        <hr style="border-color:var(--line)">
+        <strong style="font-size:12px">Twitch accounts</strong>
+        <div class="hint">Create an application at <b>dev.twitch.tv/console</b> (Category: Chat Bot, Client Type: <b>Confidential</b>) and add this OAuth Redirect URL exactly:</div>
+        <code id="twRedirect" style="word-break:break-all;user-select:all"></code>
+        <div class="grid2">
+          <label>Client ID<input type="text" id="twClientId" autocomplete="off" spellcheck="false"></label>
+          <label>Client Secret<input type="password" id="twClientSecret" autocomplete="off"></label>
+        </div>
+        <div class="row"><button type="button" id="twSaveApp">Save application</button></div>
+        <div class="hint">Changing the Client ID disconnects the connected accounts (their tokens belong to the old application).</div>
+        <div class="hint" id="twAppHint"></div>
+        <div id="twAccounts"></div>
+        <div class="hint">Streamer account is the channel owner; the bot account (optional) is used to write to chat on behalf of a bot.
+          Tokens are stored only on this computer and are never given to plugins.</div>
+      </div>
+
       <div id="devBox" hidden>
         <hr style="border-color:var(--line)">
         <strong style="font-size:12px">Remote devices</strong>
