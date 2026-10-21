@@ -13,6 +13,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 
 	"github.com/compico/overlaycomposer/internal/auth"
+	"github.com/compico/overlaycomposer/internal/chat"
 	"github.com/compico/overlaycomposer/internal/config"
 	"github.com/compico/overlaycomposer/internal/twitch"
 )
@@ -34,7 +35,7 @@ func TestTwitchRoutesLocal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := &Server{d: Deps{Auth: am, Twitch: tw, Running: config.Config{Host: "127.0.0.1", Port: 8123}}}
+	s := &Server{d: Deps{Auth: am, Twitch: tw, Chat: chat.NewWithDialer(tw, nil), Running: config.Config{Host: "127.0.0.1", Port: 8123}}}
 	s.app = fiber.New()
 	s.app.Use(s.authGuard)
 	s.authRoutes()

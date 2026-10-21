@@ -74,6 +74,8 @@ type SourceData struct {
 	// Для type "plugin": id плагина-виджета и его настройки (значения по схеме из plugin.json; передаются виджету в query).
 	Plugin   string         `json:"plugin,omitempty"`
 	Settings map[string]any `json:"settings,omitempty"`
+	// Granted — разрешения, выданные плагину этим источником (подмножество permissions манифеста).
+	Granted []string `json:"granted,omitempty"`
 }
 
 // Source — «что показывать». В MVP только iframe.

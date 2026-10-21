@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/compico/overlaycomposer/internal/auth"
+	"github.com/compico/overlaycomposer/internal/chat"
 	"github.com/compico/overlaycomposer/internal/config"
 	"github.com/compico/overlaycomposer/internal/hub"
 	"github.com/compico/overlaycomposer/internal/logx"
@@ -125,10 +126,15 @@ func run() int {
 		return 1
 	}
 
+	twMgr := twitch.New(twitch.FromStore(st))
+	chatSvc := chat.New(twMgr)
+	defer chatSvc.Close()
+
 	srv = server.New(server.Deps{
 		Paths: p, Cfg: cfgStore, Running: cfg, Store: st, Hub: h, Obs: obsClient, Proxy: px,
 		Auth:    authMgr,
-		Twitch:  twitch.New(twitch.FromStore(st)),
+		Twitch:  twMgr,
+		Chat:    chatSvc,
 		Plugins: plugins.New(plugins.Builtin(), os.DirFS(p.PluginsDir)),
 		App: server.App{
 			OS:           runtime.GOOS,

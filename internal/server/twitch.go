@@ -77,6 +77,7 @@ func (s *Server) twitchDisconnect(c fiber.Ctx) error {
 	err := s.d.Twitch.Disconnect(c.Context(), c.Params("role"))
 	switch {
 	case err == nil:
+		s.d.Chat.Reload()
 		return c.JSON(fiber.Map{"ok": true})
 	case errors.Is(err, twitch.ErrBadRole):
 		return bad(c, err.Error())
@@ -97,6 +98,7 @@ func (s *Server) twitchCallback(c fiber.Ctx) error {
 		return s.twitchResult(c, fiber.StatusBadRequest, "Could not connect", err.Error())
 	}
 	slog.Info("twitch: аккаунт подключён", "role", acc.Role, "login", acc.Login)
+	s.d.Chat.Reload() // соединения для отправки пересоздадутся уже с новым аккаунтом
 	return s.twitchResult(c, fiber.StatusOK, "Connected as "+acc.Login, "Role: "+acc.Role+". You can close this tab and return to Overlay Composer.")
 }
 

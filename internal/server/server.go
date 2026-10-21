@@ -19,6 +19,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 
 	"github.com/compico/overlaycomposer/internal/auth"
+	"github.com/compico/overlaycomposer/internal/chat"
 	"github.com/compico/overlaycomposer/internal/config"
 	"github.com/compico/overlaycomposer/internal/hub"
 	"github.com/compico/overlaycomposer/internal/obs"
@@ -52,6 +53,7 @@ type Deps struct {
 	Plugins *plugins.Registry
 	Auth    *auth.Manager
 	Twitch  *twitch.Manager
+	Chat    *chat.Service
 	App     App
 }
 
@@ -80,6 +82,7 @@ func New(d Deps) *Server {
 		},
 	})
 	s.routes()
+	s.chatWS()
 	return s
 }
 
@@ -106,7 +109,8 @@ func (s *Server) routes() {
 	app := s.app
 	// 0. журнал доступа к страницам и бандлам: видно, дошёл ли OBS до /overlay, /dist/* и /ws
 	app.Use(s.accessLog)
-	// 0.1 доступ с других устройств только по токену (с localhost — свободно)
+	// 0.1 запросы с чужих страниц (Origin ≠ Host) отклоняем; затем доступ с других устройств только по токену (с localhost — свободно)
+	app.Use(s.originGuard)
 	app.Use(s.authGuard)
 	s.authRoutes()
 	s.twitchRoutes()
@@ -123,6 +127,7 @@ func (s *Server) routes() {
 	app.Get("/editor", s.page(web.EditorHTML))
 	app.Get("/overlay", s.page(web.OverlayHTML))
 	app.Get("/dist/*", s.dist)
+	app.Get("/plugin-sdk/:name", s.pluginSDK)
 	app.Get("/plugins/:id/*", s.pluginFile)
 	app.Get("/plugins/:id", func(c fiber.Ctx) error { return c.Redirect().To("/plugins/" + c.Params("id") + "/") })
 }
@@ -214,6 +219,30 @@ func (s *Server) pluginFile(c fiber.Ctx) error {
 	ct := mime.TypeByExtension(path.Ext(name))
 	if ct == "" {
 		ct = "application/octet-stream"
+	}
+	c.Set("Content-Type", ct)
+	c.Set("Cache-Control", "no-cache")
+	c.Set("Access-Control-Allow-Origin", "*")
+	c.Set("X-Content-Type-Options", "nosniff")
+	return c.Send(b)
+}
+
+// pluginSDK раздаёт SDK для плагинов: oc.js (бандл) и oc.d.ts (типы). Публичные файлы, как и сами плагины.
+func (s *Server) pluginSDK(c fiber.Ctx) error {
+	var b []byte
+	var err error
+	ct := "text/javascript; charset=utf-8"
+	switch c.Params("name") {
+	case "oc.js":
+		b, err = fs.ReadFile(web.Dist(), "oc.js")
+	case "oc.d.ts":
+		b, err = web.SDKTypes()
+		ct = "text/plain; charset=utf-8"
+	default:
+		return fiber.ErrNotFound
+	}
+	if err != nil {
+		return fiber.ErrNotFound
 	}
 	c.Set("Content-Type", ct)
 	c.Set("Cache-Control", "no-cache")

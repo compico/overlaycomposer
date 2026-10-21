@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { CSS3DObject, CSS3DRenderer } from "three/addons/renderers/CSS3DRenderer.js";
 import type { Layout, LayoutObject, Source } from "../../shared/types.ts";
 import { visibleBox } from "../../shared/types.ts";
+import type { PluginHost } from "./pluginhost.ts";
 
 const FOV = 50;
 
@@ -49,6 +50,8 @@ interface Entry {
   el: HTMLDivElement;
   frame: HTMLIFrameElement;
   url: string;
+  /** Выданные плагину разрешения (меняются без смены url — тогда запись пересоздаётся). */
+  granted: string;
 }
 
 /**
@@ -69,7 +72,7 @@ export class OverlayScene {
   #layout: Layout | null = null;
   #scale = 1;
 
-  constructor(private host: HTMLElement, private opts: { interactive: boolean }) {
+  constructor(private host: HTMLElement, private opts: { interactive: boolean; plugins?: PluginHost }) {
     this.root = document.createElement("div");
     this.root.style.cssText = "position:absolute;left:0;top:0;transform-origin:0 0;";
     this.#renderer.domElement.style.cssText = "position:absolute;left:0;top:0;";
@@ -130,12 +133,18 @@ export class OverlayScene {
       used.add(key);
 
       let e = this.#pool.get(key);
-      if (e && e.url !== url) {
+      const granted = src.type === "plugin" ? JSON.stringify(src.data.granted ?? []) : "";
+      if (e && (e.url !== url || e.granted !== granted)) {
         this.#removeEntry(e);
         e = undefined;
       }
       if (!e) {
-        e = this.#createEntry(key, url, src.type === "plugin");
+        e = this.#createEntry(key, url, src.type === "plugin", granted);
+        if (src.type === "plugin") {
+          this.opts.plugins?.register(e.frame, {
+            pluginId: src.data.plugin ?? "", sourceId: src.id, settings: src.data.settings ?? {}, permissions: src.data.granted ?? [],
+          });
+        }
         this.#pool.set(key, e);
         this.#scene.add(e.obj3d);
       }
@@ -171,7 +180,7 @@ export class OverlayScene {
     this.root.style.height = `${H}px`;
   }
 
-  #createEntry(key: string, url: string, sandboxed: boolean): Entry {
+  #createEntry(key: string, url: string, sandboxed: boolean, granted: string): Entry {
     const el = document.createElement("div");
     el.style.overflow = "hidden";
     const frame = document.createElement("iframe");
@@ -186,10 +195,11 @@ export class OverlayScene {
     if (this.opts.interactive) frame.style.pointerEvents = "none";
     el.appendChild(frame);
     const obj3d = new CSS3DObject(el);
-    return { key, obj3d, el, frame, url };
+    return { key, obj3d, el, frame, url, granted };
   }
 
   #removeEntry(e: Entry) {
+    this.opts.plugins?.unregister(e.frame);
     this.#scene.remove(e.obj3d);
     e.frame.src = "about:blank";
     e.el.remove();

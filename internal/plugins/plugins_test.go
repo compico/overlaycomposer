@@ -133,3 +133,27 @@ func TestCleanSettings(t *testing.T) {
 		}
 	}
 }
+
+func TestPermissions(t *testing.T) {
+	m := Manifest{ID: "p", Name: "P", Permissions: []string{PermChatRead, PermChatSend}}
+	if err := m.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if (&Manifest{ID: "p", Name: "P", Permissions: []string{"chat.read", "root"}}).Validate() == nil {
+		t.Fatal("unknown permission accepted")
+	}
+	if (&Manifest{ID: "p", Name: "P", Permissions: []string{"chat.read", "chat.read"}}).Validate() == nil {
+		t.Fatal("duplicate permission accepted")
+	}
+	got, err := m.CleanGranted([]string{"chat.send", "chat.send"})
+	if err != nil || len(got) != 1 || got[0] != "chat.send" {
+		t.Fatalf("clean: %v %v", got, err)
+	}
+	if got, err := m.CleanGranted(nil); err != nil || got == nil || len(got) != 0 {
+		t.Fatalf("empty: %#v %v", got, err)
+	}
+	only := Manifest{ID: "q", Name: "Q", Permissions: []string{PermChatRead}}
+	if _, err := only.CleanGranted([]string{"chat.send"}); err == nil {
+		t.Fatal("granted a permission the plugin did not request")
+	}
+}

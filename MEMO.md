@@ -29,6 +29,7 @@ internal/obs                   клиент obs-websocket 5.x (fasthttp/websocke
 internal/obsimport             импорт OBS-сцены как layout (матрицы, alignment, поворот по часовой, группы разворачиваются в плоский список)
 internal/proxy                 прокси (см. ниже)
 internal/auth                  доступ извне: одноразовый код (6 букв, 1 мин) → JWT HS256 (бессрочный, жив пока устройство в таблице devices), лимит перебора
+internal/chat                  общий чат Twitch для плагинов: анонимный IRC на чтение (подписки с refcount, JOIN/PART), IRC на отправку по аккаунту (бот/стример), лимиты, дедуп ответов
 internal/twitch                аккаунты Twitch (роли streamer/bot): Authorization Code Flow, localhost-редирект, хранение и автообновление токенов
 internal/plugins               плагины-виджеты: plugin.json (схема настроек), Registry (builtin + папка plugins/), CleanSettings; builtin/twitch-chat
 internal/rewrite               NeutralizeFrameChecks — скрыть проверки «я во фрейме» (RE2 без lookaround)
@@ -129,3 +130,13 @@ hub — один владелец состояния, одна блокиров�
 - `server/twitch.go`: все маршруты `localOnly` (+ `appGuard` для изменяющих). Тест `server/twitch_test.go` идёт по настоящему loopback с поддельным Twitch (`Manager.UseBaseURL`).
 - Подводный камень: `c.Params`/`c.Query` указывают в переиспользуемый буфер — значения, которые сохраняются (state/role), копировать `strings.Clone` (тест поймал «bot» → «kot»).
 - Роли и права (`Scopes`) — в одном месте; новые права потребуют переподключения.
+
+## API плагинов (этап 3)
+- Цепочка: iframe плагина (sandbox) ⇄ `postMessage` ⇄ `PluginHost` (`web/client/shared/pluginhost.ts`, на странице оверлея/редактора) ⇄ общий `/ws` (`chat:sub|unsub|say`, ответы `chat:*:result`, события `chat:event`) ⇄ `internal/server/chatws.go` ⇄ `chat.Service` ⇄ IRC Twitch.
+- Хост определяет плагин по `ev.source` (окно зарегистрированного iframe), права берёт из `source.data.granted` (⊆ `permissions` манифеста, валидируется сервером в `CleanGranted`). Смена `granted` пересоздаёт iframe (`Entry.granted`).
+- `PluginHost` в редакторе создаётся с `canSend:false` (предпросмотр читает чат, но не пишет). Подписки хоста зеркалируются 1:1 с серверными (серверный refcount по ключу «peer»); `onConnected()` переподписывает после разрыва `/ws`; закрытие страницы → `Hub.OnPeerGone` → `UnsubscribeAll`.
+- Читатель чата всегда анонимный (`justinfan…`): токен нужен только для отправки (`chat.Service.writerFor` берёт `twitch.Manager.Token`). После подключения/отключения аккаунта вызывается `Chat.Reload()` (закрывает writer-ы).
+- `say`: нормализация текста (≤500 симв.), лимиты (бот 18/30 с, стример 90/30 с), дедуп по `(роль, канал, replyTo, текст)` 15 с, `JOIN` канала перед первой отправкой. Ошибки Twitch (NOTICE) пишутся в лог и в `Status().Error`; `say` гарантирует лишь «передано Twitch».
+- Безопасность: `originGuard` (Origin ≠ Host → 403 для изменяющих запросов и `/ws`) — иначе sandbox-плагин (origin `null`) или любой сайт мог бы открыть `/ws` и читать чат/слать сообщения в обход разрешений. `/plugin-sdk/*` и `/plugins/*` открыты без токена.
+- SDK: `web/sdk/oc.ts` (→ `dist/oc.js`, IIFE/ES2019, собирает `cmd/build`), `web/sdk/oc.d.ts` (вшит в бинарник, `/plugin-sdk/oc.d.ts`), протокол — `web/sdk/protocol.ts`.
+- Тесты: `internal/chat` (разбор IRC, подписки, say, лимиты, reconnect; фейковый транспорт, `-race`), `internal/server/chatws_test.go` (e2e по настоящему `/ws`), Playwright-проверка моста вручную (см. ниже). Метод Playwright: собрать `oc.ts` и `pluginhost.ts` esbuild-ом, страница-хозяин с моком «сервера» (`send` → `onServerMessage`), iframe с `sandbox`, реальный `twitch-chat/index.html`.
