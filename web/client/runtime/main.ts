@@ -1,8 +1,11 @@
 import type { ClientMessage, Layout, ServerMessage, Source } from "../../shared/types.ts";
+import { PluginHost } from "../shared/pluginhost.ts";
 import { OverlayScene } from "../shared/scene.ts";
 
 const stage = document.getElementById("stage")!;
-const scene = new OverlayScene(stage, { interactive: false });
+// Мост плагин↔сервер: чат Twitch приходит по общему /ws, ответы плагинов уходят тем же путём.
+const plugins = new PluginHost({ send: (m) => send(m as unknown as ClientMessage), canSend: true });
+const scene = new OverlayScene(stage, { interactive: false, plugins });
 
 let currentLayoutId: string | null = null;
 
@@ -126,11 +129,13 @@ function connect() {
 
   mine.onopen = () => {
     hud("ws", "connected");
+    plugins.onConnected();
     announceToServer();
   };
 
   mine.onmessage = async (ev) => {
     const msg = JSON.parse(ev.data) as ServerMessage;
+    if (plugins.onServerMessage(msg as unknown as { type: string })) return;
     hud("last msg", msg.type);
     switch (msg.type) {
       case "hello":

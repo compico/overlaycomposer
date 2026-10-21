@@ -18,6 +18,8 @@ export interface Source {
     /** type "plugin": id плагина-виджета и его настройки (передаются виджету в query-параметрах) */
     plugin?: string;
     settings?: Record<string, string | number | boolean>;
+    /** type "plugin": разрешения, выданные виджету (подмножество permissions манифеста) */
+    granted?: string[];
     [k: string]: unknown;
   };
 }
@@ -45,6 +47,8 @@ export interface PluginManifest {
   entry?: string;
   defaultSize: { width: number; height: number };
   settings?: PluginSetting[];
+  /** что плагин просит у OC: "chat.read" | "chat.send" */
+  permissions?: string[];
   builtin: boolean;
 }
 

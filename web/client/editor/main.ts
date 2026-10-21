@@ -1,3 +1,4 @@
+import { PluginHost } from "../shared/pluginhost.ts";
 import type { Layout, LayoutObject, ObsInfo, PluginManifest, PluginSetting, ServerMessage, Source, Transform } from "../../shared/types.ts";
 import { contentCenter, defaultTransform, placeByContentCenter, uid, visibleBox } from "../../shared/types.ts";
 import { OverlayScene } from "../shared/scene.ts";
@@ -23,7 +24,9 @@ let propSync: (() => void)[] = [];
 /** Буфер Ctrl+C: снимок слоя и layout, из которого он скопирован (живёт, пока открыта страница). */
 let clip: { obj: LayoutObject; fromLayoutId: string } | null = null;
 
-const scene = new OverlayScene($("stage"), { interactive: true });
+// Предпросмотр плагинов в редакторе: чат читается, но писать (chat.say) нельзя — ответы шлёт только оверлей.
+const pluginHost = new PluginHost({ send: (m) => wsSend(m), canSend: false });
+const scene = new OverlayScene($("stage"), { interactive: true, plugins: pluginHost });
 
 // ---------- helpers ----------
 
@@ -674,14 +677,25 @@ $("pluginSelect").addEventListener("change", () => {
 
 $("openPluginsBtn").addEventListener("click", () => api("/api/app/open", "POST", { what: "plugins" }).catch(fail));
 
+const PERM_TEXT: Record<string, string> = {
+  "chat.read": "Read Twitch chat",
+  "chat.send": "Write to Twitch chat as your bot / streamer account",
+};
+
 $("usePluginBtn").addEventListener("click", async () => {
   const p = plugins.find((x) => x.id === $<HTMLSelectElement>("pluginSelect").value);
   if (!p) return;
+  // Разрешения выдаёт пользователь: плагин — чужой код, а чат и аккаунты Twitch — его данные.
+  let granted: string[] = [];
+  if (p.permissions?.length) {
+    const list = p.permissions.map((x) => `• ${PERM_TEXT[x] ?? x}`).join("\n");
+    if (confirm(`“${p.name}” asks for permissions:\n\n${list}\n\nAllow? (You can change this later in the widget properties.)`)) granted = p.permissions;
+  }
   try {
     let name = p.name, n = 2;
     while (sources.some((x) => x.name === name)) name = `${p.name} ${n++}`;
     const id = uid("src");
-    await api("/api/sources", "POST", { id, name, type: "plugin", data: { plugin: p.id, settings: {} } });
+    await api("/api/sources", "POST", { id, name, type: "plugin", data: { plugin: p.id, settings: {}, granted } });
     await loadSources();
     placeObject(id, p.defaultSize.width, p.defaultSize.height);
     addDialog.close();
@@ -783,6 +797,23 @@ function pluginSettings(src: Source, m: PluginManifest): HTMLElement {
       src.data.settings = r.data.settings ?? {};
     } catch (e) { fail(e); renderProps(); }
   };
+
+  if (m.permissions?.length) {
+    root.append(el("h4", { class: "group", textContent: "Permissions" }));
+    for (const perm of m.permissions) {
+      const chk = el("input", { type: "checkbox", checked: src.data.granted?.includes(perm) ?? false });
+      chk.addEventListener("change", async () => {
+        const set = new Set(src.data.granted ?? []);
+        if (chk.checked) set.add(perm); else set.delete(perm);
+        try {
+          const r = await api<Source>(`/api/sources/${encodeURIComponent(src.id)}`, "PUT", { data: { granted: [...set] } });
+          src.data.granted = r.data.granted ?? [];
+        } catch (e) { fail(e); renderProps(); }
+      });
+      root.append(el("label", { class: "chk" }, chk, ` ${PERM_TEXT[perm] ?? perm}`));
+    }
+    root.append(el("div", { class: "hint", textContent: "Changing permissions reloads the widget." }));
+  }
 
   let group: string | undefined;
   for (const s of m.settings ?? []) {
@@ -1439,8 +1470,10 @@ function applyObsInfo(obs: ObsInfo) {
 
 function connectWs() {
   ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
+  ws.onopen = () => pluginHost.onConnected();
   ws.onmessage = async (ev) => {
     const msg = JSON.parse(ev.data) as ServerMessage;
+    if (pluginHost.onServerMessage(msg as unknown as { type: string })) return;
     try {
       switch (msg.type) {
         case "hello":

@@ -54,7 +54,7 @@ func (s *Server) authGuard(c fiber.Ctx) error {
 		return c.Next()
 	}
 	p := c.Path()
-	if p == "/pair" || p == "/api/pair" || strings.HasPrefix(p, "/plugins/") {
+	if p == "/pair" || p == "/api/pair" || strings.HasPrefix(p, "/plugins/") || strings.HasPrefix(p, "/plugin-sdk/") {
 		return c.Next()
 	}
 	if t := tokenFrom(c); t != "" {

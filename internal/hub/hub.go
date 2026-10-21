@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"math"
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/compico/overlaycomposer/internal/model"
@@ -47,6 +48,9 @@ type Peer struct {
 }
 
 type Hub struct {
+	handlers []handler // расширения: обработчики сообщений по префиксу типа (chat:*)
+	onGone   []func(*Peer)
+
 	st         Storage
 	obs        Obs
 	overlayURL func() string
@@ -59,6 +63,29 @@ type Hub struct {
 	sceneLayoutID  string // layout, «положенный» текущей сцене (свой или default)
 	overlayScenes  []string
 	sceneList      []string
+}
+
+type handler struct {
+	prefix string
+	fn     func(p *Peer, raw []byte)
+}
+
+// Handle подключает обработчик сообщений клиентов, тип которых начинается с prefix. Вызывать до начала работы.
+func (h *Hub) Handle(prefix string, fn func(p *Peer, raw []byte)) {
+	h.handlers = append(h.handlers, handler{prefix, fn})
+}
+
+// OnPeerGone вызывает fn при закрытии соединения клиента (уже без блокировки хаба). Вызывать до начала работы.
+func (h *Hub) OnPeerGone(fn func(*Peer)) { h.onGone = append(h.onGone, fn) }
+
+// Send отправляет сообщение одному клиенту; false — клиент не успевает (сообщение потеряно).
+func (p *Peer) Send(msg any) bool {
+	b, err := json.Marshal(msg)
+	if err != nil {
+		slog.Error("hub: marshal", "err", err)
+		return false
+	}
+	return p.conn.Send(b)
 }
 
 func New(st Storage, o Obs, overlayURL func() string, obsEnabled func() bool) *Hub {
@@ -378,13 +405,17 @@ func (h *Hub) AddPeer(c Conn) *Peer {
 
 func (h *Hub) RemovePeer(p *Peer) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	if _, ok := h.peers[p]; !ok {
+		h.mu.Unlock()
 		return
 	}
 	delete(h.peers, p)
 	if p.inObs {
 		h.broadcastObsStatusLocked()
+	}
+	h.mu.Unlock()
+	for _, fn := range h.onGone {
+		fn(p)
 	}
 }
 
@@ -485,5 +516,13 @@ func (h *Hub) HandleMessage(p *Peer, raw []byte) {
 			return
 		}
 		h.LayoutUpdated(l.ID)
+
+	default:
+		for _, hd := range h.handlers {
+			if strings.HasPrefix(m.Type, hd.prefix) {
+				hd.fn(p, raw)
+				return
+			}
+		}
 	}
 }

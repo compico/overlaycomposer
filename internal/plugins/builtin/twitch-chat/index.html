@@ -19,6 +19,7 @@
 <body>
 <div id="chat"></div>
 <div id="hint" hidden></div>
+<script src="/plugin-sdk/oc.js"></script>
 <script>
 (function () {
   "use strict";
@@ -79,18 +80,10 @@
     return o;
   }
 
-  // Текст сообщения → фрагменты (строки и эмодзи) по индексам из тега emotes (индексы — в символах Unicode).
+  // Текст сообщения → фрагменты (строки и эмодзи) по позициям смайлов (в символах Unicode).
   function pieces(text, emotes) {
     var chars = Array.from(text), spans = [];
-    if (S.showEmotes && emotes) {
-      emotes.split("/").forEach(function (e) {
-        var p = e.split(":"); if (p.length < 2) return;
-        p[1].split(",").forEach(function (r) {
-          var se = r.split("-").map(Number);
-          if (isFinite(se[0]) && isFinite(se[1])) spans.push({ s: se[0], e: se[1], id: p[0] });
-        });
-      });
-    }
+    if (S.showEmotes && emotes) emotes.forEach(function (e) { spans.push({ s: e.start, e: e.end, id: e.id }); });
     spans.sort(function (a, b) { return a.s - b.s; });
     var out = [], pos = 0;
     spans.forEach(function (sp) {
@@ -103,11 +96,26 @@
     return out;
   }
 
-  function addMessage(tags, nick, text, isAction) {
+  // Общий формат сообщения (как OCChatMessage в oc.d.ts): {id, login, displayName, color, text, action, emotes[{id,start,end}]}.
+  function accept(m) {
+    if (S.ignore.indexOf(m.login.toLowerCase()) >= 0) return;
+    if (S.hideCommands && m.text[0] === "!") return;
+    addMessage(m);
+  }
+  function removeById(id) {
+    var m = chat.querySelector('[data-id="' + String(id || "").replace(/"/g, "") + '"]'); if (m) m.remove();
+  }
+  function clearChat(login) {
+    if (!login) chat.replaceChildren();
+    else chat.querySelectorAll(".msg").forEach(function (e) { if (e.dataset.login === login.toLowerCase()) e.remove(); });
+  }
+
+  function addMessage(m) {
+    var nick = m.login, text = m.text, isAction = m.action;
     var el = document.createElement("div");
     el.className = "msg" + (isAction ? " action" : "");
-    if (tags.id) el.dataset.id = tags.id;
-    el.dataset.login = (tags["login"] || nick).toLowerCase();
+    if (m.id) el.dataset.id = m.id;
+    el.dataset.login = nick.toLowerCase();
     el.style.marginTop = S.direction === "bottom" ? S.gap + "px" : "0";
     el.style.marginBottom = S.direction === "top" ? S.gap + "px" : "0";
     el.style.padding = S.padding + "px";
@@ -121,15 +129,15 @@
 
     var n = document.createElement("span");
     n.className = "nick";
-    n.textContent = (tags["display-name"] || nick) + S.separator;
+    n.textContent = (m.displayName || nick) + S.separator;
     n.style.fontFamily = fontStack(S.nickFont);
     n.style.fontSize = S.nickSize + "px";
     n.style.fontWeight = S.nickBold ? "700" : "400";
-    n.style.color = S.useTwitchColor ? (/^#[0-9a-f]{6}$/i.test(tags.color || "") ? tags.color : fallbackColor(nick)) : S.nickColor;
+    n.style.color = S.useTwitchColor ? (/^#[0-9a-f]{6}$/i.test(m.color || "") ? m.color : fallbackColor(nick)) : S.nickColor;
 
     var t = document.createElement("span");
     t.className = "text";
-    pieces(text, tags.emotes).forEach(function (p) {
+    pieces(text, m.emotes).forEach(function (p) {
       if (p.emote) {
         var img = document.createElement("img");
         img.className = "emote"; img.alt = p.alt; img.title = p.alt;
@@ -164,16 +172,26 @@
 
     if (cmd === "PRIVMSG") {
       var nick = prefix.split("!")[0], text = trailing, action = false;
-      if (S.ignore.indexOf(nick.toLowerCase()) >= 0) return;
       if (text.indexOf("\u0001ACTION ") === 0) { action = true; text = text.slice(8).replace(/\u0001$/, ""); }
-      if (S.hideCommands && text[0] === "!") return;
-      addMessage(tags, nick, text, action);
+      accept({ id: tags.id || "", login: (tags["login"] || nick).toLowerCase(), displayName: tags["display-name"] || nick, color: tags.color || "",
+               text: text, action: action, emotes: parseEmotes(tags.emotes || "") });
     } else if (cmd === "CLEARMSG") {
-      var m = chat.querySelector('[data-id="' + (tags["target-msg-id"] || "").replace(/"/g, "") + '"]'); if (m) m.remove();
+      removeById(tags["target-msg-id"]);
     } else if (cmd === "CLEARCHAT") {
-      if (!trailing) chat.replaceChildren();
-      else chat.querySelectorAll(".msg").forEach(function (e) { if (e.dataset.login === trailing.toLowerCase()) e.remove(); });
+      clearChat(trailing);
     }
+  }
+
+  function parseEmotes(tag) {
+    var out = [];
+    tag.split("/").forEach(function (e) {
+      var p = e.split(":"); if (p.length < 2) return;
+      p[1].split(",").forEach(function (r) {
+        var se = r.split("-").map(Number);
+        if (isFinite(se[0]) && isFinite(se[1])) out.push({ id: p[0], start: se[0], end: se[1] });
+      });
+    });
+    return out;
   }
 
   var ws, retry = 0;
@@ -197,10 +215,30 @@
     ws.onerror = function () { try { ws.close(); } catch (e) {} };
   }
 
-  if (!/^[a-z0-9_]{1,25}$/.test(S.channel)) {
-    // Показываем подсказку только пока пусто: в готовом оверлее это сразу видно и в редакторе, и в OBS.
-    showHint(S.channel ? "Invalid Twitch channel name" : "Set the Twitch channel in the widget settings");
-  } else connect();
+  // Запасной путь: свой анонимный IRC-сокет (виджет открыт сам по себе или у него нет разрешения chat.read в OC).
+  function standalone() {
+    if (!/^[a-z0-9_]{1,25}$/.test(S.channel)) {
+      // Показываем подсказку только пока пусто: в готовом оверлее это сразу видно и в редакторе, и в OBS.
+      showHint(S.channel ? "Invalid Twitch channel name" : "Set the Twitch channel in the widget settings");
+    } else connect();
+  }
+
+  // Основной путь: чат читает сам Overlay Composer (одно общее соединение), виджет получает события через API.
+  function viaOC() {
+    oc.chat.on("message", accept);
+    oc.chat.on("delete", function (d) { removeById(d.targetId); });
+    oc.chat.on("clear", function (d) { clearChat(d.login); });
+    // Пустой канал в настройках = канал аккаунта Стримера, подключённого в настройках OC.
+    oc.chat.subscribe(S.channel ? { channel: S.channel } : {}).then(function () { showHint(""); }, function (e) {
+      showHint(S.channel ? "Chat error: " + e.message : "Set the Twitch channel in the widget settings, or connect the Streamer account in Overlay Composer");
+    });
+  }
+
+  if (typeof oc !== "undefined" && oc.hosted) {
+    oc.ready.then(function (info) {
+      if (info.permissions.indexOf("chat.read") >= 0) viaOC(); else standalone();
+    }, standalone);
+  } else standalone();
 })();
 </script>
 </body>

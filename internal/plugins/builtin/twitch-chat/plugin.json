@@ -2,10 +2,11 @@
   "id": "twitch-chat",
   "name": "Twitch Chat",
   "version": "1.0.0",
-  "description": "Чат Twitch без авторизации: ники, эмодзи, шрифты, цвета и фон настраиваются в редакторе.",
+  "description": "Чат Twitch: ники, эмодзи, шрифты, цвета и фон настраиваются в редакторе. Читает чат через Overlay Composer (одно общее соединение).",
+  "permissions": ["chat.read"],
   "defaultSize": { "width": 480, "height": 600 },
   "settings": [
-    { "key": "channel", "label": "Twitch channel", "type": "string", "group": "Channel", "help": "Имя канала, например shroud (без #)" },
+    { "key": "channel", "label": "Twitch channel", "type": "string", "group": "Channel", "help": "Имя канала, например shroud (без #). Пусто — канал аккаунта Стримера из настроек OC" },
 
     { "key": "maxMessages", "label": "Max messages", "type": "number", "group": "Messages", "default": 20, "min": 1, "max": 200 },
     { "key": "fadeSeconds", "label": "Hide after, seconds (0 = never)", "type": "number", "group": "Messages", "default": 0, "min": 0, "max": 3600 },

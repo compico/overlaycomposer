@@ -14,6 +14,7 @@ import (
 	"math"
 	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -70,7 +71,32 @@ type Manifest struct {
 	Entry       string    `json:"entry,omitempty"`       // по умолчанию index.html
 	DefaultSize Size      `json:"defaultSize,omitempty"` // размер при добавлении на layout
 	Settings    []Setting `json:"settings,omitempty"`
-	Builtin     bool      `json:"builtin"` // заполняется загрузчиком
+	// Permissions — что плагину нужно от OC (см. docs/PLUGINS.md). Включаются пользователем при добавлении виджета
+	// (source.data.granted); без разрешения мост OC отвечает плагину ошибкой.
+	Permissions []string `json:"permissions,omitempty"`
+	Builtin     bool     `json:"builtin"` // заполняется загрузчиком
+}
+
+// Известные разрешения плагинов.
+const (
+	PermChatRead = "chat.read" // читать чат Twitch (через общее соединение OC)
+	PermChatSend = "chat.send" // писать в чат Twitch от имени аккаунта бота/стримера
+)
+
+var knownPerms = map[string]bool{PermChatRead: true, PermChatSend: true}
+
+// CleanGranted проверяет список выданных разрешений: каждое должно быть известно и запрошено манифестом.
+func (m *Manifest) CleanGranted(in []string) ([]string, error) {
+	out := []string{}
+	for _, p := range in {
+		if !slices.Contains(m.Permissions, p) {
+			return nil, fmt.Errorf("permission %q is not requested by the plugin", p)
+		}
+		if !slices.Contains(out, p) {
+			out = append(out, p)
+		}
+	}
+	return out, nil
 }
 
 var settingKeyRe = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]{0,31}$`)
@@ -82,6 +108,14 @@ func (m *Manifest) Validate() error {
 	}
 	if strings.TrimSpace(m.Name) == "" {
 		return errors.New("name is required")
+	}
+	for i, p := range m.Permissions {
+		if !knownPerms[p] {
+			return fmt.Errorf("unknown permission %q", p)
+		}
+		if slices.Contains(m.Permissions[:i], p) {
+			return fmt.Errorf("duplicate permission %q", p)
+		}
 	}
 	if m.Entry == "" {
 		m.Entry = "index.html"
