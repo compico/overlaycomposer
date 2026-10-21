@@ -29,6 +29,7 @@ internal/obs                   клиент obs-websocket 5.x (fasthttp/websocke
 internal/obsimport             импорт OBS-сцены как layout (матрицы, alignment, поворот по часовой, группы разворачиваются в плоский список)
 internal/proxy                 прокси (см. ниже)
 internal/auth                  доступ извне: одноразовый код (6 букв, 1 мин) → JWT HS256 (бессрочный, жив пока устройство в таблице devices), лимит перебора
+internal/kv                    хранилище данных плагинов: ключ→JSON по плагину, ревизии (compare-and-set), квоты; логика над интерфейсом Backend (store/kv.go — SQLite, memory.go — тесты)
 internal/chat                  общий чат Twitch для плагинов: анонимный IRC на чтение (подписки с refcount, JOIN/PART), IRC на отправку по аккаунту (бот/стример), лимиты, дедуп ответов
 internal/twitch                аккаунты Twitch (роли streamer/bot): Authorization Code Flow, localhost-редирект, хранение и автообновление токенов
 internal/plugins               плагины-виджеты: plugin.json (схема настроек), Registry (builtin + папка plugins/), CleanSettings; builtin/twitch-chat
@@ -140,3 +141,9 @@ hub — один владелец состояния, одна блокиров�
 - Безопасность: `originGuard` (Origin ≠ Host → 403 для изменяющих запросов и `/ws`) — иначе sandbox-плагин (origin `null`) или любой сайт мог бы открыть `/ws` и читать чат/слать сообщения в обход разрешений. `/plugin-sdk/*` и `/plugins/*` открыты без токена.
 - SDK: `web/sdk/oc.ts` (→ `dist/oc.js`, IIFE/ES2019, собирает `cmd/build`), `web/sdk/oc.d.ts` (вшит в бинарник, `/plugin-sdk/oc.d.ts`), протокол — `web/sdk/protocol.ts`.
 - Тесты: `internal/chat` (разбор IRC, подписки, say, лимиты, reconnect; фейковый транспорт, `-race`), `internal/server/chatws_test.go` (e2e по настоящему `/ws`), Playwright-проверка моста вручную (см. ниже). Метод Playwright: собрать `oc.ts` и `pluginhost.ts` esbuild-ом, страница-хозяин с моком «сервера» (`send` → `onServerMessage`), iframe с `sandbox`, реальный `twitch-chat/index.html`.
+
+## Хранилище плагинов (этап 4)
+- `internal/kv.Service` (валидация, ревизии `ifRev`, квоты 5000 ключей/8 МБ/256 КБ, `OnChange`) поверх `kv.Backend.Update(fn(Tx))`; SQLite-реализация `store/kv.go` (таблица `plugin_kv`, PK plugin+key; сумма размера — `LENGTH(CAST(value AS BLOB))`). SQL-часть в среде разработки не запускалась (нет драйвера) — логика покрыта тестами на `kv.Memory`.
+- WS: `storage:get|set|delete|list` → `storage:result` (`code`: conflict | quota | invalid | internal); все страницы получают `storage:changed` (Hub.Broadcast). `PluginHost` подставляет `plugin` из регистрации iframe, поэтому плагин видит только свои данные; события `storage.change` — только копиям этого же плагина с разрешением `storage`.
+- SDK `update` — очередь по ключу внутри страницы + повторы при конфликте (до 30, с паузой), поэтому 30 параллельных инкрементов из двух iframe не теряются (проверено в Chromium).
+- REST (только localhost): `GET|DELETE /api/plugins/:id/storage` — размер и очистка (кнопка Erase data).

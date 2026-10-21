@@ -22,7 +22,9 @@ type OCPermission =
   /** Читать чат Twitch (chat.subscribe и события chat.on). */
   | "chat.read"
   /** Писать в чат Twitch от имени подключённого аккаунта (chat.say). */
-  | "chat.send";
+  | "chat.send"
+  /** Хранить данные плагина на этом компьютере (oc.storage). */
+  | "storage";
 
 /** Сведения о виджете, которые OC сообщает плагину после запуска. */
 interface OCPluginInfo {
@@ -153,6 +155,46 @@ interface OCChat {
   say(text: string, options?: OCChatSayOptions): Promise<void>;
 }
 
+interface OCStorageChange {
+  key: string;
+  /** Ключ удалён (value в этом случае нет). */
+  deleted: boolean;
+  /** Новое значение. */
+  value?: unknown;
+}
+
+/**
+ * Хранилище данных плагина: JSON-значения по ключам, на компьютере пользователя (SQLite OC). Нужно разрешение `storage`.
+ *
+ * - Данные принадлежат плагину (по `pluginId`) и общие для всех его виджетов и копий оверлея; другим плагинам не видны.
+ *   Если нужны отдельные данные на виджет — добавьте `info.sourceId` в ключ.
+ * - Ключ: 1–128 символов `A–Z a–z 0–9 _ . : / -`. Значение — любой JSON (кроме undefined) до 256 КБ.
+ *   Квота плагина: до 5000 ключей и 8 МБ. Пользователь может стереть данные плагина в редакторе.
+ */
+interface OCStorage {
+  /** Значение ключа или undefined, если его нет. */
+  get<T = unknown>(key: string): Promise<T | undefined>;
+  /** Записать значение. Для «прочитал → изменил → записал» используйте update. */
+  set(key: string, value: unknown): Promise<void>;
+  /** Удалить ключ. Возвращает false, если его не было. */
+  delete(key: string): Promise<boolean>;
+  /** Записи, ключи которых начинаются с prefix, по возрастанию ключа (по умолчанию до 100, максимум 1000). */
+  list<T = unknown>(prefix?: string, limit?: number): Promise<{ key: string; value: T }[]>;
+  /**
+   * Безопасно изменить значение, даже если его одновременно меняет другая копия виджета: `fn` получает текущее значение
+   * (undefined, если ключа нет) и возвращает новое; если ключ изменили за это время, `fn` вызывается ещё раз с новым значением.
+   * Функция fn должна быть без побочных эффектов. Возвращает записанное значение.
+   *
+   *   await oc.storage.update<Task[]>("tasks", (list = []) => [...list, { text: "buy milk" }]);
+   */
+  update<T = unknown>(key: string, fn: (current: T | undefined) => T): Promise<T>;
+  /**
+   * Изменение данных плагина — любой копией, включая вашу собственную. Так второй виджет (например, список задач на стриме)
+   * обновляется, когда команда в чате изменила данные.
+   */
+  onChange(handler: (change: OCStorageChange) => void): () => void;
+}
+
 interface OC {
   /** Версия протокола API. */
   readonly version: 1;
@@ -167,6 +209,7 @@ interface OC {
    */
   param<T extends string | number | boolean>(key: string, fallback: T): T;
   readonly chat: OCChat;
+  readonly storage: OCStorage;
 }
 
 declare const oc: OC;

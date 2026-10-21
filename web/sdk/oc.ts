@@ -65,14 +65,44 @@ function call<T>(method: string, params?: unknown): Promise<T> {
   }));
 }
 
-function on(event: string, h: Handler): () => void {
-  let set = handlers.get(`chat.${event}`);
-  if (!set) handlers.set(`chat.${event}`, (set = new Set()));
+function subscribe(name: string, h: Handler): () => void {
+  let set = handlers.get(name);
+  if (!set) handlers.set(name, (set = new Set()));
   set.add(h);
-  return () => off(event, h);
+  return () => off(name, h);
 }
-function off(event: string, h: Handler) {
-  handlers.get(`chat.${event}`)?.delete(h);
+function off(name: string, h: Handler) {
+  handlers.get(name)?.delete(h);
+}
+
+interface GetResult { found: boolean; value: unknown; rev: number }
+
+const updateQueues = new Map<string, Promise<unknown>>();
+
+/**
+ * Прочитал → изменил → записал с проверкой ревизии: если ключ тем временем изменила другая копия, повторяем с новым значением.
+ * Вызовы update для одного ключа внутри одной страницы идут по очереди — так они не конфликтуют друг с другом.
+ */
+function update<T>(key: string, fn: (cur: T | undefined) => T): Promise<T> {
+  const run = async (): Promise<T> => {
+    for (let i = 0; ; i++) {
+      const cur = await call<GetResult>("storage.get", { key });
+      const next = fn(cur.found ? (cur.value as T) : undefined);
+      try {
+        await call("storage.set", { key, value: next, ifRev: cur.rev });
+        return next;
+      } catch (e) {
+        if (!(e instanceof Error) || !e.message.startsWith("conflict") || i >= 30) throw e;
+        await new Promise((r) => setTimeout(r, Math.random() * 20 * (i + 1))); // разводим конкурентов по времени
+      }
+    }
+  };
+  const prev = updateQueues.get(key) ?? Promise.resolve();
+  const p = prev.then(run, run);
+  const tail = p.catch(() => {});
+  updateQueues.set(key, tail);
+  tail.then(() => { if (updateQueues.get(key) === tail) updateQueues.delete(key); });
+  return p;
 }
 
 function param<T extends string | number | boolean>(key: string, fallback: T): T {
@@ -96,8 +126,24 @@ const oc = {
     unsubscribe: (channel: string) => call<void>("chat.unsubscribe", { channel }),
     say: (text: string, options?: { channel?: string; as?: string; replyTo?: string }) =>
       call<void>("chat.say", { text, ...options }),
-    on,
-    off,
+    on: (event: string, h: Handler) => subscribe(`chat.${event}`, h),
+    off: (event: string, h: Handler) => off(`chat.${event}`, h),
+  },
+  storage: {
+    get: async (key: string) => {
+      const r = await call<GetResult>("storage.get", { key });
+      return r.found ? r.value : undefined;
+    },
+    set: async (key: string, value: unknown) => {
+      if (value === undefined) throw new Error("undefined cannot be stored (use delete)");
+      await call("storage.set", { key, value });
+    },
+    delete: async (key: string) => (await call<{ deleted: boolean }>("storage.delete", { key })).deleted,
+    list: async (prefix?: string, limit?: number) =>
+      (await call<{ entries: { key: string; value: unknown }[] }>("storage.list", { prefix, limit })).entries
+        .map((e) => ({ key: e.key, value: e.value })),
+    update,
+    onChange: (h: Handler) => subscribe("storage.change", h),
   },
 };
 
