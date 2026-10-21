@@ -61,12 +61,21 @@ export class PluginHost {
   onServerMessage(msg: { type: string; [k: string]: unknown }): boolean {
     switch (msg.type) {
       case "chat:sub:result":
-      case "chat:say:result": {
+      case "chat:say:result":
+      case "storage:result": {
         const p = this.#pending.get(msg.reqId as number);
         if (p) {
           this.#pending.delete(msg.reqId as number);
           clearTimeout(p.timer);
           p.resolve(msg);
+        }
+        return true;
+      }
+      case "storage:changed": {
+        // Изменение данных плагина узнают все его копии (оверлей, предпросмотр в редакторе), включая ту, что записала.
+        for (const e of this.#entries) {
+          if (e.info.pluginId !== msg.plugin || !e.info.permissions.includes("storage")) continue;
+          this.#toPlugin(e, { oc: 1, t: "event", name: "storage.change", data: { key: msg.key, deleted: msg.deleted, value: msg.value, rev: msg.rev } });
         }
         return true;
       }
@@ -166,6 +175,37 @@ export class PluginHost {
         });
         if (r.ok !== true) throw new Error(String(r.error ?? "send failed"));
         return undefined;
+      }
+      case "storage.get":
+      case "storage.set":
+      case "storage.delete":
+      case "storage.list": {
+        this.#need(e, "storage");
+        const op = method.slice("storage.".length);
+        const msg: Record<string, unknown> = { type: `storage:${op}`, plugin: e.info.pluginId };
+        if (op === "list") {
+          msg.prefix = str(p.prefix, "prefix", 128) ?? "";
+          msg.limit = typeof p.limit === "number" ? Math.floor(p.limit) : 0;
+        } else {
+          msg.key = str(p.key, "key", 128);
+          if (!msg.key) throw new Error("invalid key");
+          if (op === "set") {
+            if (!("value" in p) || p.value === undefined) throw new Error("invalid value");
+            msg.value = p.value;
+            if (p.ifRev !== undefined) {
+              if (typeof p.ifRev !== "number" || !Number.isInteger(p.ifRev)) throw new Error("invalid ifRev");
+              msg.ifRev = p.ifRev;
+            }
+          }
+        }
+        const r = await this.#request(msg);
+        if (r.ok !== true) throw new Error(String(r.error ?? "storage error"));
+        switch (op) {
+          case "get": return { found: r.found === true, value: r.value, rev: r.rev ?? 0 };
+          case "set": return { rev: r.rev };
+          case "delete": return { deleted: r.deleted === true };
+          default: return { entries: r.entries ?? [] };
+        }
       }
     }
     throw new Error(`unknown method: ${method}`);

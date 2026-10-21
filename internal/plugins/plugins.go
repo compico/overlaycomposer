@@ -81,9 +81,10 @@ type Manifest struct {
 const (
 	PermChatRead = "chat.read" // читать чат Twitch (через общее соединение OC)
 	PermChatSend = "chat.send" // писать в чат Twitch от имени аккаунта бота/стримера
+	PermStorage  = "storage"   // хранить данные плагина на этом компьютере (общие для всех его виджетов)
 )
 
-var knownPerms = map[string]bool{PermChatRead: true, PermChatSend: true}
+var knownPerms = map[string]bool{PermChatRead: true, PermChatSend: true, PermStorage: true}
 
 // CleanGranted проверяет список выданных разрешений: каждое должно быть известно и запрошено манифестом.
 func (m *Manifest) CleanGranted(in []string) ([]string, error) {

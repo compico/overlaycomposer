@@ -22,6 +22,7 @@ import (
 	"github.com/compico/overlaycomposer/internal/chat"
 	"github.com/compico/overlaycomposer/internal/config"
 	"github.com/compico/overlaycomposer/internal/hub"
+	"github.com/compico/overlaycomposer/internal/kv"
 	"github.com/compico/overlaycomposer/internal/logx"
 	"github.com/compico/overlaycomposer/internal/model"
 	"github.com/compico/overlaycomposer/internal/obs"
@@ -135,6 +136,7 @@ func run() int {
 		Auth:    authMgr,
 		Twitch:  twMgr,
 		Chat:    chatSvc,
+		KV:      kv.New(st.KV()),
 		Plugins: plugins.New(plugins.Builtin(), os.DirFS(p.PluginsDir)),
 		App: server.App{
 			OS:           runtime.GOOS,

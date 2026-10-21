@@ -680,6 +680,7 @@ $("openPluginsBtn").addEventListener("click", () => api("/api/app/open", "POST",
 const PERM_TEXT: Record<string, string> = {
   "chat.read": "Read Twitch chat",
   "chat.send": "Write to Twitch chat as your bot / streamer account",
+  "storage": "Store this plugin’s data on this computer",
 };
 
 $("usePluginBtn").addEventListener("click", async () => {
@@ -813,6 +814,7 @@ function pluginSettings(src: Source, m: PluginManifest): HTMLElement {
       root.append(el("label", { class: "chk" }, chk, ` ${PERM_TEXT[perm] ?? perm}`));
     }
     root.append(el("div", { class: "hint", textContent: "Changing permissions reloads the widget." }));
+    if (m.permissions.includes("storage")) root.append(pluginDataRow(m.id));
   }
 
   let group: string | undefined;
@@ -825,6 +827,25 @@ function pluginSettings(src: Source, m: PluginManifest): HTMLElement {
   }
   if (!m.settings?.length) root.append(el("div", { class: "empty", textContent: "This widget has no settings." }));
   return root;
+}
+
+/** Сколько данных плагин хранит (oc.storage) и кнопка «стереть» — данные общие для всех виджетов этого плагина. */
+function pluginDataRow(pluginId: string): HTMLElement {
+  const info = el("span", { class: "hint", textContent: "Plugin data: …" });
+  const erase = el("button", { type: "button", textContent: "Erase data" });
+  const refresh = async () => {
+    try {
+      const st = await api<{ keys: number; bytes: number }>(`/api/plugins/${encodeURIComponent(pluginId)}/storage`);
+      info.textContent = `Plugin data: ${st.keys} keys, ${(st.bytes / 1024).toFixed(1)} KB`;
+      erase.toggleAttribute("disabled", st.keys === 0);
+    } catch { info.textContent = "Plugin data: unavailable"; }
+  };
+  erase.addEventListener("click", async () => {
+    if (!confirm("Erase all data stored by this plugin? This cannot be undone.")) return;
+    try { await api(`/api/plugins/${encodeURIComponent(pluginId)}/storage`, "DELETE"); await refresh(); } catch (e) { fail(e); }
+  });
+  refresh();
+  return el("div", { class: "row", style: "justify-content:space-between" }, info, erase);
 }
 
 function settingControl(s: PluginSetting, current: SettingValue | undefined, save: (key: string, v: SettingValue | undefined) => void): HTMLElement {
