@@ -68,7 +68,7 @@
 | Linux | `~/.config/overlay-composer/config.json` | `~/.local/share/overlay-composer/{data,plugins,logs}` |
 | macOS | `~/Library/Application Support/OverlayComposer` | там же |
 
-Адрес и порт меняются в **⚙ Settings** (`Listen on`, `Port`; по умолчанию `127.0.0.1:8000`). Откройте их на другом адресе только если понимаете, зачем: авторизации пока нет.
+Адрес и порт меняются в **⚙ Settings** (`Listen on`, `Port`; по умолчанию `127.0.0.1:8000`). Для доступа с других устройств см. «Доступ с других устройств» выше: они проходят сопряжение по коду.
 
 ## Параметры запуска
 | Флаг | Что делает |
