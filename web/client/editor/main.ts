@@ -679,10 +679,11 @@ $("pluginSelect").addEventListener("change", () => {
 
 type StoreEntry = {
   id: string; name: string; version?: string; description?: string; author?: string; permissions?: string[]; repo: string;
-  installed: boolean; installedVersion?: string; updateAvailable: boolean; blocked?: "builtin" | "foreign";
+  installed: boolean; installedVersion?: string; installedCommit?: string; updateAvailable: boolean; blocked?: "builtin" | "foreign";
+  digest: string; commit?: string; addedPermissions?: string[];
 };
 type StoreSource = { repo: string; error?: string; plugins: StoreEntry[] };
-type StoreData = { sources: StoreSource[]; installed: Record<string, { repo: string; version?: string }> };
+type StoreData = { sources: StoreSource[]; installed: Record<string, { repo: string; version?: string }>; hasToken: boolean };
 
 const storeDialog = $<HTMLDialogElement>("storeDialog");
 const BLOCKED_TEXT = { builtin: "built in", foreign: "id is taken by another plugin" };
@@ -709,6 +710,8 @@ async function afterPluginChange() {
 
 function renderStore(d: StoreData) {
   const body = $("storeBody");
+  $("storeTokenSummary").textContent = d.hasToken ? "Private repositories — GitHub token is set" : "Private repositories (GitHub token)";
+  $<HTMLButtonElement>("storeTokenClear").toggleAttribute("disabled", !d.hasToken);
   const shown = new Set<string>();
   const parts: HTMLElement[] = [];
   const act = (btn: HTMLButtonElement, fn: () => Promise<unknown>) => {
@@ -732,8 +735,10 @@ function renderStore(d: StoreData) {
       const perms = p.permissions?.length ? `Asks for: ${p.permissions.map((x) => PERM_TEXT[x] ?? x).join("; ")}` : "Asks for no permissions";
       let button: HTMLElement;
       if (p.blocked) button = el("span", { class: "hint", textContent: BLOCKED_TEXT[p.blocked] });
-      else if (p.updateAvailable) button = act(el("button", { type: "button", class: "primary", textContent: `Update to ${p.version ?? "latest"}` }), async () => {
-        await api("/api/market/install", "POST", { repo: p.repo, id: p.id });
+      else if (p.updateAvailable) button = act(el("button", { type: "button", class: "primary", textContent: p.version && p.version !== p.installedVersion ? `Update to ${p.version}` : "Update (files changed)" }), async () => {
+        // Новые права при обновлении — отдельное подтверждение: молча расширить доступ плагина нельзя.
+        if (p.addedPermissions?.length && !confirm(`The new version of “${p.name}” asks for additional permissions:\n\n${p.addedPermissions.map((x) => `• ${PERM_TEXT[x] ?? x}`).join("\n")}\n\nUpdate anyway? (Widgets keep only the permissions you already allowed; allow the new ones in the widget properties.)`)) return;
+        await api("/api/market/install", "POST", { repo: p.repo, id: p.id, digest: p.digest });
         await afterPluginChange();
         toast(`${p.name} updated. Reload the overlay page in OBS to apply.`);
       });
@@ -744,11 +749,12 @@ function renderStore(d: StoreData) {
         await afterPluginChange();
       });
       else button = act(el("button", { type: "button", class: "primary", textContent: "Install" }), async () => {
-        await api("/api/market/install", "POST", { repo: p.repo, id: p.id });
+        await api("/api/market/install", "POST", { repo: p.repo, id: p.id, digest: p.digest });
         await afterPluginChange();
         toast(`${p.name} installed. Add it via Add Source → widget plugin.`);
       });
-      const title = `${p.name}${p.version ? ` ${p.version}` : ""}${p.installed && p.installedVersion && p.installedVersion !== p.version ? ` (installed ${p.installedVersion})` : p.installed ? " — installed" : ""}`;
+      const src = p.commit ? ` · commit ${p.commit}` : "";
+      const title = `${p.name}${p.version ? ` ${p.version}` : ""}${src}${p.installed && p.installedVersion && p.installedVersion !== p.version ? ` (installed ${p.installedVersion})` : p.installed ? " — installed" : ""}`;
       parts.push(el("div", { class: "row", style: "align-items:flex-start;justify-content:space-between;border-top:1px solid var(--line);padding-top:6px" },
         el("div", { style: "flex:1;min-width:0" },
           el("div", { textContent: title }),
@@ -786,6 +792,17 @@ $("storeAddBtn").addEventListener("click", async () => {
   try { await api("/api/market/sources", "POST", { repo: inp.value }); inp.value = ""; } catch (e) { fail(e); }
   btn.disabled = false;
   await loadStore();
+});
+$("storeTokenSave").addEventListener("click", async () => {
+  const inp = $<HTMLInputElement>("storeToken");
+  if (!inp.value.trim()) return;
+  try { await api("/api/market/token", "PUT", { token: inp.value }); inp.value = ""; toast("GitHub token saved"); } catch (e) { fail(e); }
+  await loadStore(true);
+});
+$("storeTokenClear").addEventListener("click", async () => {
+  if (!confirm("Remove the saved GitHub token? Private repositories will stop loading.")) return;
+  try { await api("/api/market/token", "DELETE"); } catch (e) { fail(e); }
+  await loadStore(true);
 });
 $("storeRepo").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("storeAddBtn").click(); } });
 

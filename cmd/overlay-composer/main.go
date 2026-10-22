@@ -31,6 +31,7 @@ import (
 	"github.com/compico/overlaycomposer/internal/platform"
 	"github.com/compico/overlaycomposer/internal/plugins"
 	"github.com/compico/overlaycomposer/internal/proxy"
+	"github.com/compico/overlaycomposer/internal/secret"
 	"github.com/compico/overlaycomposer/internal/server"
 	"github.com/compico/overlaycomposer/internal/store"
 	"github.com/compico/overlaycomposer/internal/tray"
@@ -121,20 +122,40 @@ func run() int {
 		})
 	}
 
-	authMgr, err := auth.New(auth.FromStore(st))
+	// Секреты (токены Twitch, Client Secret, секрет подписи токенов устройств, токен GitHub) лежат зашифрованными;
+	// ключ — отдельный файл рядом с config.json (а не в папке данных с базой).
+	box, err := secret.OpenOrCreate(filepath.Join(filepath.Dir(p.ConfigFile), "secret.key"))
+	if err != nil {
+		slog.Error("ключ шифрования", "err", err)
+		platform.ErrorBox(paths.AppTitle, "Не удалось подготовить ключ шифрования секретов:\n"+err.Error())
+		return 1
+	}
+	rawAuth, rawTw := auth.FromStore(st), twitch.FromStore(st)
+	if err := auth.SealLegacy(rawAuth, box); err != nil { // значения, сохранённые открытым текстом до включения шифрования
+		slog.Error("шифрование секрета авторизации", "err", err)
+		platform.ErrorBox(paths.AppTitle, "Не удалось зашифровать сохранённые секреты: "+err.Error())
+		return 1
+	}
+	if err := twitch.SealLegacy(rawTw, box); err != nil {
+		slog.Error("шифрование токенов Twitch", "err", err)
+		platform.ErrorBox(paths.AppTitle, "Не удалось зашифровать сохранённые секреты: "+err.Error())
+		return 1
+	}
+
+	authMgr, err := auth.New(auth.Encrypted(rawAuth, box))
 	if err != nil {
 		slog.Error("авторизация устройств", "err", err)
 		platform.ErrorBox(paths.AppTitle, "Не удалось подготовить авторизацию устройств: "+err.Error())
 		return 1
 	}
 
-	twMgr := twitch.New(twitch.FromStore(st))
+	twMgr := twitch.New(twitch.Encrypted(rawTw, box))
 	chatSvc := chat.New(twMgr)
 	defer chatSvc.Close()
 
 	pluginReg := plugins.New(plugins.Builtin(), os.DirFS(p.PluginsDir))
 	mk, err := market.New(market.Config{
-		File: filepath.Join(p.DataDir, "market.json"), Dir: p.PluginsDir, Reg: pluginReg, Builtin: pluginReg.IsBuiltin,
+		File: filepath.Join(p.DataDir, "market.json"), Dir: p.PluginsDir, Reg: pluginReg, Builtin: pluginReg.IsBuiltin, Box: box,
 	})
 	if err != nil {
 		slog.Error("магазин плагинов", "err", err)

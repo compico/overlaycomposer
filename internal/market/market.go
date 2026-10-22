@@ -13,6 +13,9 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,6 +25,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,6 +34,7 @@ import (
 
 	"github.com/compico/overlaycomposer/internal/model"
 	"github.com/compico/overlaycomposer/internal/plugins"
+	"github.com/compico/overlaycomposer/internal/secret"
 )
 
 // DefaultSource — официальный репозиторий плагинов; кладётся в список при первом запуске, потом его можно убрать.
@@ -45,6 +50,9 @@ const (
 	pluginsRoot = "plugins" // папка с плагинами внутри репозитория
 )
 
+// unpackBudget — сколько байт можно распаковать за один разбор архива (переменная — чтобы тест не гонял сотни мегабайт).
+var unpackBudget int64 = 2 * maxTotal
+
 // Ошибки, которые сервер показывает пользователю как есть.
 var (
 	ErrBadRepo  = errors.New("repository must look like owner/repo or owner/repo@branch")
@@ -52,6 +60,9 @@ var (
 	ErrNoPlugin = errors.New("plugin not found in that repository")
 	ErrConflict = errors.New("a plugin with this id already exists and was not installed from the store")
 	ErrNotOurs  = errors.New("plugin was not installed from the store (remove its folder by hand)")
+	ErrChanged  = errors.New("the plugin in the repository changed after you opened the catalog — reload the catalog and review it again")
+	ErrToken    = errors.New("invalid GitHub token")
+	ErrNoBox    = errors.New("cannot store the token: encryption is unavailable")
 )
 
 // Repo — репозиторий GitHub и необязательная ветка/тег/коммит.
@@ -108,33 +119,72 @@ func (r Repo) String() string {
 	return s
 }
 
-// Fetcher скачивает архив репозитория (zip). Подменяется в тестах.
-type Fetcher func(ctx context.Context, r Repo) ([]byte, error)
+// Fetcher скачивает архив репозитория (zip). token — токен GitHub для приватных репозиториев (может быть пустым).
+// Подменяется в тестах.
+type Fetcher func(ctx context.Context, r Repo, token string) ([]byte, error)
 
-// HTTPFetcher качает с codeload.github.com (base можно заменить для тестов).
-func HTTPFetcher(base string) Fetcher {
-	if base == "" {
-		base = "https://codeload.github.com"
+// HTTPFetcher качает архив: без токена — с codeload.github.com (публичные репозитории, без лимитов API), с токеном — через
+// GitHub API (zipball; работает и для приватных репозиториев). Токен уходит только на api.github.com: при редиректе на
+// адрес скачивания (он уже подписан GitHub) заголовок Authorization не передаётся. Адреса можно заменить для тестов.
+func HTTPFetcher(codeloadBase, apiBase string) Fetcher {
+	if codeloadBase == "" {
+		codeloadBase = "https://codeload.github.com"
 	}
-	client := &http.Client{Timeout: fetchTimout}
-	return func(ctx context.Context, r Repo) ([]byte, error) {
+	if apiBase == "" {
+		apiBase = "https://api.github.com"
+	}
+	client := &http.Client{
+		Timeout: fetchTimout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return errors.New("too many redirects")
+			}
+			if req.URL.Scheme != via[0].URL.Scheme {
+				return errors.New("redirect to another scheme refused")
+			}
+			if req.URL.Host != via[0].URL.Host {
+				req.Header.Del("Authorization") // токен — только тому, кому он выдан
+			}
+			return nil
+		},
+	}
+	return func(ctx context.Context, r Repo, token string) ([]byte, error) {
 		ref := r.Ref
-		if ref == "" {
-			ref = "HEAD"
+		var url string
+		if token == "" {
+			if ref == "" {
+				ref = "HEAD"
+			}
+			url = codeloadBase + "/" + r.Owner + "/" + r.Name + "/zip/" + ref
+		} else {
+			url = apiBase + "/repos/" + r.Owner + "/" + r.Name + "/zipball"
+			if ref != "" {
+				url += "/" + ref
+			}
 		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/"+r.Owner+"/"+r.Name+"/zip/"+ref, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if err != nil {
 			return nil, err
 		}
 		req.Header.Set("User-Agent", "overlay-composer")
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+			req.Header.Set("Accept", "application/vnd.github+json")
+			req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+		}
 		resp, err := client.Do(req)
 		if err != nil {
+			// Текст ошибки net/http содержит URL, но не заголовки: токен в него не попадает.
 			return nil, fmt.Errorf("cannot reach GitHub: %w", err)
 		}
 		defer resp.Body.Close()
 		switch {
+		case resp.StatusCode == http.StatusNotFound && token == "":
+			return nil, errors.New("repository or branch not found (is it public? for a private repository add a GitHub token)")
 		case resp.StatusCode == http.StatusNotFound:
-			return nil, errors.New("repository or branch not found (is it public?)")
+			return nil, errors.New("repository or branch not found, or the token has no access to it")
+		case token != "" && (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden):
+			return nil, errors.New("GitHub rejected the token (expired, no access to this repository, or rate limit)")
 		case resp.StatusCode != http.StatusOK:
 			return nil, fmt.Errorf("GitHub answered %s", resp.Status)
 		}
@@ -159,10 +209,17 @@ type Entry struct {
 	Permissions []string `json:"permissions,omitempty"`
 	Repo        string   `json:"repo"`
 
-	Installed        bool   `json:"installed"`                  // установлен из этого репозитория
-	InstalledVersion string `json:"installedVersion,omitempty"` //
-	UpdateAvailable  bool   `json:"updateAvailable"`            //
-	Blocked          string `json:"blocked,omitempty"`          // почему нельзя поставить: "builtin" | "foreign"
+	// Digest — отпечаток файлов плагина (sha256). Редактор присылает его при установке: если плагин в репозитории успел
+	// измениться между просмотром каталога и установкой, установка отклоняется (ErrChanged), а не ставит непросмотренное.
+	Digest string `json:"digest"`
+	Commit string `json:"commit,omitempty"` // коммит, из которого собран архив (короткий), если GitHub его сообщил
+
+	Installed        bool     `json:"installed"`                  // установлен из этого репозитория
+	InstalledVersion string   `json:"installedVersion,omitempty"` //
+	InstalledCommit  string   `json:"installedCommit,omitempty"`  //
+	UpdateAvailable  bool     `json:"updateAvailable"`            // версия выше или файлы изменились
+	AddedPermissions []string `json:"addedPermissions,omitempty"` // права, которых не было у установленной версии
+	Blocked          string   `json:"blocked,omitempty"`          // почему нельзя поставить: "builtin" | "foreign"
 }
 
 // SourceView — источник и его каталог (или ошибка загрузки).
@@ -174,14 +231,18 @@ type SourceView struct {
 
 // Record — установленный из магазина плагин.
 type Record struct {
-	Repo    string `json:"repo"`
-	Version string `json:"version,omitempty"`
-	At      int64  `json:"at"`
+	Repo        string   `json:"repo"`
+	Version     string   `json:"version,omitempty"`
+	At          int64    `json:"at"`
+	Digest      string   `json:"digest,omitempty"`
+	Commit      string   `json:"commit,omitempty"`
+	Permissions []string `json:"permissions,omitempty"`
 }
 
 type state struct {
 	Sources   []string          `json:"sources"`
 	Installed map[string]Record `json:"installed"`
+	Token     string            `json:"githubToken,omitempty"` // зашифрован (secret.Box)
 }
 
 // Market — состояние магазина (список источников, установленные плагины) и операции над ним.
@@ -191,6 +252,7 @@ type Market struct {
 	reg     *plugins.Registry
 	fetch   Fetcher
 	builtin func(id string) bool
+	box     *secret.Box // шифрует токен GitHub; nil — токен хранить нельзя
 
 	opMu sync.Mutex // одна операция установки/удаления за раз
 	mu   sync.Mutex
@@ -212,17 +274,18 @@ type Config struct {
 	Reg     *plugins.Registry
 	Fetch   Fetcher
 	Builtin func(id string) bool // id занят встроенным плагином
+	Box     *secret.Box          // для токена GitHub (приватные репозитории)
 }
 
 // New читает состояние; при первом запуске (файла нет) добавляет официальный источник.
 func New(c Config) (*Market, error) {
 	if c.Fetch == nil {
-		c.Fetch = HTTPFetcher("")
+		c.Fetch = HTTPFetcher("", "")
 	}
 	if c.Builtin == nil {
 		c.Builtin = func(string) bool { return false }
 	}
-	m := &Market{file: c.File, dir: c.Dir, reg: c.Reg, fetch: c.Fetch, builtin: c.Builtin, cache: map[string]cached{}}
+	m := &Market{file: c.File, dir: c.Dir, reg: c.Reg, fetch: c.Fetch, builtin: c.Builtin, box: c.Box, cache: map[string]cached{}}
 	m.st.Installed = map[string]Record{}
 	if c.File != "" {
 		raw, err := os.ReadFile(c.File)
@@ -358,14 +421,21 @@ func (m *Market) entries(repo string, list []parsed) []Entry {
 	defer m.mu.Unlock()
 	out := make([]Entry, 0, len(list))
 	for _, p := range list {
-		e := Entry{ID: p.m.ID, Name: p.m.Name, Version: p.m.Version, Description: p.m.Description, Author: p.m.Author, Permissions: p.m.Permissions, Repo: repo}
+		e := Entry{ID: p.m.ID, Name: p.m.Name, Version: p.m.Version, Description: p.m.Description, Author: p.m.Author, Permissions: p.m.Permissions, Repo: repo,
+			Digest: p.digest, Commit: p.commit}
 		rec, ours := m.st.Installed[p.m.ID]
 		switch {
 		case m.builtin(p.m.ID):
 			e.Blocked = "builtin"
 		case ours && strings.EqualFold(rec.Repo, repo):
-			e.Installed, e.InstalledVersion = true, rec.Version
-			e.UpdateAvailable = newer(p.m.Version, rec.Version)
+			e.Installed, e.InstalledVersion, e.InstalledCommit = true, rec.Version, rec.Commit
+			// Обновление — когда версия выше или файлы изменились без смены версии (это тоже надо показать, а не скрыть).
+			e.UpdateAvailable = newer(p.m.Version, rec.Version) || (rec.Digest != "" && rec.Digest != p.digest)
+			for _, perm := range p.m.Permissions {
+				if !slices.Contains(rec.Permissions, perm) {
+					e.AddedPermissions = append(e.AddedPermissions, perm)
+				}
+			}
 		case ours:
 			e.Blocked = "foreign" // уже стоит из другого репозитория
 		case m.existsOnDisk(p.m.ID):
@@ -374,6 +444,12 @@ func (m *Market) entries(repo string, list []parsed) []Entry {
 		out = append(out, e)
 	}
 	return out
+}
+
+func (m *Market) dropCache(r Repo) {
+	m.cacheMu.Lock()
+	delete(m.cache, strings.ToLower(r.String()))
+	m.cacheMu.Unlock()
 }
 
 func (m *Market) existsOnDisk(id string) bool {
@@ -437,8 +513,10 @@ func splitVer(s string) ([]int, bool) {
 
 // parsed — плагин, найденный в архиве: манифест и файлы (путь внутри папки плагина → запись zip).
 type parsed struct {
-	m     plugins.Manifest
-	files map[string]*zip.File
+	m      plugins.Manifest
+	files  map[string]*zip.File
+	digest string // sha256 имён и содержимого файлов плагина
+	commit string // коммит архива (из комментария zip), если есть
 }
 
 // load возвращает плагины репозитория (с кэшем на catalogTTL).
@@ -452,7 +530,7 @@ func (m *Market) load(ctx context.Context, r Repo, refresh bool) ([]parsed, erro
 			return c.plugins, nil
 		}
 	}
-	data, err := m.fetch(ctx, r)
+	data, err := m.fetch(ctx, r, m.token())
 	if err != nil {
 		return nil, err
 	}
@@ -475,6 +553,11 @@ func parseZip(data []byte) ([]parsed, error) {
 	if len(zr.File) > maxEntries {
 		return nil, errors.New("archive has too many files")
 	}
+	commit := ""
+	if c := strings.TrimSpace(zr.Comment); len(c) == 40 && isHex(c) { // git archive кладёт id коммита в комментарий zip
+		commit = c[:7]
+	}
+	budget := unpackBudget // сколько всего можно распаковать при подсчёте отпечатков (защита от zip-бомбы)
 	byID := map[string]*parsed{}
 	var order []string
 	for _, f := range zr.File {
@@ -513,9 +596,61 @@ func parseZip(data []byte) ([]parsed, error) {
 		}
 		man.Builtin = false
 		p.m = man
+		p.commit = commit
+		d, n, err := digestOf(p.files)
+		if budget -= n; budget < 0 {
+			return nil, errors.New("archive is too large when unpacked")
+		}
+		if err != nil {
+			continue // файл больше лимита и т. п. — плагин не попадает в каталог
+		}
+		p.digest = d
 		out = append(out, *p)
 	}
 	return out, nil
+}
+
+func isHex(s string) bool {
+	for _, c := range s {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
+			return false
+		}
+	}
+	return true
+}
+
+// digestOf — sha256 по отсортированным (имя, размер, содержимое); возвращает отпечаток и сколько байт распаковано.
+func digestOf(files map[string]*zip.File) (string, int64, error) {
+	names := make([]string, 0, len(files))
+	for n := range files {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	h := sha256.New()
+	var total int64
+	for _, n := range names {
+		f := files[n]
+		if f.UncompressedSize64 > maxFile {
+			return "", total, fmt.Errorf("%s is too large", n)
+		}
+		rc, err := f.Open()
+		if err != nil {
+			return "", total, err
+		}
+		var hdr [8]byte
+		binary.BigEndian.PutUint64(hdr[:], uint64(len(n)))
+		h.Write(hdr[:])
+		h.Write([]byte(n))
+		sz, err := io.Copy(h, io.LimitReader(rc, maxFile+1))
+		rc.Close()
+		total += sz
+		if err != nil || sz > maxFile || total > maxTotal {
+			return "", total, errors.New("plugin is too large")
+		}
+		binary.BigEndian.PutUint64(hdr[:], uint64(sz))
+		h.Write(hdr[:]) // размер после содержимого: границы файлов однозначны
+	}
+	return hex.EncodeToString(h.Sum(nil)), total, nil
 }
 
 func readZip(f *zip.File, limit int64) ([]byte, error) {
@@ -536,9 +671,11 @@ func readZip(f *zip.File, limit int64) ([]byte, error) {
 
 // ---- установка и удаление ----
 
-// Install ставит (или обновляет) плагин id из репозитория repo. Скачивает архив заново, чтобы поставить ровно то, что
-// сейчас в репозитории; на диск попадает только папка этого плагина.
-func (m *Market) Install(ctx context.Context, repoIn, id string) (Entry, error) {
+// Install ставит (или обновляет) плагин id из репозитория repo. Скачивает архив заново и ставит ровно то, что в нём
+// сейчас; на диск попадает только папка этого плагина. digest — отпечаток, который пользователь видел в каталоге
+// (Entry.Digest): если файлы плагина с тех пор изменились (ветку успели обновить), установка отклоняется с ErrChanged.
+// Пустой digest — без проверки (прямые вызовы API).
+func (m *Market) Install(ctx context.Context, repoIn, id, digest string) (Entry, error) {
 	r, err := ParseRepo(repoIn)
 	if err != nil {
 		return Entry{}, err
@@ -582,6 +719,10 @@ func (m *Market) Install(ctx context.Context, repoIn, id string) (Entry, error) 
 	if p == nil {
 		return Entry{}, ErrNoPlugin
 	}
+	if digest != "" && digest != p.digest {
+		m.dropCache(r) // каталог устарел — следующий показ загрузит свежий
+		return Entry{}, ErrChanged
+	}
 
 	tmp, err := os.MkdirTemp(m.dir, ".install-"+id+"-")
 	if err != nil {
@@ -610,7 +751,7 @@ func (m *Market) Install(ctx context.Context, repoIn, id string) (Entry, error) 
 	}
 
 	m.mu.Lock()
-	m.st.Installed[id] = Record{Repo: key, Version: p.m.Version, At: time.Now().Unix()}
+	m.st.Installed[id] = Record{Repo: key, Version: p.m.Version, At: time.Now().Unix(), Digest: p.digest, Commit: p.commit, Permissions: p.m.Permissions}
 	err = m.saveLocked()
 	m.mu.Unlock()
 	if m.reg != nil {
@@ -689,3 +830,72 @@ func (m *Market) Uninstall(id string) error {
 }
 
 func isID(s string) bool { return model.IsValidID(s) }
+
+// ---- токен GitHub (приватные репозитории) ----
+
+const tokenAAD = "market:github-token"
+
+// token — расшифрованный токен; пусто, если не задан или не расшифровался (ключ сменился).
+func (m *Market) token() string {
+	m.mu.Lock()
+	enc := m.st.Token
+	m.mu.Unlock()
+	if enc == "" || m.box == nil {
+		return ""
+	}
+	t, _, err := m.box.Open(enc, tokenAAD)
+	if err != nil {
+		return ""
+	}
+	return t
+}
+
+// HasToken — задан ли токен (сам токен наружу не отдаётся никогда).
+func (m *Market) HasToken() bool { return m.token() != "" }
+
+// SetToken сохраняет токен GitHub в зашифрованном виде. Рекомендуется fine-grained токен только на чтение (Contents: Read)
+// и только для нужных репозиториев.
+func (m *Market) SetToken(tok string) error {
+	tok = strings.TrimSpace(tok)
+	if tok == "" || len(tok) > 255 {
+		return ErrToken
+	}
+	for _, c := range tok {
+		if c <= ' ' || c > '~' {
+			return ErrToken
+		}
+	}
+	if m.box == nil {
+		return ErrNoBox
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	old := m.st.Token
+	m.st.Token = m.box.Seal(tok, tokenAAD)
+	if err := m.saveLocked(); err != nil {
+		m.st.Token = old
+		return err
+	}
+	m.dropAllCache()
+	return nil
+}
+
+// ClearToken удаляет токен.
+func (m *Market) ClearToken() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	old := m.st.Token
+	m.st.Token = ""
+	if err := m.saveLocked(); err != nil {
+		m.st.Token = old
+		return err
+	}
+	m.dropAllCache()
+	return nil
+}
+
+func (m *Market) dropAllCache() {
+	m.cacheMu.Lock()
+	m.cache = map[string]cached{}
+	m.cacheMu.Unlock()
+}
