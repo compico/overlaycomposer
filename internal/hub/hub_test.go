@@ -2,9 +2,11 @@ package hub
 
 import (
 	"encoding/json"
+	"fmt"
 	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/compico/overlaycomposer/internal/model"
 )
@@ -238,4 +240,136 @@ func TestSourceUpdate(t *testing.T) {
 	if !c.has("layout:updated", "a") {
 		t.Fatal("layout:updated")
 	}
+}
+
+// ---- плавная остановка ----
+
+type slowConn struct{ fakeConn }
+
+func (c *slowConn) Send(b []byte) bool { return false } // клиент не успевает
+
+func (c *fakeConn) stopID() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, m := range c.msgs {
+		if m["type"] == "app:stopping" {
+			return int(m["id"].(float64))
+		}
+	}
+	return 0
+}
+
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	for i := 0; i < 400; i++ {
+		if cond() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timeout waiting for %s", what)
+}
+
+func stoppedMsg(id int) []byte { return []byte(fmt.Sprintf(`{"type":"app:stopped","id":%d}`, id)) }
+
+func TestStopWaitsForAllPages(t *testing.T) {
+	h, _, _, c1 := newHub()
+	c2 := &fakeConn{}
+	p2 := h.AddPeer(c2)
+	p1 := h.Peers()[0]
+	if p1 == p2 {
+		p1 = h.Peers()[1]
+	}
+	res := make(chan StopResult, 1)
+	go func() { res <- h.NotifyStopping(2 * time.Second) }()
+	waitFor(t, "stopping messages", func() bool { return c1.stopID() != 0 && c2.stopID() != 0 })
+	if c1.stopID() != c2.stopID() {
+		t.Fatal("same id for everyone")
+	}
+	var gm float64
+	c1.mu.Lock()
+	for _, m := range c1.msgs {
+		if m["type"] == "app:stopping" {
+			gm = m["graceMs"].(float64)
+		}
+	}
+	c1.mu.Unlock()
+	if gm != 2000 {
+		t.Fatalf("graceMs: %v", gm)
+	}
+	id := c1.stopID()
+	h.HandleMessage(p2, stoppedMsg(id))
+	select {
+	case <-res:
+		t.Fatal("must wait for the second page")
+	case <-time.After(60 * time.Millisecond):
+	}
+	h.HandleMessage(p2, stoppedMsg(id))    // повтор от той же страницы ничего не меняет
+	h.HandleMessage(p1, stoppedMsg(id+99)) // чужой/старый id игнорируется
+	select {
+	case <-res:
+		t.Fatal("wrong id must not count")
+	case <-time.After(60 * time.Millisecond):
+	}
+	h.HandleMessage(p1, stoppedMsg(id))
+	select {
+	case r := <-res:
+		if r.Notified != 2 || r.TimedOut != 0 || !r.Waited {
+			t.Fatalf("result: %+v", r)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("must finish when everyone answered")
+	}
+}
+
+func TestStopTimesOutOnSilentPage(t *testing.T) {
+	h, _, _, c := newHub()
+	start := time.Now()
+	r := h.NotifyStopping(50 * time.Millisecond) // старая страница, не знающая app:stopping
+	if el := time.Since(start); el < 50*time.Millisecond || el > 3*time.Second {
+		t.Fatalf("waited %v", el)
+	}
+	if r.TimedOut != 1 || r.Notified != 1 || c.stopID() == 0 {
+		t.Fatalf("result: %+v", r)
+	}
+}
+
+func TestStopDoesNotWaitForGoneOrSlowPages(t *testing.T) {
+	h, _, _, _ := newHub()
+	for _, p := range h.Peers() {
+		h.RemovePeer(p)
+	}
+	if r := h.NotifyStopping(time.Second); r.Waited {
+		t.Fatalf("no pages: %+v", r)
+	}
+	// Страница отключилась во время ожидания — ждать её дальше не надо.
+	cc := &fakeConn{}
+	p := h.AddPeer(cc)
+	done := make(chan StopResult, 1)
+	go func() { done <- h.NotifyStopping(5 * time.Second) }()
+	waitFor(t, "stopping", func() bool { return cc.stopID() != 0 })
+	h.RemovePeer(p)
+	select {
+	case r := <-done:
+		if r.TimedOut != 0 {
+			t.Fatalf("result: %+v", r)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("must not wait for a disconnected page")
+	}
+	// Медленный клиент (Send вернул false) не задерживает остановку.
+	h.AddPeer(&slowConn{})
+	start := time.Now()
+	r := h.NotifyStopping(5 * time.Second)
+	if time.Since(start) > time.Second || r.Notified != 0 {
+		t.Fatalf("slow peer: %+v in %v", r, time.Since(start))
+	}
+}
+
+func TestStoppedWithoutWaitIsHarmless(t *testing.T) {
+	h, _, _, _ := newHub()
+	p := h.Peers()[0]
+	h.HandleMessage(p, stoppedMsg(1))
+	h.HandleMessage(p, []byte(`{"type":"app:stopped"}`))
+	h.HandleMessage(p, []byte(`{"type":"app:stopped","id":"x"}`))
 }

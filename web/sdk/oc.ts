@@ -37,6 +37,9 @@ if (hosted) {
         else p.reject(new Error(m.error));
         break;
       }
+      case "stopping":
+        void runStop(m.graceMs);
+        break;
       case "event":
         for (const h of handlers.get(m.name) ?? []) {
           try { h(m.data); } catch (e) { console.error("oc: handler error", e); }
@@ -105,6 +108,30 @@ function update<T>(key: string, fn: (cur: T | undefined) => T): Promise<T> {
   return p;
 }
 
+// ---- остановка приложения ----
+
+type StopHandler = (e: { reason: "shutdown"; graceMs: number }) => void | Promise<void>;
+const stopHandlers = new Set<StopHandler>();
+let stopping = false;
+
+/** Приложение выключается: вызываем обработчики (параллельно), ждём не дольше graceMs и сообщаем странице, что закончили. */
+async function runStop(graceMs: number) {
+  if (stopping) return;
+  stopping = true;
+  const budget = Math.max(0, graceMs - 200); // запас на передачу ответа странице
+  const run = Promise.allSettled([...stopHandlers].map(async (h) => {
+    try { await h({ reason: "shutdown", graceMs }); } catch (e) { console.error("oc: onStop handler error", e); }
+  }));
+  await Promise.race([run, new Promise((r) => setTimeout(r, budget))]);
+  post({ oc: 1, t: "stopped" });
+}
+
+function onStop(h: StopHandler): () => void {
+  stopHandlers.add(h);
+  if (hosted) post({ oc: 1, t: "hook", hook: "stop" }); // повторная отправка безвредна
+  return () => { stopHandlers.delete(h); };
+}
+
 function param<T extends string | number | boolean>(key: string, fallback: T): T {
   const raw = new URLSearchParams(location.search).get(key);
   if (raw === null) return fallback;
@@ -121,6 +148,7 @@ const oc = {
   hosted,
   ready,
   param,
+  lifecycle: { onStop },
   chat: {
     subscribe: (options?: { channel?: string }) => call<{ channel: string }>("chat.subscribe", options ?? {}),
     unsubscribe: (channel: string) => call<void>("chat.unsubscribe", { channel }),

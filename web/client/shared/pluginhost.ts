@@ -12,6 +12,8 @@ interface Entry {
   frame: HTMLIFrameElement;
   info: PluginInfo;
   subs: Map<string, number>; // канал → сколько раз подписан
+  stopHook: boolean; // плагин подписан на остановку приложения (oc.lifecycle.onStop)
+  onStopped?: () => void; // ждём ответа «закончил» при остановке
 }
 
 interface Pending {
@@ -38,7 +40,7 @@ export class PluginHost {
   }
 
   register(frame: HTMLIFrameElement, info: Omit<PluginInfo, "preview">) {
-    this.#entries.add({ frame, info: { ...info, preview: !this.opts.canSend }, subs: new Map() });
+    this.#entries.add({ frame, info: { ...info, preview: !this.opts.canSend }, subs: new Map(), stopHook: false });
   }
 
   /** iframe закрывается: снимаем все его подписки. */
@@ -60,6 +62,9 @@ export class PluginHost {
   /** Сообщение сервера. Возвращает true, если оно относится к плагинам. */
   onServerMessage(msg: { type: string; [k: string]: unknown }): boolean {
     switch (msg.type) {
+      case "app:stopping":
+        void this.#onStopping(msg.id as number, typeof msg.graceMs === "number" ? msg.graceMs : 3000);
+        return true;
       case "chat:sub:result":
       case "chat:say:result":
       case "storage:result": {
@@ -93,6 +98,28 @@ export class PluginHost {
     return false;
   }
 
+  /**
+   * Сервер останавливается: сообщаем плагинам с onStop, ждём их (не дольше graceMs) и отвечаем серверу `app:stopped`.
+   * Пока ждём, сервер продолжает обрабатывать запросы плагинов (например, oc.storage.set).
+   */
+  #stopping = new Set<number>();
+  async #onStopping(id: number, graceMs: number) {
+    if (this.#stopping.has(id)) return;
+    this.#stopping.add(id);
+    const waits: Promise<void>[] = [];
+    for (const e of this.#entries) {
+      if (!e.stopHook) continue;
+      waits.push(new Promise<void>((resolve) => {
+        e.onStopped = resolve;
+        this.#toPlugin(e, { oc: 1, t: "stopping", graceMs });
+      }));
+    }
+    if (waits.length) {
+      await Promise.race([Promise.all(waits), new Promise((r) => setTimeout(r, graceMs))]);
+    }
+    this.opts.send({ type: "app:stopped", id });
+  }
+
   // ---- от плагина ----
 
   #toPlugin(e: Entry, m: ToPlugin) {
@@ -106,7 +133,11 @@ export class PluginHost {
     for (const e of this.#entries) if (e.frame.contentWindow === ev.source) entry = e;
     if (!entry) return;
     const e = entry;
-    if (m.t === "hello") {
+    if (m.t === "hook") {
+      if (m.hook === "stop") e.stopHook = true;
+    } else if (m.t === "stopped") {
+      e.onStopped?.();
+    } else if (m.t === "hello") {
       this.#toPlugin(e, { oc: 1, t: "ready", info: e.info });
     } else if (m.t === "call" && typeof m.id === "number" && typeof m.method === "string") {
       const id = m.id;
