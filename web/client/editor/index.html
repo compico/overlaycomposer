@@ -164,6 +164,16 @@
         <button type="button" id="storeAddBtn">Add</button>
         <button type="button" id="storeRefreshBtn" title="Fetch the catalogs again">↻</button>
       </div>
+      <details style="margin-top:6px">
+        <summary class="hint" id="storeTokenSummary">Private repositories (GitHub token)</summary>
+        <div class="hint">Create a <b>fine-grained personal access token</b> at github.com/settings/personal-access-tokens: only the repositories you need,
+          permission <b>Contents: Read-only</b>. The token is stored encrypted on this computer, is sent only to GitHub and is never shown again or given to plugins.</div>
+        <div class="row">
+          <input type="password" id="storeToken" placeholder="github_pat_…" style="flex:1" autocomplete="off" spellcheck="false">
+          <button type="button" id="storeTokenSave">Save token</button>
+          <button type="button" id="storeTokenClear" class="danger">Remove</button>
+        </div>
+      </details>
       <div id="storeBody" style="max-height:60vh;overflow:auto"></div>
       <div class="row" style="justify-content:flex-end;margin-top:12px"><button value="close">Close</button></div>
     </form>

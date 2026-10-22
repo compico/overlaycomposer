@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/compico/overlaycomposer/internal/plugins"
+	"github.com/compico/overlaycomposer/internal/secret"
 )
 
 type file struct {
@@ -73,7 +76,7 @@ func newEnv(t *testing.T, builtin ...string) *env {
 	reg := plugins.New(nil, os.DirFS(e.dir))
 	m, err := New(Config{
 		File: e.data, Dir: e.dir, Reg: reg,
-		Fetch: func(_ context.Context, r Repo) ([]byte, error) {
+		Fetch: func(_ context.Context, r Repo, _ string) ([]byte, error) {
 			e.calls.Add(1)
 			e.mu.Lock()
 			b, ok := e.repos[strings.ToLower(r.Owner+"/"+r.Name)]
@@ -207,7 +210,7 @@ func TestInstallUpdateUninstall(t *testing.T) {
 	e.repos["bob/tools"] = makeZip(t, plug("alpha", "1.0.0")...)
 	e.m.AddSource(ctx, "bob/tools")
 
-	en, err := e.m.Install(ctx, "bob/tools", "alpha")
+	en, err := e.m.Install(ctx, "bob/tools", "alpha", "")
 	if err != nil || !en.Installed || en.InstalledVersion != "1.0.0" || en.UpdateAvailable {
 		t.Fatalf("install: %+v %v", en, err)
 	}
@@ -237,7 +240,7 @@ func TestInstallUpdateUninstall(t *testing.T) {
 	if !ent.Installed || !ent.UpdateAvailable || ent.Version != "1.1.0" || ent.InstalledVersion != "1.0.0" {
 		t.Fatalf("update flags: %+v", ent)
 	}
-	if _, err := e.m.Install(ctx, "bob/tools", "alpha"); err != nil {
+	if _, err := e.m.Install(ctx, "bob/tools", "alpha", ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(e.dir, "alpha", "lib")); !os.IsNotExist(err) {
@@ -275,13 +278,13 @@ func TestInstallRefusals(t *testing.T) {
 	e.m.AddSource(ctx, "bob/tools")
 	e.m.AddSource(ctx, "eve/other")
 
-	if _, err := e.m.Install(ctx, "bob/tools", "clock"); !errors.Is(err, ErrConflict) {
+	if _, err := e.m.Install(ctx, "bob/tools", "clock", ""); !errors.Is(err, ErrConflict) {
 		t.Fatalf("builtin: %v", err)
 	}
 	// Папка, положенная вручную (или чужая), не перезаписывается и не удаляется магазином.
 	os.MkdirAll(filepath.Join(e.dir, "manual"), 0o755)
 	os.WriteFile(filepath.Join(e.dir, "manual", "mine.txt"), []byte("mine"), 0o644)
-	if _, err := e.m.Install(ctx, "bob/tools", "manual"); !errors.Is(err, ErrConflict) {
+	if _, err := e.m.Install(ctx, "bob/tools", "manual", ""); !errors.Is(err, ErrConflict) {
 		t.Fatalf("manual: %v", err)
 	}
 	if err := e.m.Uninstall("manual"); !errors.Is(err, ErrNotOurs) {
@@ -291,10 +294,10 @@ func TestInstallRefusals(t *testing.T) {
 		t.Fatal("manual plugin touched")
 	}
 	// Плагин с тем же id из другого репозитория не подменяет уже установленный.
-	if _, err := e.m.Install(ctx, "bob/tools", "alpha"); err != nil {
+	if _, err := e.m.Install(ctx, "bob/tools", "alpha", ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.m.Install(ctx, "eve/other", "alpha"); !errors.Is(err, ErrConflict) {
+	if _, err := e.m.Install(ctx, "eve/other", "alpha", ""); !errors.Is(err, ErrConflict) {
 		t.Fatalf("other repo: %v", err)
 	}
 	// В каталоге это видно заранее.
@@ -308,13 +311,13 @@ func TestInstallRefusals(t *testing.T) {
 			}
 		}
 	}
-	if _, err := e.m.Install(ctx, "bob/tools", "nope"); !errors.Is(err, ErrNoPlugin) {
+	if _, err := e.m.Install(ctx, "bob/tools", "nope", ""); !errors.Is(err, ErrNoPlugin) {
 		t.Fatalf("unknown plugin: %v", err)
 	}
-	if _, err := e.m.Install(ctx, "zed/unlisted", "alpha"); !errors.Is(err, ErrNoSource) {
+	if _, err := e.m.Install(ctx, "zed/unlisted", "alpha", ""); !errors.Is(err, ErrNoSource) {
 		t.Fatalf("unlisted source must not be installable: %v", err)
 	}
-	if _, err := e.m.Install(ctx, "bob/tools", "../x"); err == nil {
+	if _, err := e.m.Install(ctx, "bob/tools", "../x", ""); err == nil {
 		t.Fatal("bad id")
 	}
 }
@@ -324,7 +327,7 @@ func TestRemovingSourceKeepsInstalledPlugin(t *testing.T) {
 	ctx := context.Background()
 	e.repos["bob/tools"] = makeZip(t, plug("alpha", "1")...)
 	e.m.AddSource(ctx, "bob/tools")
-	e.m.Install(ctx, "bob/tools", "alpha")
+	e.m.Install(ctx, "bob/tools", "alpha", "")
 	if err := e.m.RemoveSource("bob/tools"); err != nil {
 		t.Fatal(err)
 	}
@@ -334,7 +337,7 @@ func TestRemovingSourceKeepsInstalledPlugin(t *testing.T) {
 	if _, ok := e.m.reg.Get("alpha"); !ok {
 		t.Fatal("plugin must stay installed")
 	}
-	if _, err := e.m.Install(ctx, "bob/tools", "alpha"); !errors.Is(err, ErrNoSource) {
+	if _, err := e.m.Install(ctx, "bob/tools", "alpha", ""); !errors.Is(err, ErrNoSource) {
 		t.Fatalf("update from removed source: %v", err)
 	}
 	if err := e.m.Uninstall("alpha"); err != nil { // удалить можно и после удаления источника
@@ -362,7 +365,7 @@ func TestMaliciousArchive(t *testing.T) {
 	if len(list) != 1 || list[0].ID != "alpha" {
 		t.Fatalf("only the valid plugin may be listed: %+v", list)
 	}
-	if _, err := e.m.Install(ctx, "eve/bad", "alpha"); err != nil {
+	if _, err := e.m.Install(ctx, "eve/bad", "alpha", ""); err != nil {
 		t.Fatal(err)
 	}
 	for _, p := range []string{"link", "abs.txt"} {
@@ -384,7 +387,8 @@ func TestLimits(t *testing.T) {
 	big := strings.Repeat("a", maxFile+1)
 	e.repos["eve/big"] = makeZip(t, append(plug("alpha", "1"), file{name: "repo-abc/plugins/alpha/big.bin", body: big})...)
 	e.m.st.Sources = append(e.m.st.Sources, "eve/big") // мимо AddSource: он только проверяет, что каталог читается
-	if _, err := e.m.Install(ctx, "eve/big", "alpha"); err == nil || !strings.Contains(err.Error(), "too large") {
+	// Плагин с файлом больше лимита вообще не попадает в каталог, а значит, и не ставится.
+	if _, err := e.m.Install(ctx, "eve/big", "alpha", ""); !errors.Is(err, ErrNoPlugin) {
 		t.Fatalf("big file: %v", err)
 	}
 	entries, _ := os.ReadDir(e.dir)
@@ -396,7 +400,7 @@ func TestLimits(t *testing.T) {
 	}
 	e.repos["eve/junk"] = []byte("not a zip")
 	e.m.st.Sources = append(e.m.st.Sources, "eve/junk")
-	if _, err := e.m.Install(ctx, "eve/junk", "alpha"); err == nil {
+	if _, err := e.m.Install(ctx, "eve/junk", "alpha", ""); err == nil {
 		t.Fatal("garbage archive")
 	}
 }
@@ -406,13 +410,309 @@ func TestFailedUpdateKeepsOldVersion(t *testing.T) {
 	ctx := context.Background()
 	e.repos["bob/tools"] = makeZip(t, plug("alpha", "1.0.0")...)
 	e.m.AddSource(ctx, "bob/tools")
-	e.m.Install(ctx, "bob/tools", "alpha")
+	e.m.Install(ctx, "bob/tools", "alpha", "")
 	e.repos["bob/tools"] = makeZip(t, append(plug("alpha", "2.0.0"), file{name: "repo-abc/plugins/alpha/big.bin", body: strings.Repeat("a", maxFile+1)})...)
-	if _, err := e.m.Install(ctx, "bob/tools", "alpha"); err == nil {
+	if _, err := e.m.Install(ctx, "bob/tools", "alpha", ""); err == nil {
 		t.Fatal("update must fail")
 	}
 	b, _ := os.ReadFile(filepath.Join(e.dir, "alpha", "index.html"))
 	if string(b) != "<html>alpha1.0.0</html>" || e.m.Installed()["alpha"].Version != "1.0.0" {
 		t.Fatalf("old version must survive: %q", b)
+	}
+}
+
+// ---- защита от подмены между просмотром и установкой, отпечатки, коммит ----
+
+func catalogEntry(t *testing.T, e *env, repo, id string) Entry {
+	t.Helper()
+	for _, s := range e.m.Catalog(context.Background(), true) {
+		if s.Repo == repo {
+			for _, p := range s.Plugins {
+				if p.ID == id {
+					return p
+				}
+			}
+		}
+	}
+	t.Fatalf("%s/%s not in catalog", repo, id)
+	return Entry{}
+}
+
+func TestInstallRefusesPluginChangedSinceCatalog(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	e.repos["bob/tools"] = makeZip(t, plug("alpha", "1.0.0")...)
+	e.m.AddSource(ctx, "bob/tools")
+	seen := catalogEntry(t, e, "bob/tools", "alpha")
+	if len(seen.Digest) != 64 {
+		t.Fatalf("digest: %q", seen.Digest)
+	}
+	// Пока пользователь читал каталог, автор подменил файл (версия та же).
+	e.repos["bob/tools"] = makeZip(t,
+		file{name: "repo-abc/plugins/alpha/plugin.json", body: manifest("alpha", "1.0.0")},
+		file{name: "repo-abc/plugins/alpha/index.html", body: "<script>steal()</script>"},
+		file{name: "repo-abc/plugins/alpha/lib/a.js", body: "1"})
+	if _, err := e.m.Install(ctx, "bob/tools", "alpha", seen.Digest); !errors.Is(err, ErrChanged) {
+		t.Fatalf("must refuse changed plugin: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(e.dir, "alpha")); !os.IsNotExist(err) {
+		t.Fatal("nothing may be installed")
+	}
+	if _, ok := e.m.Installed()["alpha"]; ok {
+		t.Fatal("must not be recorded")
+	}
+	// После перечитывания каталога (новый отпечаток) установка проходит.
+	fresh := catalogEntry(t, e, "bob/tools", "alpha")
+	if fresh.Digest == seen.Digest {
+		t.Fatal("digest must change with content")
+	}
+	if _, err := e.m.Install(ctx, "bob/tools", "alpha", fresh.Digest); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDigestCoversNamesAndContent(t *testing.T) {
+	digest := func(files ...file) string {
+		list, err := parseZip(makeZip(t, files...))
+		if err != nil || len(list) != 1 {
+			t.Fatalf("parse: %v %d", err, len(list))
+		}
+		return list[0].digest
+	}
+	base := []file{{name: "r/plugins/a/plugin.json", body: manifest("a", "1")}, {name: "r/plugins/a/index.html", body: "x"}, {name: "r/plugins/a/b.js", body: "12"}}
+	d0 := digest(base...)
+	if digest(base...) != d0 {
+		t.Fatal("digest must be deterministic")
+	}
+	renamed := append([]file{}, base...)
+	renamed[2].name = "r/plugins/a/c.js"
+	edited := append([]file{}, base...)
+	edited[2].body = "13"
+	moved := append([]file{}, base...) // граница между файлами: «b.js=12» ≠ «b.js=1, c.js=2»
+	moved[2].body = "1"
+	moved = append(moved, file{name: "r/plugins/a/c.js", body: "2"})
+	reordered := []file{base[2], base[0], base[1]}
+	for name, f := range map[string][]file{"renamed": renamed, "edited": edited, "moved": moved} {
+		if digest(f...) == d0 {
+			t.Errorf("digest must change: %s", name)
+		}
+	}
+	if digest(reordered...) != d0 {
+		t.Error("order of files in the archive must not matter")
+	}
+}
+
+func TestCommitFromArchiveComment(t *testing.T) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	zw.SetComment("0123456789abcdef0123456789abcdef01234567")
+	for _, f := range plug("alpha", "1") {
+		w, _ := zw.Create(f.name)
+		w.Write([]byte(f.body))
+	}
+	zw.Close()
+	list, err := parseZip(buf.Bytes())
+	if err != nil || len(list) != 1 || list[0].commit != "0123456" {
+		t.Fatalf("commit: %+v %v", list, err)
+	}
+	// Мусор в комментарии коммитом не считается.
+	if l, _ := parseZip(makeZip(t, plug("alpha", "1")...)); l[0].commit != "" {
+		t.Fatal("no commit expected")
+	}
+}
+
+func TestUpdateFlagsContentChangeAndNewPermissions(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	e.repos["bob/tools"] = makeZip(t, plug("alpha", "1.0.0")...)
+	e.m.AddSource(ctx, "bob/tools")
+	first := catalogEntry(t, e, "bob/tools", "alpha")
+	e.m.Install(ctx, "bob/tools", "alpha", first.Digest)
+	if en := catalogEntry(t, e, "bob/tools", "alpha"); en.UpdateAvailable || len(en.AddedPermissions) != 0 {
+		t.Fatalf("freshly installed: %+v", en)
+	}
+	// Версия не менялась, но файлы изменились и добавилось новое право: обновление предлагается, право помечено.
+	e.repos["bob/tools"] = makeZip(t,
+		file{name: "repo-abc/plugins/alpha/plugin.json", body: `{"id":"alpha","name":"Plugin alpha","version":"1.0.0","permissions":["chat.read","chat.send"]}`},
+		file{name: "repo-abc/plugins/alpha/index.html", body: "<html>changed</html>"})
+	en := catalogEntry(t, e, "bob/tools", "alpha")
+	if !en.UpdateAvailable || len(en.AddedPermissions) != 1 || en.AddedPermissions[0] != "chat.send" {
+		t.Fatalf("flags: %+v", en)
+	}
+}
+
+func TestUnpackBudget(t *testing.T) {
+	old := unpackBudget
+	unpackBudget = 3 << 20
+	defer func() { unpackBudget = old }()
+	zero := strings.Repeat("\x00", 2<<20) // 2 МБ нулей сжимаются в копейки
+	var files []file
+	for _, id := range []string{"p1", "p2"} {
+		files = append(files, plug(id, "1")[:2]...)
+		files = append(files, file{name: "repo-abc/plugins/" + id + "/blob.bin", body: zero})
+	}
+	data := makeZip(t, files...)
+	if len(data) > 100<<10 {
+		t.Fatalf("test archive must be small, got %d", len(data))
+	}
+	if _, err := parseZip(data); err == nil || !strings.Contains(err.Error(), "too large when unpacked") {
+		t.Fatalf("zip bomb must be refused: %v", err)
+	}
+	unpackBudget = 10 << 20
+	if l, err := parseZip(data); err != nil || len(l) != 2 {
+		t.Fatalf("within budget: %v %d", err, len(l))
+	}
+}
+
+// ---- токен GitHub и приватные репозитории ----
+
+func testBox(t *testing.T, b byte) *secret.Box {
+	t.Helper()
+	x, err := secret.NewBox(bytes.Repeat([]byte{b}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return x
+}
+
+func TestTokenStoredEncryptedAndUsedForFetch(t *testing.T) {
+	root := t.TempDir()
+	file := filepath.Join(root, "market.json")
+	var gotToken string
+	cfg := Config{File: file, Dir: root, Box: testBox(t, 1), Fetch: func(_ context.Context, r Repo, tok string) ([]byte, error) {
+		gotToken = tok
+		return makeZip(t, plug("alpha", "1")...), nil
+	}}
+	m, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.HasToken() {
+		t.Fatal("no token yet")
+	}
+	for _, bad := range []string{"", "   ", "a b", "tok\nen", "токен", strings.Repeat("x", 300)} {
+		if err := m.SetToken(bad); !errors.Is(err, ErrToken) {
+			t.Errorf("SetToken(%q): %v", bad, err)
+		}
+	}
+	if err := m.SetToken("  github_pat_SECRET123  "); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(file)
+	if bytes.Contains(raw, []byte("SECRET123")) || !bytes.Contains(raw, []byte("enc:v1:")) {
+		t.Fatalf("token must be encrypted on disk:\n%s", raw)
+	}
+	if info, _ := os.Stat(file); info.Mode().Perm() != 0o600 {
+		t.Fatalf("market.json mode %v", info.Mode().Perm())
+	}
+	if _, err := m.AddSource(context.Background(), "me/private"); err != nil {
+		t.Fatal(err)
+	}
+	if gotToken != "github_pat_SECRET123" {
+		t.Fatalf("fetcher must get the token, got %q", gotToken)
+	}
+	// Перезапуск: токен на месте; с другим ключом — не читается (как будто не задан), приложение живо.
+	m2, _ := New(cfg)
+	if !m2.HasToken() {
+		t.Fatal("token must survive restart")
+	}
+	cfg.Box = testBox(t, 2)
+	if m3, err := New(cfg); err != nil || m3.HasToken() {
+		t.Fatalf("wrong key: %v", err)
+	}
+	if err := m.ClearToken(); err != nil || m.HasToken() {
+		t.Fatal("clear")
+	}
+	raw, _ = os.ReadFile(file)
+	if bytes.Contains(raw, []byte("githubToken")) {
+		t.Fatal("cleared token must leave no trace")
+	}
+}
+
+func TestTokenNeedsEncryption(t *testing.T) {
+	m, _ := New(Config{Dir: t.TempDir()})
+	if err := m.SetToken("abc"); !errors.Is(err, ErrNoBox) {
+		t.Fatalf("no box: %v", err)
+	}
+}
+
+func TestHTTPFetcherPublicAndPrivate(t *testing.T) {
+	zipData := makeZip(t, plug("alpha", "1")...)
+	type hit struct{ path, auth string }
+	var apiHits, cdnHits []hit
+	cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cdnHits = append(cdnHits, hit{r.URL.Path, r.Header.Get("Authorization")})
+		if strings.Contains(r.URL.Path, "missing") {
+			http.NotFound(w, r)
+			return
+		}
+		w.Write(zipData)
+	}))
+	defer cdn.Close()
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		apiHits = append(apiHits, hit{r.URL.Path, r.Header.Get("Authorization")})
+		switch {
+		case r.Header.Get("Authorization") != "Bearer good":
+			http.Error(w, "bad credentials", 401)
+		case strings.Contains(r.URL.Path, "missing"):
+			http.NotFound(w, r)
+		default: // как у настоящего GitHub: редирект на подписанный адрес скачивания (другой хост)
+			http.Redirect(w, r, cdn.URL+"/signed/download", http.StatusFound)
+		}
+	}))
+	defer api.Close()
+	f := HTTPFetcher(cdn.URL, api.URL)
+	ctx := context.Background()
+
+	// Публично: codeload, без токена, ветка по умолчанию — HEAD.
+	if b, err := f(ctx, Repo{Owner: "o", Name: "r"}, ""); err != nil || !bytes.Equal(b, zipData) {
+		t.Fatalf("public: %v", err)
+	}
+	if len(cdnHits) != 1 || cdnHits[0].path != "/o/r/zip/HEAD" || cdnHits[0].auth != "" || len(apiHits) != 0 {
+		t.Fatalf("public hits: %+v %+v", cdnHits, apiHits)
+	}
+	if _, err := f(ctx, Repo{Owner: "o", Name: "r", Ref: "v1.0"}, ""); err != nil || cdnHits[1].path != "/o/r/zip/v1.0" {
+		t.Fatalf("ref: %v %+v", err, cdnHits)
+	}
+	// Приватно: API zipball с Bearer; на адрес скачивания токен не уходит (другой хост).
+	cdnHits = nil
+	if b, err := f(ctx, Repo{Owner: "o", Name: "r", Ref: "dev"}, "good"); err != nil || !bytes.Equal(b, zipData) {
+		t.Fatalf("private: %v", err)
+	}
+	if len(apiHits) != 1 || apiHits[0].path != "/repos/o/r/zipball/dev" || apiHits[0].auth != "Bearer good" {
+		t.Fatalf("api hits: %+v", apiHits)
+	}
+	if len(cdnHits) != 1 || cdnHits[0].auth != "" {
+		t.Fatalf("token leaked to the download host: %+v", cdnHits)
+	}
+	// Ошибки: сообщения подсказывают, что делать, и не содержат токен.
+	_, err := f(ctx, Repo{Owner: "o", Name: "missing"}, "")
+	if err == nil || !strings.Contains(err.Error(), "private repository add a GitHub token") {
+		t.Fatalf("404 without token: %v", err)
+	}
+	_, err = f(ctx, Repo{Owner: "o", Name: "missing"}, "good")
+	if err == nil || !strings.Contains(err.Error(), "token has no access") {
+		t.Fatalf("404 with token: %v", err)
+	}
+	_, err = f(ctx, Repo{Owner: "o", Name: "r"}, "expired-secret-token")
+	if err == nil || !strings.Contains(err.Error(), "rejected the token") || strings.Contains(err.Error(), "expired-secret-token") {
+		t.Fatalf("401: %v", err)
+	}
+}
+
+func TestHTTPFetcherSizeLimitAndSchemeRedirect(t *testing.T) {
+	big := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(make([]byte, maxZip+10))
+	}))
+	defer big.Close()
+	if _, err := HTTPFetcher(big.URL, big.URL)(context.Background(), Repo{Owner: "o", Name: "r"}, ""); err == nil || !strings.Contains(err.Error(), "too large") {
+		t.Fatalf("size limit: %v", err)
+	}
+	redir := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "https://example.invalid/x", http.StatusFound) // http → https: схема другая, не следуем
+	}))
+	defer redir.Close()
+	if _, err := HTTPFetcher(redir.URL, redir.URL)(context.Background(), Repo{Owner: "o", Name: "r"}, ""); err == nil {
+		t.Fatal("redirect to another scheme must be refused")
 	}
 }

@@ -18,7 +18,7 @@
 ## Twitch
 - [ ] UI-проверка: Settings → Twitch accounts, реальное подключение стримера и бота, поведение при отзыве доступа на twitch.tv/settings/connections.
 - [ ] Device Code Flow для Public-приложения (без Client Secret и без redirect) как альтернатива.
-- [ ] Шифрование токенов/секрета в базе (сейчас открытым текстом, как пароль OBS).
+- [x] Шифрование токенов Twitch/Client Secret/секрета устройств (`internal/secret`). Осталось: пароль obs-websocket в `config.json` (открытым текстом); проверка DPAPI на настоящей Windows; хранилище ключей ОС (Keychain/libsecret) вместо файла на Linux/macOS; ротация ключа.
 - [ ] Показ ошибки «переподключите аккаунт» не только в настройках (бейдж в шапке).
 
 ## Плагины
