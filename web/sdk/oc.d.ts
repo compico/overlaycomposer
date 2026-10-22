@@ -195,6 +195,24 @@ interface OCStorage {
   onChange(handler: (change: OCStorageChange) => void): () => void;
 }
 
+/** Причина остановки. Сейчас одна: приложение выключается (Quit в трее/настройках, Ctrl+C, завершение системы). */
+interface OCStopEvent {
+  reason: "shutdown";
+  /** Сколько миллисекунд есть на сохранение данных (сейчас 3000); после этого OC завершится, не дожидаясь. */
+  graceMs: number;
+}
+
+interface OCLifecycle {
+  /**
+   * Вызывается, когда Overlay Composer останавливается. Пока обработчик не завершится (но не дольше `graceMs`),
+   * сервер продолжает работать: `oc.storage.*` и `oc.chat.say` ещё доступны — сохраните состояние.
+   * Обработчики всех копий плагина (оверлей, предпросмотр в редакторе) вызываются параллельно.
+   * Возвращает функцию отписки. Это best-effort: при аварийном завершении процесса/питания вызов не происходит,
+   * поэтому важные данные сохраняйте по ходу работы, а onStop используйте для «последнего слова».
+   */
+  onStop(handler: (event: OCStopEvent) => void | Promise<void>): () => void;
+}
+
 interface OC {
   /** Версия протокола API. */
   readonly version: 1;
@@ -210,6 +228,7 @@ interface OC {
   param<T extends string | number | boolean>(key: string, fallback: T): T;
   readonly chat: OCChat;
   readonly storage: OCStorage;
+  readonly lifecycle: OCLifecycle;
 }
 
 declare const oc: OC;

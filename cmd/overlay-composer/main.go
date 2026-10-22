@@ -258,11 +258,18 @@ func run() int {
 		}) // блокирует до tr.Stop()
 	}
 
+	// Плавная остановка: плагины (oc.lifecycle.onStop) успевают сохранить данные, пока сервер ещё принимает их запросы.
+	if r := h.NotifyStopping(stopGrace); r.Waited {
+		slog.Info("плагины уведомлены об остановке", "pages", r.Notified, "noAnswer", r.TimedOut)
+	}
 	obsClient.Stop()
 	srv.Shutdown()
 	slog.Info("остановлено")
 	return 0
 }
+
+// stopGrace — сколько времени плагины получают на сохранение данных при выходе из приложения.
+const stopGrace = 3 * time.Second
 
 func syncTray(t *tray.Tray) {
 	if t != nil {

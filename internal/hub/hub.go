@@ -50,6 +50,7 @@ type Peer struct {
 type Hub struct {
 	handlers []handler // расширения: обработчики сообщений по префиксу типа (chat:*)
 	onGone   []func(*Peer)
+	stop     stopState // плавная остановка (stop.go)
 
 	st         Storage
 	obs        Obs
@@ -414,6 +415,7 @@ func (h *Hub) RemovePeer(p *Peer) {
 		h.broadcastObsStatusLocked()
 	}
 	h.mu.Unlock()
+	h.peerStopped(p, 0) // отключившаяся страница больше не ожидается при остановке
 	for _, fn := range h.onGone {
 		fn(p)
 	}
@@ -449,6 +451,9 @@ func (h *Hub) HandleMessage(p *Peer, raw []byte) {
 		h.activeLayoutID = l.ID
 		h.broadcastLocked(sceneChangedMsg{Type: "scene:changed", Scene: h.currentScene, LayoutID: &l.ID})
 		h.mu.Unlock()
+
+	case "app:stopped":
+		h.handleStopped(p, raw)
 
 	case "overlay:hello":
 		h.mu.Lock()
