@@ -133,6 +133,7 @@
       <div class="hint" id="pluginHint"></div>
       <div class="row">
         <button type="button" id="usePluginBtn">Create &amp; place plugin</button>
+        <button type="button" id="openStoreBtn" title="Install plugins from GitHub repositories">Plugin store…</button>
         <button type="button" id="openPluginsBtn" title="Folder for your own plugins">Open plugins folder</button>
       </div>
       <hr style="border-color:var(--line)">
@@ -150,6 +151,21 @@
         <button value="cancel">Cancel</button>
         <button type="button" class="primary" id="createBtn">Create &amp; place</button>
       </div>
+    </form>
+  </dialog>
+  <dialog id="storeDialog" style="width:560px;max-width:94vw">
+    <form method="dialog">
+      <strong>Plugin store</strong>
+      <div class="hint warn">Plugins are code written by other people. They run in a sandbox and get only the permissions you allow,
+        but still install them only from authors you trust — you are responsible for the sources you add.</div>
+      <label>Sources — GitHub repositories with a <code>plugins/</code> folder</label>
+      <div class="row">
+        <input type="text" id="storeRepo" placeholder="owner/repo  or  owner/repo@branch" style="flex:1" spellcheck="false" autocomplete="off">
+        <button type="button" id="storeAddBtn">Add</button>
+        <button type="button" id="storeRefreshBtn" title="Fetch the catalogs again">↻</button>
+      </div>
+      <div id="storeBody" style="max-height:60vh;overflow:auto"></div>
+      <div class="row" style="justify-content:flex-end;margin-top:12px"><button value="close">Close</button></div>
     </form>
   </dialog>
   <dialog id="copyDialog">

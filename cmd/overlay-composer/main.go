@@ -24,6 +24,7 @@ import (
 	"github.com/compico/overlaycomposer/internal/hub"
 	"github.com/compico/overlaycomposer/internal/kv"
 	"github.com/compico/overlaycomposer/internal/logx"
+	"github.com/compico/overlaycomposer/internal/market"
 	"github.com/compico/overlaycomposer/internal/model"
 	"github.com/compico/overlaycomposer/internal/obs"
 	"github.com/compico/overlaycomposer/internal/paths"
@@ -131,13 +132,24 @@ func run() int {
 	chatSvc := chat.New(twMgr)
 	defer chatSvc.Close()
 
+	pluginReg := plugins.New(plugins.Builtin(), os.DirFS(p.PluginsDir))
+	mk, err := market.New(market.Config{
+		File: filepath.Join(p.DataDir, "market.json"), Dir: p.PluginsDir, Reg: pluginReg, Builtin: pluginReg.IsBuiltin,
+	})
+	if err != nil {
+		slog.Error("магазин плагинов", "err", err)
+		platform.ErrorBox(paths.AppTitle, "Не удалось прочитать список магазина плагинов: "+err.Error())
+		return 1
+	}
+
 	srv = server.New(server.Deps{
 		Paths: p, Cfg: cfgStore, Running: cfg, Store: st, Hub: h, Obs: obsClient, Proxy: px,
 		Auth:    authMgr,
 		Twitch:  twMgr,
 		Chat:    chatSvc,
 		KV:      kv.New(st.KV()),
-		Plugins: plugins.New(plugins.Builtin(), os.DirFS(p.PluginsDir)),
+		Plugins: pluginReg,
+		Market:  mk,
 		App: server.App{
 			OS:           runtime.GOOS,
 			Autostart:    platform.Autostart,

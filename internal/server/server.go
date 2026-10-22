@@ -23,6 +23,7 @@ import (
 	"github.com/compico/overlaycomposer/internal/config"
 	"github.com/compico/overlaycomposer/internal/hub"
 	"github.com/compico/overlaycomposer/internal/kv"
+	"github.com/compico/overlaycomposer/internal/market"
 	"github.com/compico/overlaycomposer/internal/obs"
 	"github.com/compico/overlaycomposer/internal/paths"
 	"github.com/compico/overlaycomposer/internal/plugins"
@@ -56,6 +57,7 @@ type Deps struct {
 	Twitch  *twitch.Manager
 	Chat    *chat.Service
 	KV      *kv.Service
+	Market  *market.Market
 	App     App
 }
 
@@ -118,6 +120,7 @@ func (s *Server) routes() {
 	s.authRoutes()
 	s.twitchRoutes()
 	s.storageRoutes()
+	s.marketRoutes()
 
 	// 1. прокси (маршруты /proxy*, затем запросы со страниц, открытых через прокси)
 	s.d.Proxy.Register(app)

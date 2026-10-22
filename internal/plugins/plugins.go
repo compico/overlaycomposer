@@ -278,7 +278,7 @@ func (r *Registry) Scan() {
 			return
 		}
 		for _, e := range entries {
-			if !e.IsDir() {
+			if !e.IsDir() || strings.HasPrefix(e.Name(), ".") { // .install-*/.old-* — временные папки магазина
 				continue
 			}
 			p, err := loadPlugin(root, e.Name(), builtin)
@@ -360,4 +360,10 @@ func (r *Registry) find(id string) (*Plugin, bool) {
 		}
 	}
 	return nil, false
+}
+
+// IsBuiltin: id занят встроенным плагином.
+func (r *Registry) IsBuiltin(id string) bool {
+	p, ok := r.find(id)
+	return ok && p.Builtin
 }
