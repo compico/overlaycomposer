@@ -75,6 +75,18 @@
     .setting input[type=color] { padding: 0; height: 26px; width: 40px; flex: none !important; }
     .setting .ib { flex: none; }
     h4.group { margin: 12px 0 2px; font-size: 11px; color: var(--accent); text-transform: uppercase; letter-spacing: .04em; }
+    .codebtn { font-size: 26px; letter-spacing: 5px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding: 2px 12px;
+      background: var(--bg); min-width: 11ch; text-align: center; }
+    .codebtn.masked { color: var(--muted); letter-spacing: 6px; }
+    .tabs { display: flex; gap: 2px; margin: 10px 0 8px; border-bottom: 1px solid var(--line); }
+    .tab { background: none; border: none; border-bottom: 2px solid transparent; border-radius: 0; padding: 6px 12px; color: var(--muted); margin-bottom: -1px; }
+    .tab:hover { border-bottom-color: var(--line); }
+    .tab.sel { color: var(--text); border-bottom-color: var(--accent); }
+    .tabpane[hidden] { display: none; }
+    .pick { max-height: 260px; overflow: auto; }
+    .pick .item { align-items: flex-start; }
+    .pick .item .meta { color: var(--muted); font-size: 11px; }
+    .iconbtn { padding: 2px 7px; line-height: 1.2; }
     .hint { color: var(--muted); font-size: 11px; margin: 4px 0; }
     .hint.warn { color: #ffb454; }
     code { background: var(--bg); padding: 0 4px; border-radius: 4px; }
@@ -121,36 +133,53 @@
     </main>
   </div>
 
-  <dialog id="addDialog">
+  <dialog id="addDialog" style="width:480px;max-width:94vw">
     <form method="dialog" id="addForm">
       <strong>Add Source</strong>
-      <label>Existing source</label>
-      <select id="existingSource" style="width:100%"></select>
-      <div class="row" style="margin-top:6px"><button type="button" id="useExistingBtn">Place on layout</button></div>
-      <hr style="border-color:var(--line)">
-      <label>…or a widget plugin</label>
-      <select id="pluginSelect" style="width:100%"></select>
-      <div class="hint" id="pluginHint"></div>
-      <div class="row">
-        <button type="button" id="usePluginBtn">Create &amp; place plugin</button>
-        <button type="button" id="openStoreBtn" title="Install plugins from GitHub repositories">Plugin store…</button>
-        <button type="button" id="openPluginsBtn" title="Folder for your own plugins">Open plugins folder</button>
+      <div class="tabs" role="tablist">
+        <button type="button" class="tab sel" role="tab" data-tab="iframe">Web page (iframe)</button>
+        <button type="button" class="tab" role="tab" data-tab="existing" id="tabExisting">Existing source</button>
+        <button type="button" class="tab" role="tab" data-tab="plugin">Plugins</button>
       </div>
-      <hr style="border-color:var(--line)">
-      <label>…or new iframe — name</label>
-      <input type="text" id="newName" placeholder="Twitch Chat">
-      <label>URL (http/https or /path)</label>
-      <input type="url" id="newUrl" placeholder="https://example.com/widget">
-      <label class="chk"><input type="checkbox" id="newProxy"> Load via server proxy</label>
-      <div class="hint">Enable if the site refuses to be embedded (“refused to connect”, X-Frame-Options). Best effort: works for pages whose token is in the URL.</div>
-      <div class="grid2">
-        <label>Width<input type="number" id="newW" value="400"></label>
-        <label>Height<input type="number" id="newH" value="300"></label>
+
+      <div class="tabpane" id="pane-iframe" role="tabpanel">
+        <label>Name</label>
+        <input type="text" id="newName" placeholder="Twitch Chat">
+        <label>URL (http/https or /path)</label>
+        <input type="url" id="newUrl" placeholder="https://example.com/widget">
+        <label class="chk"><input type="checkbox" id="newProxy"> Load via server proxy</label>
+        <div class="hint">Enable if the site refuses to be embedded (“refused to connect”, X-Frame-Options). Best effort: works for pages whose token is in the URL.</div>
+        <div class="grid2">
+          <label>Width<input type="number" id="newW" value="400"></label>
+          <label>Height<input type="number" id="newH" value="300"></label>
+        </div>
+        <div class="row" style="justify-content:flex-end;margin-top:12px">
+          <button type="button" class="primary" id="createBtn">Create &amp; place</button>
+        </div>
       </div>
-      <div class="row" style="justify-content:flex-end;margin-top:12px">
-        <button value="cancel">Cancel</button>
-        <button type="button" class="primary" id="createBtn">Create &amp; place</button>
+
+      <div class="tabpane" id="pane-existing" role="tabpanel" hidden>
+        <div class="hint">A source you already created — for example to show the same widget on another layout.</div>
+        <div class="list pick" id="existingList"></div>
+        <div class="row" style="justify-content:flex-end;margin-top:12px">
+          <button type="button" class="primary" id="useExistingBtn">Place on layout</button>
+        </div>
       </div>
+
+      <div class="tabpane" id="pane-plugin" role="tabpanel" hidden>
+        <div class="hint">Ready-made widgets with settings. Install more from the store.</div>
+        <div class="list pick" id="pluginList"></div>
+        <div class="hint" id="pluginHint"></div>
+        <div class="row" style="justify-content:space-between;margin-top:12px">
+          <span class="row" style="margin:0">
+            <button type="button" id="openStoreBtn" title="Install plugins from GitHub repositories">Plugin store…</button>
+            <button type="button" id="openPluginsBtn" title="Folder for your own plugins">Plugins folder</button>
+          </span>
+          <button type="button" class="primary" id="usePluginBtn">Create &amp; place plugin</button>
+        </div>
+      </div>
+
+      <div class="row" style="justify-content:flex-end;margin-top:6px"><button value="cancel">Cancel</button></div>
     </form>
   </dialog>
   <dialog id="storeDialog" style="width:560px;max-width:94vw">
@@ -237,8 +266,21 @@
         </label>
         <label>Port<input type="number" id="cfgPort" min="1" max="65535"></label>
       </div>
-      <div class="hint warn" id="cfgHostWarn" hidden>Other devices on your network will be able to reach this server, but only after pairing with a code (see “Remote devices” below). This computer stays open without a code.</div>
+      <div class="hint warn" id="cfgHostWarn" hidden>Other devices on your network will be able to reach this server, but only after pairing with a code (see “Remote devices” just below). This computer stays open without a code.</div>
       <div class="hint">Listen address and port are applied after restarting the server.</div>
+
+      <div id="devBox" hidden style="margin-top:6px;padding:8px 10px;border:1px solid var(--line);border-radius:8px">
+        <strong style="font-size:12px">Remote devices</strong>
+        <div class="hint" id="devHint"></div>
+        <div id="devPair" hidden>
+          <div class="row" style="align-items:baseline">
+            <button type="button" id="devCode" class="codebtn" title="Click to show or hide the pairing code" aria-pressed="false">••••••</button>
+            <span class="hint" id="devLeft"></span>
+          </div>
+          <div class="hint">On the other device open <code id="devUrl"></code> and enter the code. The code works once and changes every minute. Click it to show.</div>
+        </div>
+        <div id="devList"></div>
+      </div>
 
       <div id="twBox" hidden>
         <hr style="border-color:var(--line)">
@@ -254,19 +296,8 @@
         <div class="hint" id="twAppHint"></div>
         <div id="twAccounts"></div>
         <div class="hint">Streamer account is the channel owner; the bot account (optional) is used to write to chat on behalf of a bot.
-          Tokens are stored only on this computer and are never given to plugins.</div>
-      </div>
-
-      <div id="devBox" hidden>
-        <hr style="border-color:var(--line)">
-        <strong style="font-size:12px">Remote devices</strong>
-        <div class="hint" id="devHint"></div>
-        <div class="row" style="align-items:baseline">
-          <code id="devCode" style="font-size:26px;letter-spacing:5px"></code>
-          <span class="hint" id="devLeft"></span>
-        </div>
-        <div class="hint">On the other device open <code id="devUrl"></code> and enter the code. The code works once and changes every minute.</div>
-        <div id="devList"></div>
+          Press the <b>copy</b> icon next to an account: the authorization link goes to the clipboard — open it in a browser (or private window) where
+          <i>that</i> Twitch account is signed in. Tokens are stored encrypted only on this computer and are never given to plugins.</div>
       </div>
 
       <hr style="border-color:var(--line)">

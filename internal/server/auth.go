@@ -89,6 +89,9 @@ func (s *Server) authRoutes() {
 }
 
 func (s *Server) pair(c fiber.Ctx) error {
+	if !s.remoteEnabled() {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "pairing is disabled: the server listens on this computer only"})
+	}
 	var b struct {
 		Code string `json:"code"`
 		Name string `json:"name"`
@@ -117,14 +120,28 @@ func (s *Server) pair(c fiber.Ctx) error {
 	return c.JSON(fiber.Map{"token": token, "device": dev})
 }
 
+// remoteEnabled — сервер слушает не только loopback (Listen on = All network interfaces или конкретный адрес сети).
+// Только тогда имеет смысл сопряжение по коду: с других устройств до сервера иначе не достучаться.
+func (s *Server) remoteEnabled() bool {
+	h := s.d.Running.Host
+	if strings.EqualFold(h, "localhost") {
+		return false
+	}
+	ip := net.ParseIP(h)
+	return ip == nil || !ip.IsLoopback()
+}
+
 func (s *Server) listDevices(c fiber.Ctx) error {
-	code, left := s.d.Auth.Pairing()
-	host := net.ParseIP(s.d.Running.Host)
+	remote := s.remoteEnabled()
+	code, left := "", time.Duration(0)
+	if remote { // одноразовый код существует (и отдаётся) только при доступе из сети
+		code, left = s.d.Auth.Pairing()
+	}
 	return c.JSON(fiber.Map{
 		"code":          code,
 		"expiresIn":     int(left.Seconds()),
 		"devices":       s.d.Auth.Devices(),
-		"remoteEnabled": host == nil || !host.IsLoopback(),
+		"remoteEnabled": remote,
 		"pairUrl":       s.baseURL() + "/pair",
 	})
 }
