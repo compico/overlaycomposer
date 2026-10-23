@@ -90,7 +90,8 @@
     .hint { color: var(--muted); font-size: 11px; margin: 4px 0; }
     .hint.warn { color: #ffb454; }
     code { background: var(--bg); padding: 0 4px; border-radius: 4px; }
-    .toast { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); background: var(--panel2);
+    .toast { position: fixed; inset: auto auto 14px 50%; margin: 0; width: max-content; max-width: 90vw; overflow: visible;
+      color: var(--text, inherit); transform: translateX(-50%); background: var(--panel2);
       border: 1px solid var(--line); padding: 8px 14px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none; }
     .toast.show { opacity: 1; }
   </style>
@@ -318,7 +319,7 @@
       </div>
     </form>
   </dialog>
-  <div class="toast" id="toast"></div>
+  <div class="toast" id="toast" popover="manual"></div>
 
   <script type="module" src="/dist/editor.js"></script>
 </body>

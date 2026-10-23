@@ -39,7 +39,7 @@ plugins/
 - `id` — `a-z A-Z 0-9 _ -`, до 64 символов; совпадающий с уже занятым (встроенным) id отвергается.
 - `entry` — файл, который открывается по `/plugins/<id>/` (по умолчанию `index.html`).
 - `defaultSize` — размер слоя при добавлении на layout.
-- `permissions` — что плагину нужно от OC: `chat.read`, `chat.send`, `storage` (см. «API OC» ниже). Пользователь подтверждает их при добавлении виджета
+- `permissions` — что плагину нужно от OC: `chat.read`, `chat.send`, `storage`, `net.local` (см. «API OC» ниже). Пользователь подтверждает их при добавлении виджета
   и может изменить в свойствах слоя; без разрешения вызов API отклоняется.
 - Типы настроек: `string`, `text` (многострочный), `number`, `range` (ползунок), `bool`, `color` (`#rrggbb`), `font` (имя шрифта, с подсказками), `select` (нужны `options`).
   `min`/`max`/`step` — для `number` и `range`; `group` — заголовок секции; `help` — подпись под полем.
@@ -83,6 +83,7 @@ await oc.chat.subscribe();                       // канал аккаунта 
 | `oc.chat.subscribe({channel?})` | `chat.read` | подписка на чат канала; события — через `oc.chat.on("message"｜"delete"｜"clear"｜"status", fn)` |
 | `oc.chat.say(text, {channel?, as?, replyTo?})` | `chat.send` | написать в чат от имени бота (`as: "bot"`, по умолчанию) или стримера |
 
+| `oc.net.localGet(target, path)` | `net.local` | GET к программе на этом компьютере (`127.0.0.1:порт`) → `{status, body}`; запрос делает сервер OC, поэтому он без `Origin` (из sandbox-iframe браузер шлёт `Origin: null`, и, например, tosu такие запросы блокирует) |
 | `oc.storage.get/set/delete/list(prefix)` | `storage` | JSON-данные плагина по ключам (SQLite на этом компьютере) |
 | `oc.storage.update(key, fn)` | `storage` | безопасное «прочитал → изменил → записал», даже если ключ меняет другая копия виджета |
 | `oc.storage.onChange(fn)` | `storage` | уведомление, когда данные плагина изменила любая копия (оверлей, предпросмотр) |

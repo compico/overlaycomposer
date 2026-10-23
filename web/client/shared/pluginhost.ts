@@ -207,6 +207,15 @@ export class PluginHost {
         if (r.ok !== true) throw new Error(String(r.error ?? "send failed"));
         return undefined;
       }
+      case "net.localGet": {
+        this.#need(e, "net.local");
+        const target = str(p.target, "target", 100);
+        const path = str(p.path, "path", 512);
+        if (!target || !path) throw new Error("invalid target or path");
+        const r = await this.#request({ type: "net:get", target, path });
+        if (r.ok !== true) throw new Error(String(r.error ?? "request failed"));
+        return { status: r.status, body: r.body ?? "" };
+      }
       case "storage.get":
       case "storage.set":
       case "storage.delete":

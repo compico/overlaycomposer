@@ -82,9 +82,10 @@ const (
 	PermChatRead = "chat.read" // читать чат Twitch (через общее соединение OC)
 	PermChatSend = "chat.send" // писать в чат Twitch от имени аккаунта бота/стримера
 	PermStorage  = "storage"   // хранить данные плагина на этом компьютере (общие для всех его виджетов)
+	PermNetLocal = "net.local" // GET-запросы к программам на этом компьютере (127.0.0.1), например tosu
 )
 
-var knownPerms = map[string]bool{PermChatRead: true, PermChatSend: true, PermStorage: true}
+var knownPerms = map[string]bool{PermChatRead: true, PermChatSend: true, PermStorage: true, PermNetLocal: true}
 
 // CleanGranted проверяет список выданных разрешений: каждое должно быть известно и запрошено манифестом.
 func (m *Manifest) CleanGranted(in []string) ([]string, error) {

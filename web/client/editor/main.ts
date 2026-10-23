@@ -49,9 +49,14 @@ let toastTimer = 0;
 function toast(msg: string) {
   const t = $("toast");
   t.textContent = msg;
+  // popover попадает в top layer — иначе тост прячется за открытой модалкой (<dialog>.showModal())
+  try { if (!t.matches(":popover-open")) t.showPopover(); } catch { /* старый браузер: обычный fixed */ }
   t.classList.add("show");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove("show"), 2200) as unknown as number;
+  toastTimer = setTimeout(() => {
+    t.classList.remove("show");
+    setTimeout(() => { try { if (!t.classList.contains("show")) t.hidePopover(); } catch { /* ignore */ } }, 250);
+  }, 2200) as unknown as number;
 }
 
 function fail(e: unknown) {
@@ -688,11 +693,17 @@ function pickItem(sel: boolean, title: string, meta: string, onPick: () => void,
   return it;
 }
 
+/** В списках не показываем всё после «?» (и «#»): в адресах виджетов часто лежат токены и секреты. */
+function maskUrl(u: string): string {
+  const i = u.search(/[?#]/);
+  return i < 0 ? u : `${u.slice(0, i + 1)}${"•".repeat(8)}`;
+}
+
 function renderExistingList() {
   const list = $("existingList");
   if (!sources.some((x) => x.id === selectedExistingId)) selectedExistingId = sources[0]?.id ?? "";
   list.replaceChildren(...sources.map((x) => pickItem(
-    x.id === selectedExistingId, x.name, x.type === "plugin" ? `plugin · ${x.data.plugin}` : (x.data.url ?? "iframe"),
+    x.id === selectedExistingId, x.name, x.type === "plugin" ? `plugin · ${x.data.plugin}` : maskUrl(x.data.url ?? "iframe"),
     () => { selectedExistingId = x.id; renderExistingList(); },
     () => $("useExistingBtn").click(),
   )));
@@ -858,6 +869,7 @@ $("openPluginsBtn").addEventListener("click", () => api("/api/app/open", "POST",
 const PERM_TEXT: Record<string, string> = {
   "chat.read": "Read Twitch chat",
   "chat.send": "Write to Twitch chat as your bot / streamer account",
+  "net.local": "Read data from programs running on this computer (e.g. tosu)",
   "storage": "Store this plugin’s data on this computer",
 };
 

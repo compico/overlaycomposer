@@ -157,6 +157,9 @@ const oc = {
     on: (event: string, h: Handler) => subscribe(`chat.${event}`, h),
     off: (event: string, h: Handler) => off(`chat.${event}`, h),
   },
+  net: {
+    localGet: (target: string, path: string) => call<{ status: number; body: string }>("net.localGet", { target, path }),
+  },
   storage: {
     get: async (key: string) => {
       const r = await call<GetResult>("storage.get", { key });
