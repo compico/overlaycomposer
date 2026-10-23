@@ -661,19 +661,67 @@ function pasteClip() {
 
 const addDialog = $<HTMLDialogElement>("addDialog");
 
-function renderPluginPicker() {
-  const sel = $<HTMLSelectElement>("pluginSelect");
-  sel.replaceChildren(...plugins.map((p) => el("option", { value: p.id, textContent: `${p.name}${p.builtin ? "" : " (custom)"}` })));
-  $("usePluginBtn").toggleAttribute("disabled", plugins.length === 0);
-  $("pluginHint").textContent = plugins.length === 0
-    ? "No plugins found. Put a plugin folder (with plugin.json) into the plugins folder."
-    : (plugins[0].description ?? "");
+type AddTab = "iframe" | "existing" | "plugin";
+let selectedPluginId = "";
+let selectedExistingId = "";
+
+function setAddTab(tab: AddTab) {
+  if (tab === "existing" && sources.length === 0) tab = "iframe";
+  for (const b of document.querySelectorAll<HTMLButtonElement>("#addDialog .tab")) {
+    const on = b.dataset.tab === tab;
+    b.classList.toggle("sel", on);
+    b.setAttribute("aria-selected", String(on));
+  }
+  for (const t of ["iframe", "existing", "plugin"]) $(`pane-${t}`).hidden = t !== tab;
+  if (tab === "iframe") $("newName").focus();
+}
+for (const b of document.querySelectorAll<HTMLButtonElement>("#addDialog .tab")) {
+  b.addEventListener("click", () => setAddTab(b.dataset.tab as AddTab));
 }
 
-$("pluginSelect").addEventListener("change", () => {
-  const p = plugins.find((x) => x.id === $<HTMLSelectElement>("pluginSelect").value);
-  $("pluginHint").textContent = p?.description ?? "";
-});
+function pickItem(sel: boolean, title: string, meta: string, onPick: () => void, onDouble?: () => void): HTMLElement {
+  const it = el("div", { class: `item${sel ? " sel" : ""}`, tabIndex: 0 },
+    el("div", { style: "flex:1;min-width:0" }, el("div", { class: "name", textContent: title }), el("div", { class: "meta", textContent: meta })));
+  it.addEventListener("click", onPick);
+  it.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onPick(); } });
+  if (onDouble) it.addEventListener("dblclick", onDouble);
+  return it;
+}
+
+function renderExistingList() {
+  const list = $("existingList");
+  if (!sources.some((x) => x.id === selectedExistingId)) selectedExistingId = sources[0]?.id ?? "";
+  list.replaceChildren(...sources.map((x) => pickItem(
+    x.id === selectedExistingId, x.name, x.type === "plugin" ? `plugin · ${x.data.plugin}` : (x.data.url ?? "iframe"),
+    () => { selectedExistingId = x.id; renderExistingList(); },
+    () => $("useExistingBtn").click(),
+  )));
+  if (sources.length === 0) list.replaceChildren(el("div", { class: "empty", textContent: "No sources yet — create one on the first tab." }));
+  $("useExistingBtn").toggleAttribute("disabled", sources.length === 0);
+  $("tabExisting").toggleAttribute("disabled", sources.length === 0);
+}
+
+function renderPluginPicker() {
+  const list = $("pluginList");
+  if (!plugins.some((x) => x.id === selectedPluginId)) selectedPluginId = plugins[0]?.id ?? "";
+  list.replaceChildren(...plugins.map((p) => pickItem(
+    p.id === selectedPluginId,
+    `${p.name}${p.version ? ` ${p.version}` : ""}${p.builtin ? "" : " (custom)"}`,
+    p.description ?? "",
+    () => { selectedPluginId = p.id; renderPluginPicker(); },
+    () => $("usePluginBtn").click(),
+  )));
+  if (plugins.length === 0) {
+    list.replaceChildren(el("div", { class: "empty", textContent: "No plugins installed yet. Open the Plugin store to install some, or put a plugin folder (with plugin.json) into the plugins folder." }));
+  }
+  const p = plugins.find((x) => x.id === selectedPluginId);
+  $("pluginHint").textContent = !p ? "" : p.permissions?.length
+    ? `Asks for: ${p.permissions.map((x) => PERM_TEXT[x] ?? x).join("; ")}. You confirm this when placing it.`
+    : "Asks for no permissions.";
+  $("usePluginBtn").toggleAttribute("disabled", !p);
+}
+
+$("openStoreBtn").addEventListener("click", () => { storeDialog.showModal(); void loadStore(); });
 
 // ---------- plugin store ----------
 
@@ -782,7 +830,6 @@ function renderStore(d: StoreData) {
   body.replaceChildren(...parts);
 }
 
-$("openStoreBtn").addEventListener("click", () => { storeDialog.showModal(); void loadStore(); });
 $("storeRefreshBtn").addEventListener("click", () => void loadStore(true));
 $("storeAddBtn").addEventListener("click", async () => {
   const inp = $<HTMLInputElement>("storeRepo");
@@ -815,7 +862,7 @@ const PERM_TEXT: Record<string, string> = {
 };
 
 $("usePluginBtn").addEventListener("click", async () => {
-  const p = plugins.find((x) => x.id === $<HTMLSelectElement>("pluginSelect").value);
+  const p = plugins.find((x) => x.id === selectedPluginId);
   if (!p) return;
   // Разрешения выдаёт пользователь: плагин — чужой код, а чат и аккаунты Twitch — его данные.
   let granted: string[] = [];
@@ -837,11 +884,14 @@ $("usePluginBtn").addEventListener("click", async () => {
 $("addObjBtn").addEventListener("click", async () => {
   await loadPlugins().catch(fail);
   renderPluginPicker();
-  const sel = $<HTMLSelectElement>("existingSource");
-  sel.replaceChildren(...sources.map((s) => el("option", { value: s.id, textContent: s.name })));
-  $("useExistingBtn").toggleAttribute("disabled", sources.length === 0);
+  renderExistingList();
   addDialog.showModal();
+  setAddTab("iframe"); // по умолчанию — обычная страница по адресу
 });
+
+for (const id of ["newName", "newUrl"]) {
+  $(id).addEventListener("keydown", (e) => { if ((e as KeyboardEvent).key === "Enter") { e.preventDefault(); $("createBtn").click(); } });
+}
 
 function placeObject(sourceId: string, w = 400, h = 300) {
   if (!layout) return;
@@ -861,8 +911,7 @@ function placeObject(sourceId: string, w = 400, h = 300) {
 }
 
 $("useExistingBtn").addEventListener("click", () => {
-  const id = $<HTMLSelectElement>("existingSource").value;
-  if (id) placeObject(id);
+  if (selectedExistingId) placeObject(selectedExistingId);
   addDialog.close();
 });
 
@@ -1316,6 +1365,22 @@ interface TwitchView {
   accounts: { role: string; login: string; scopes: string[]; error?: string }[];
 }
 
+const COPY_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg>';
+
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch { /* нет доступа к буферу (не защищённый контекст/запрет) — запасной способ */ }
+  const ta = el("textarea", { value: text, style: "position:fixed;opacity:0;top:0;left:0" });
+  document.body.append(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch { ok = false; }
+  ta.remove();
+  return ok;
+}
+
 const TW_ROLES: [string, string][] = [["streamer", "Streamer"], ["bot", "Bot"]];
 let twFormFilled = false;
 
@@ -1339,11 +1404,22 @@ async function loadTwitch() {
       class: acc?.error ? "hint warn" : "hint",
       textContent: acc ? `${title}: ${acc.login}${acc.error ? ` — ${acc.error}` : ""}` : `${title}: not connected`,
     });
-    const connect = el("button", { type: "button", textContent: acc ? "Reconnect" : "Connect", disabled: !ready });
+    // Два аккаунта в одном браузере не подключить (Twitch помнит вход), поэтому вместо перехода — ссылка в буфер обмена:
+    // её можно открыть в другом браузере/профиле/приватном окне, где выполнен вход нужным аккаунтом.
+    const connect = el("button", {
+      type: "button", class: "iconbtn", disabled: !ready,
+      title: acc ? `Copy a link to reconnect the ${title.toLowerCase()} account` : `Copy the authorization link for the ${title.toLowerCase()} account`,
+    });
+    connect.setAttribute("aria-label", connect.title);
+    connect.innerHTML = COPY_ICON; // статическая разметка без пользовательских данных
     connect.addEventListener("click", async () => {
       try {
         const r = await api<{ url: string }>(`/api/twitch/connect/${role}`, "POST", {});
-        window.open(r.url, "_blank");
+        const ok = await copyText(r.url);
+        toast(ok
+          ? `${title} link copied. Open it in a browser where the ${title.toLowerCase()} Twitch account is signed in (a private window works). It is valid for 10 minutes.`
+          : "Could not access the clipboard — copy the link from the prompt");
+        if (!ok) prompt("Authorization link (Ctrl+C):", r.url);
       } catch (e) { fail(e); }
     });
     const btns = el("span", { class: "row" }, connect);
@@ -1380,17 +1456,50 @@ interface DevicesView {
   pairUrl: string;
 }
 
-// Раздел «Remote devices»: код сопряжения и список устройств. Доступен только с этого компьютера (с других сервер отвечает 403).
+// Раздел «Remote devices» (внутри группы «Listen on»): одноразовый код существует только при Listen on = All network interfaces
+// и по умолчанию скрыт — показывается по клику. Доступен только с этого компьютера (с других сервер отвечает 403).
+let devView: DevicesView | null = null;
+let codeShown = false;
+let codeTimer: ReturnType<typeof setTimeout> | undefined;
+const CODE_MASK = "••••••";
+
+function paintCode() {
+  const btn = $<HTMLButtonElement>("devCode");
+  btn.textContent = codeShown && devView?.code ? devView.code : CODE_MASK;
+  btn.classList.toggle("masked", !codeShown);
+  btn.setAttribute("aria-pressed", String(codeShown));
+}
+
+function setCodeShown(show: boolean) {
+  codeShown = show;
+  clearTimeout(codeTimer);
+  if (show) codeTimer = setTimeout(() => setCodeShown(false), 20000); // сам прячется — не остаётся на экране при демонстрации
+  paintCode();
+}
+$("devCode").addEventListener("click", () => setCodeShown(!codeShown));
+
+function paintDevHint() {
+  const v = devView;
+  if (!v) return;
+  const wantsRemote = $<HTMLSelectElement>("cfgHost").value !== "127.0.0.1";
+  $("devHint").textContent = v.remoteEnabled
+    ? (wantsRemote ? "Devices that enter the code can open the editor and overlay from your network."
+      : "You switched “Listen on” back to this computer only: pairing will stop after Save and restart. Already paired devices stay in the list until revoked.")
+    : (wantsRemote ? "Pairing will be available after you Save and restart the application."
+      : "Pairing is off while the server listens on this computer only. To connect another device (tablet, phone), set “Listen on” to “All network interfaces”, Save and restart.");
+}
+
 async function loadDevices() {
   const box = $("devBox");
   let v: DevicesView;
   try { v = await api<DevicesView>("/api/devices"); } catch { box.hidden = true; return; }
+  devView = v;
   box.hidden = false;
-  $("devHint").textContent = v.remoteEnabled
-    ? "Devices that entered the code can open the editor and overlay from the network."
-    : "Server listens on this computer only. To connect other devices, set “Listen on” to “All network interfaces” and restart.";
-  $("devCode").textContent = v.code;
-  $("devLeft").textContent = `changes in ${v.expiresIn}s`;
+  $("devPair").hidden = !v.remoteEnabled;
+  if (!v.remoteEnabled && codeShown) setCodeShown(false);
+  paintCode();
+  paintDevHint();
+  $("devLeft").textContent = v.remoteEnabled ? `changes in ${v.expiresIn}s` : "";
   $("devUrl").textContent = v.pairUrl.replace("127.0.0.1", location.hostname === "127.0.0.1" || location.hostname === "localhost" ? "<this-computer-ip>" : location.hostname);
   const list = $("devList");
   list.replaceChildren(...v.devices.map((d) => {
@@ -1406,7 +1515,7 @@ async function loadDevices() {
 }
 
 // Пока открыт диалог — обновляем статус, чтобы было видно результат Reconnect.
-settingsDialog.addEventListener("close", () => clearInterval(statusTimer));
+settingsDialog.addEventListener("close", () => { clearInterval(statusTimer); setCodeShown(false); });
 
 $("cfgReconnectBtn").addEventListener("click", async () => {
   try {
@@ -1421,6 +1530,7 @@ $("obsBadge").addEventListener("click", () => $("settingsBtn").click());
 
 function updateHostWarn() {
   $("cfgHostWarn").hidden = $<HTMLSelectElement>("cfgHost").value === "127.0.0.1";
+  paintDevHint();
 }
 $("cfgHost").addEventListener("change", updateHostWarn);
 $("cfgObsEnabled").addEventListener("change", () => {
