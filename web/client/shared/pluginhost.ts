@@ -67,7 +67,8 @@ export class PluginHost {
         return true;
       case "chat:sub:result":
       case "chat:say:result":
-      case "storage:result": {
+      case "storage:result":
+      case "net:result": {
         const p = this.#pending.get(msg.reqId as number);
         if (p) {
           this.#pending.delete(msg.reqId as number);
