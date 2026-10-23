@@ -24,7 +24,9 @@ type OCPermission =
   /** Писать в чат Twitch от имени подключённого аккаунта (chat.say). */
   | "chat.send"
   /** Хранить данные плагина на этом компьютере (oc.storage). */
-  | "storage";
+  | "storage"
+  /** Читать данные программ на этом же компьютере (oc.net.localGet), например tosu. */
+  | "net.local";
 
 /** Сведения о виджете, которые OC сообщает плагину после запуска. */
 interface OCPluginInfo {
@@ -213,6 +215,15 @@ interface OCLifecycle {
   onStop(handler: (event: OCStopEvent) => void | Promise<void>): () => void;
 }
 
+interface OCNet {
+  /**
+   * GET-запрос к программе на этом компьютере (`127.0.0.1`/`localhost`/`[::1]`), например `("127.0.0.1:24050", "/json/v2")`.
+   * Запрос делает сервер OC (без Origin), поэтому проходит там, где запрос из sandbox-iframe отвергается («Origin: null»).
+   * Нужно разрешение `net.local`. Ответ до 1 МБ, таймаут 3 с; редиректы не выполняются. Статус 4xx/5xx не ошибка — смотрите `status`.
+   */
+  localGet(target: string, path: string): Promise<{ status: number; body: string }>;
+}
+
 interface OC {
   /** Версия протокола API. */
   readonly version: 1;
@@ -228,6 +239,7 @@ interface OC {
   param<T extends string | number | boolean>(key: string, fallback: T): T;
   readonly chat: OCChat;
   readonly storage: OCStorage;
+  readonly net: OCNet;
   readonly lifecycle: OCLifecycle;
 }
 

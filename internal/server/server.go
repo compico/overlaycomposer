@@ -88,6 +88,7 @@ func New(d Deps) *Server {
 	s.routes()
 	s.chatWS()
 	s.storageWS()
+	s.netWS()
 	return s
 }
 
