@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -602,7 +603,8 @@ func TestTokenStoredEncryptedAndUsedForFetch(t *testing.T) {
 	if bytes.Contains(raw, []byte("SECRET123")) || !bytes.Contains(raw, []byte("enc:v1:")) {
 		t.Fatalf("token must be encrypted on disk:\n%s", raw)
 	}
-	if info, _ := os.Stat(file); info.Mode().Perm() != 0o600 {
+	// на Windows права доступа Unix не применяются (всегда 0666) — проверяем только на остальных ОС
+	if info, _ := os.Stat(file); runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("market.json mode %v", info.Mode().Perm())
 	}
 	if _, err := m.AddSource(context.Background(), "me/private"); err != nil {
