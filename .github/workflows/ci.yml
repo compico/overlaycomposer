@@ -73,4 +73,14 @@ jobs:
       - name: go vet
         run: go vet ./...
       - name: go test
-        run: go test -count=1 ./...
+        shell: bash
+        run: |
+          set +e
+          go test -count=1 ./... > test.log 2>&1
+          code=$?
+          cat test.log
+          if [ $code -ne 0 ]; then
+            # упавшие тесты — отдельными аннотациями (видны в сводке запуска и через API)
+            grep -E '^(--- FAIL|FAIL|panic:)|_test\.go:[0-9]+:' test.log | head -40 | while IFS= read -r l; do echo "::error::${l//$'\r'/}"; done
+          fi
+          exit $code
