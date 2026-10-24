@@ -365,3 +365,12 @@ func TestDoCSS(t *testing.T) {
 		t.Errorf("ct=%q body=%q hdr=%v", h, got, resp.Header)
 	}
 }
+
+func TestInjectionSPAFlag(t *testing.T) {
+	if s := injection("memealerts", "https://memealerts.com"); !strings.Contains(s, `"spa":true`) {
+		t.Errorf("router site must hide the /proxy/<id> prefix: %s", s)
+	}
+	if s := injection("e", "https://www.example.com"); !strings.Contains(s, `"spa":false`) {
+		t.Errorf("other sites keep their address: %s", s)
+	}
+}
