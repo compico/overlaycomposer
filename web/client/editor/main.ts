@@ -1137,8 +1137,34 @@ function renderProps() {
     } else if (src) {
       const name = el("input", { type: "text", value: src.name });
       name.addEventListener("change", () => api(`/api/sources/${src.id}`, "PUT", { name: name.value }).catch(fail));
-      const url = el("input", { type: "text", value: src.data.url ?? "" });
-      url.addEventListener("change", () => api(`/api/sources/${src.id}`, "PUT", { data: { url: url.value } }).catch(fail));
+      // В адресе виджета часто лежит токен: всё после «?»/«#» скрыто, поле открывается на редактирование двойным кликом,
+      // а скопировать адрес целиком можно кнопкой рядом.
+      let curUrl = src.data.url ?? "";
+      const url = el("input", { type: "text" });
+      const paintUrl = () => {
+        const masked = maskUrl(curUrl) !== curUrl;
+        url.value = masked ? maskUrl(curUrl) : curUrl;
+        url.readOnly = masked;
+        url.title = masked ? "Part of the address is hidden. Double-click to edit; the button copies the full address." : "";
+      };
+      paintUrl();
+      url.addEventListener("dblclick", () => {
+        if (!url.readOnly) return;
+        url.readOnly = false;
+        url.value = curUrl;
+        url.focus();
+      });
+      url.addEventListener("change", () => {
+        if (url.readOnly) return;
+        curUrl = url.value;
+        api(`/api/sources/${src.id}`, "PUT", { data: { url: curUrl } }).catch(fail);
+      });
+      url.addEventListener("blur", paintUrl);
+      const copyUrl = el("button", { type: "button", class: "iconbtn", title: "Copy the full address", ariaLabel: "Copy the full address" });
+      copyUrl.innerHTML = COPY_ICON; // статическая разметка без пользовательских данных
+      copyUrl.addEventListener("click", async () => {
+        toast((await copyText(curUrl)) ? "Address copied" : "Could not copy — select the address manually");
+      });
       const proxyChk = el("input", { type: "checkbox", checked: !!src.data.proxy });
       proxyChk.addEventListener("change", () =>
         api(`/api/sources/${src.id}`, "PUT", { data: { proxy: proxyChk.checked } }).catch((e) => {
@@ -1147,7 +1173,7 @@ function renderProps() {
         }));
       root.append(
         el("div", { class: "row" }, name),
-        el("div", { class: "row" }, url),
+        el("div", { class: "row" }, url, copyUrl),
         el("label", { class: "chk", title: "For sites that refuse to be embedded (X-Frame-Options)" }, proxyChk, "Load via server proxy"),
       );
     }
