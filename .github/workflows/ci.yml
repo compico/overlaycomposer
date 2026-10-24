@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Полная проверка на Linux: форматирование, vet, тесты с -race, типы клиента, сборка бандлов и кросс-компиляция.
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Зависимости клиента (three.js, typescript)
+        run: npm ci --no-audit --no-fund
+        working-directory: web
+      - name: gofmt
+        run: |
+          out="$(gofmt -l .)"
+          if [ -n "$out" ]; then echo "Не отформатировано (gofmt -w):"; echo "$out"; exit 1; fi
+      - name: Бандлы клиента (web/dist нужен для go:embed)
+        run: go run ./cmd/build client
+      - name: go vet
+        run: go vet ./...
+      - name: go test -race
+        run: go test -race -count=1 ./...
+      - name: tsc (клиент и SDK)
+        run: npm run check
+        working-directory: web
+      - name: Тесты геометрии (TS)
+        run: node --experimental-strip-types web/shared/geometry.test.ts
+      - name: Кросс-сборка (без cgo, как в релизе)
+        run: |
+          CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -o /dev/null ./cmd/overlay-composer
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o /dev/null ./cmd/overlay-composer
+
+  # Windows: код под windows (DPAPI для secret.key, трей, автозапуск) на Linux не выполняется — гоняем тесты там.
+  # continue-on-error: пока не было ни одного зелёного прогона на Windows, красный результат не блокирует PR;
+  # когда стабильно проходит — убрать эту строку.
+  windows:
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Зависимости клиента
+        run: npm ci --no-audit --no-fund
+        working-directory: web
+      - name: Бандлы клиента
+        run: go run ./cmd/build client
+      - name: go vet
+        run: go vet ./...
+      - name: go test
+        run: go test -count=1 ./...
