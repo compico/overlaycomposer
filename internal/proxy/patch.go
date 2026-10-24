@@ -12,6 +12,12 @@ import (
 const clientPatchJS = `(function(cfg){
   var P="/proxy/"+cfg.id, w=window;
   try{Object.defineProperty(window,"frameElement",{get:function(){return null},configurable:true})}catch(e){}
+  // SPA с роутером без basename (маршруты "/r/:name") не узнаёт адрес /proxy/<id>/r/x и молча рисует пустую страницу:
+  // показываем ей путь без нашего префикса. Запросы всё равно идут через toProxy (root-relative → /proxy/<id>/…).
+  if(cfg.spa){try{
+    var lp=location.pathname;
+    if(lp===P||lp.indexOf(P+"/")===0) history.replaceState(history.state,"",(lp.slice(P.length)||"/")+location.search+location.hash);
+  }catch(e){}}
   function inSite(h){return h===cfg.site||h.slice(-(cfg.site.length+1))==="."+cfg.site}
   function toProxy(u){
     try{
@@ -93,6 +99,19 @@ const clientPatchJS = `(function(cfg){
 // а у mytopf.com ещё и просрочен сертификат — в консоли сплошные ошибки).
 var BlockedHosts = []string{"mytopf.com", "top-fwz1.mail.ru"}
 
+// RouterSites — сайты-SPA, чей клиентский роутер ждёт маршруты от корня (без basename): им скрываем префикс /proxy/<id>
+// из location.pathname. Для остальных не трогаем: относительные URL в статической вёрстке разрешаются от адреса страницы.
+var RouterSites = []string{"memealerts.com"}
+
+func isRouterSite(site string) bool {
+	for _, s := range RouterSites {
+		if s == site {
+			return true
+		}
+	}
+	return false
+}
+
 // injection — тег, вставляемый в начало <head> проксируемой страницы.
 // meta referrer=same-origin: браузер шлёт Referer на наш сервер, по нему определяется upstream для root-relative запросов.
 func injection(id, origin string) string {
@@ -109,9 +128,10 @@ func injection(id, origin string) string {
 	if u != nil {
 		hostname = u.Hostname()
 	}
+	site := SiteOf(strings.ToLower(hostname))
 	cfg, _ := json.Marshal(map[string]any{
-		"id": id, "origin": origin, "host": host, "site": SiteOf(strings.ToLower(hostname)), "wsScheme": wsScheme,
-		"block": BlockedHosts,
+		"id": id, "origin": origin, "host": host, "site": site, "wsScheme": wsScheme,
+		"block": BlockedHosts, "spa": isRouterSite(site),
 	})
 	// "<" в JSON экранируем, чтобы строка не могла закрыть тег script
 	safe := strings.ReplaceAll(string(cfg), "<", `<`)
