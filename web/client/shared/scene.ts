@@ -55,6 +55,16 @@ interface Entry {
 }
 
 /**
+ * Объект «плоский»: без поворота вокруг X/Y и без сдвига по глубине. Если плоские все видимые объекты layout, perspective и
+ * 3D-контекст страницы не нужны: результат тот же, а браузеру (особенно CEF в OBS при нагрузке на GPU) нечего сортировать
+ * и композировать в 3D.
+ */
+function isFlat(o: LayoutObject): boolean {
+  const t = o.transform;
+  return t.rotationX === 0 && t.rotationY === 0 && t.z === 0 && t.scaleZ === 1;
+}
+
+/**
  * Рендер layout через Three.js + CSS3DRenderer.
  * Сцена в пикселях canvas layout: камера подобрана так, что плоскость z=0
  * отображается 1:1. Это даёт «задел под 3D» (z, rotationX/Y), хотя MVP — 2D.
@@ -71,8 +81,12 @@ export class OverlayScene {
   #sources = new Map<string, Source>();
   #layout: Layout | null = null;
   #scale = 1;
+  #flat = false;
+  /** Принудительный 3D-режим для сравнения (в overlay: ?render=3d). */
+  #force3d = false;
 
-  constructor(private host: HTMLElement, private opts: { interactive: boolean; plugins?: PluginHost }) {
+  constructor(private host: HTMLElement, private opts: { interactive: boolean; plugins?: PluginHost; render?: "auto" | "3d" }) {
+    this.#force3d = opts.render === "3d";
     this.root = document.createElement("div");
     this.root.style.cssText = "position:absolute;left:0;top:0;transform-origin:0 0;";
     this.#renderer.domElement.style.cssText = "position:absolute;left:0;top:0;";
@@ -110,6 +124,9 @@ export class OverlayScene {
     this.#layout = layout;
 
     if (sizeChanged) this.#applyCanvas();
+    const flat = !this.#force3d && layout.objects.every((o) => !o.visible || isFlat(o));
+    if (this.#flat && !flat) this.#leaveFlat();
+    this.#flat = flat;
 
     // Ключ пула: instanceId (явная связь, в т.ч. копии между layout) либо sourceId#n (n — порядковый номер среди объектов
     // этого source без instanceId). Один и тот же ключ в соседних layout переиспользует тот же iframe
@@ -161,6 +178,37 @@ export class OverlayScene {
   }
 
   render() {
+    this.#renderer.render(this.#scene, this.#camera);
+    if (this.#flat) this.#flattenCamera();
+  }
+
+  /** Элемент, в который CSS3DRenderer кладёт объекты (domElement → view → camera). */
+  #cameraElement(): HTMLElement {
+    return this.#renderer.domElement.firstElementChild!.firstElementChild as HTMLElement;
+  }
+
+  /**
+   * Плоский режим: заменяем perspective-камеру на сдвиг в центр холста. Для объектов с z=0 и без наклонов матрица
+   * matrix3d у каждого объекта — обычное 2D-преобразование, и картинка пиксель в пиксель такая же, как с перспективой.
+   */
+  #flattenCamera() {
+    const c = this.#cameraElement();
+    const { width: W, height: H } = this.#layout!.canvas;
+    c.style.transformStyle = "flat";
+    // Начало преобразования камеры — её центр (transform-origin по умолчанию), мир CSS3DRenderer — «y вверх»: сдвиг по x и
+    // зеркало по y (с компенсацией сдвига) дают те же пиксели, что матрица камеры в 3D-режиме.
+    c.style.transform = `translate(${W / 2}px,${-H / 2}px) scale(1,-1)`;
+  }
+
+  /**
+   * Возврат в 3D: CSS3DRenderer помнит прежний стиль камеры и не перезапишет его сам. Сдвигаем камеру на 1, рисуем (стиль
+   * отличается — записывается), возвращаем и рисуем ещё раз.
+   */
+  #leaveFlat() {
+    this.#cameraElement().style.transformStyle = "preserve-3d";
+    this.#camera.position.z += 1;
+    this.#renderer.render(this.#scene, this.#camera);
+    this.#camera.position.z -= 1;
     this.#renderer.render(this.#scene, this.#camera);
   }
 
@@ -224,8 +272,9 @@ export class OverlayScene {
     e.obj3d.position.set(
       v.cx - W / 2,
       -(v.cy - H / 2),
-      t.z + o.zIndex * 0.01,
+      this.#flat ? 0 : t.z + o.zIndex * 0.01,
     );
+    e.el.style.zIndex = String(o.zIndex); // в плоском режиме порядок слоёв задаёт z-index, а не глубина
     e.obj3d.rotation.set(
       THREE.MathUtils.degToRad(t.rotationX),
       THREE.MathUtils.degToRad(t.rotationY),

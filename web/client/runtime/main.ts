@@ -5,7 +5,12 @@ import { OverlayScene } from "../shared/scene.ts";
 const stage = document.getElementById("stage")!;
 // Мост плагин↔сервер: чат Twitch приходит по общему /ws, ответы плагинов уходят тем же путём.
 const plugins = new PluginHost({ send: (m) => send(m as unknown as ClientMessage), canSend: true });
-const scene = new OverlayScene(stage, { interactive: false, plugins });
+// ?render=3d — принудительно старый перспективный режим (для сравнения производительности); по умолчанию «плоский», если в layout нет 3D.
+const scene = new OverlayScene(stage, {
+  interactive: false,
+  plugins,
+  render: new URLSearchParams(location.search).get("render") === "3d" ? "3d" : "auto",
+});
 
 let currentLayoutId: string | null = null;
 
