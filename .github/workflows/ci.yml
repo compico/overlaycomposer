@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Ручной запуск: Actions → CI → Run workflow (выбрать ветку) — можно прогнать проверки на любой ветке до открытия PR.
+  workflow_dispatch:
 
 permissions:
   contents: read
