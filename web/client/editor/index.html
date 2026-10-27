@@ -56,6 +56,14 @@
     #canvasFrame { position: absolute; outline: 1px solid #4a4f60; background: rgba(0,0,0,.35); }
     #stage { position: absolute; inset: 0; }
     #overlayLayer { position: absolute; inset: 0; }
+    #guideLayer { position: absolute; inset: 0; pointer-events: none; z-index: 2000000; }
+    .guide { position: absolute; background: #ff5cc8; opacity: .9; }
+    #canvasFrame.compose #stage { opacity: .35; }
+    #canvasFrame.compose .box { border: 1px dashed rgba(255,255,255,.55); background: rgba(255,255,255,.04); }
+    #canvasFrame.compose .box.sel { border: 1px solid var(--accent); background: rgba(124,92,255,.08); }
+    .box .tag { position: absolute; left: 2px; top: 2px; max-width: calc(100% - 4px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      padding: 0 4px; font-size: 10px; line-height: 14px; border-radius: 3px; background: rgba(0,0,0,.65); color: #fff; pointer-events: none; }
+    button[aria-pressed="true"].toggle, #snapBtn[aria-pressed="true"], #composeBtn[aria-pressed="true"] { border-color: var(--accent); color: #fff; }
     .box { position: absolute; border: 1px solid transparent; cursor: move; }
     .box:hover { border-color: rgba(124,92,255,.6); }
     .box.sel { border-color: var(--accent); }
@@ -119,6 +127,10 @@
       <span class="badge" id="obsBadge">OBS: …</span>
       <span class="badge" id="sceneBadge"></span>
       <span class="badge" id="dirtyBadge"></span>
+      <button id="undoBtn" title="Undo (Ctrl+Z)" aria-label="Undo" disabled>↶</button>
+      <button id="redoBtn" title="Redo (Ctrl+Shift+Z / Ctrl+Y)" aria-label="Redo" disabled>↷</button>
+      <button id="composeBtn" title="Layout mode: outlines and names of all widgets (L)" aria-pressed="false">▦ Layout</button>
+      <button id="snapBtn" title="Snap to other widgets and canvas edges (hold Ctrl to bypass)" aria-pressed="true">🧲 Snap</button>
       <button id="bellBtn" title="Notifications" aria-label="Notifications">🔔<span class="bellcount" id="bellCount" hidden></span></button>
       <button id="settingsBtn" title="Settings">⚙ Settings</button>
       <button class="primary" id="saveBtn">Save (Ctrl+S)</button>
@@ -140,6 +152,7 @@
         <div id="canvasFrame">
           <div id="stage"></div>
           <div id="overlayLayer"></div>
+          <div id="guideLayer"></div>
         </div>
       </div>
       <aside class="right" id="props"></aside>
