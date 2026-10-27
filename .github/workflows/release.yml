@@ -1,0 +1,58 @@
+name: Release
+
+# При merge dev → main собирает бинарники Windows и Linux, создаёт тег и GitHub Release,
+# затем выравнивает dev с main, чтобы следующий PR содержал только новые изменения.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+      - name: Тег версии
+        id: ver
+        run: |
+          tag="v$(date -u +%Y.%m.%d).${{ github.run_number }}"
+          git tag "$tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: Сборка Windows и Linux
+        run: go run ./cmd/build bin all
+      - name: Релиз
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git push origin "${{ steps.ver.outputs.tag }}"
+          gh release create "${{ steps.ver.outputs.tag }}" \
+            build/overlay-composer-windows-amd64.exe \
+            build/overlay-composer-linux-amd64 \
+            --title "${{ steps.ver.outputs.tag }}" --generate-notes
+      - name: Выровнять dev с main
+        run: |
+          git fetch origin dev
+          # fast-forward, если dev не ушёл вперёд; иначе подтягиваем main merge-коммитом
+          if git merge-base --is-ancestor origin/dev HEAD; then
+            git push origin HEAD:refs/heads/dev
+          else
+            echo "dev содержит новые коммиты — не трогаю"
+          fi
