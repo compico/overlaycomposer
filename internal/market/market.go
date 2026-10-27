@@ -199,6 +199,75 @@ func HTTPFetcher(codeloadBase, apiBase string) Fetcher {
 	}
 }
 
+// Change — запись журнала изменений плагина (файл changelog.json в папке плагина: массив таких записей).
+type Change struct {
+	Version   string   `json:"version"`
+	Date      string   `json:"date,omitempty"`
+	Changes   []string `json:"changes,omitempty"`   // что изменилось
+	Migration string   `json:"migration,omitempty"` // что нужно сделать пользователю после обновления (гайд миграции)
+}
+
+const (
+	changelogFile    = "changelog.json"
+	maxChangelogSize = 64 << 10
+	maxChangeText    = 2000
+	maxChangeItems   = 50
+)
+
+// parseChangelog читает changelog.json; битый или слишком большой файл просто игнорируется (плагин от этого не страдает).
+func parseChangelog(f *zip.File) []Change {
+	if f == nil || f.UncompressedSize64 > maxChangelogSize {
+		return nil
+	}
+	raw, err := readZip(f, maxChangelogSize)
+	if err != nil {
+		return nil
+	}
+	var list []Change
+	if json.Unmarshal(raw, &list) != nil {
+		return nil
+	}
+	out := make([]Change, 0, len(list))
+	for _, c := range list {
+		c.Version = strings.TrimSpace(c.Version)
+		if c.Version == "" || len(c.Version) > 40 {
+			continue
+		}
+		c.Date = clip(c.Date, 40)
+		c.Migration = clip(c.Migration, maxChangeText)
+		if len(c.Changes) > maxChangeItems {
+			c.Changes = c.Changes[:maxChangeItems]
+		}
+		for i := range c.Changes {
+			c.Changes[i] = clip(c.Changes[i], maxChangeText)
+		}
+		out = append(out, c)
+		if len(out) == 100 {
+			break
+		}
+	}
+	return out
+}
+
+func clip(s string, n int) string {
+	s = strings.TrimSpace(s)
+	if r := []rune(s); len(r) > n {
+		return string(r[:n])
+	}
+	return s
+}
+
+// between — записи журнала новее установленной версии и не новее доступной (по возрастанию версий не сортируем: как в файле).
+func between(all []Change, have, avail string) []Change {
+	var out []Change
+	for _, c := range all {
+		if newer(c.Version, have) && !newer(c.Version, avail) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 // Entry — плагин из каталога репозитория.
 type Entry struct {
 	ID          string   `json:"id"`
@@ -220,6 +289,7 @@ type Entry struct {
 	UpdateAvailable  bool     `json:"updateAvailable"`            // версия выше или файлы изменились
 	AddedPermissions []string `json:"addedPermissions,omitempty"` // права, которых не было у установленной версии
 	Blocked          string   `json:"blocked,omitempty"`          // почему нельзя поставить: "builtin" | "foreign"
+	Changelog        []Change `json:"changelog,omitempty"`        // для установленного плагина с обновлением: записи между его версией и доступной
 }
 
 // SourceView — источник и его каталог (или ошибка загрузки).
@@ -431,6 +501,9 @@ func (m *Market) entries(repo string, list []parsed) []Entry {
 			e.Installed, e.InstalledVersion, e.InstalledCommit = true, rec.Version, rec.Commit
 			// Обновление — когда версия выше или файлы изменились без смены версии (это тоже надо показать, а не скрыть).
 			e.UpdateAvailable = newer(p.m.Version, rec.Version) || (rec.Digest != "" && rec.Digest != p.digest)
+			if e.UpdateAvailable {
+				e.Changelog = between(p.log, rec.Version, p.m.Version)
+			}
 			for _, perm := range p.m.Permissions {
 				if !slices.Contains(rec.Permissions, perm) {
 					e.AddedPermissions = append(e.AddedPermissions, perm)
@@ -517,6 +590,7 @@ type parsed struct {
 	files  map[string]*zip.File
 	digest string // sha256 имён и содержимого файлов плагина
 	commit string // коммит архива (из комментария zip), если есть
+	log    []Change
 }
 
 // load возвращает плагины репозитория (с кэшем на catalogTTL).
@@ -597,6 +671,7 @@ func parseZip(data []byte) ([]parsed, error) {
 		man.Builtin = false
 		p.m = man
 		p.commit = commit
+		p.log = parseChangelog(p.files[changelogFile])
 		d, n, err := digestOf(p.files)
 		if budget -= n; budget < 0 {
 			return nil, errors.New("archive is too large when unpacked")
@@ -898,4 +973,34 @@ func (m *Market) dropAllCache() {
 	m.cacheMu.Lock()
 	m.cache = map[string]cached{}
 	m.cacheMu.Unlock()
+}
+
+// Update — доступное обновление установленного плагина (повышена версия; изменение файлов без смены версии сюда не входит).
+type Update struct {
+	ID               string   `json:"id"`
+	Name             string   `json:"name"`
+	Repo             string   `json:"repo"`
+	From             string   `json:"from"`
+	To               string   `json:"to"`
+	AddedPermissions []string `json:"addedPermissions,omitempty"`
+	Changelog        []Change `json:"changelog,omitempty"`
+}
+
+// Updates — установленные плагины, у которых в каталоге есть версия новее. Источники с ошибкой пропускаются;
+// ok=false, если не ответил ни один источник (нет сети и т. п.) — тогда вывод «обновлений нет» ненадёжен.
+func (m *Market) Updates(ctx context.Context, refresh bool) (list []Update, ok bool) {
+	list = []Update{}
+	for _, sv := range m.Catalog(ctx, refresh) {
+		if sv.Error != "" {
+			continue
+		}
+		ok = true
+		for _, e := range sv.Plugins {
+			if e.Installed && e.UpdateAvailable && newer(e.Version, e.InstalledVersion) {
+				list = append(list, Update{ID: e.ID, Name: e.Name, Repo: e.Repo, From: e.InstalledVersion, To: e.Version,
+					AddedPermissions: e.AddedPermissions, Changelog: e.Changelog})
+			}
+		}
+	}
+	return list, ok
 }
