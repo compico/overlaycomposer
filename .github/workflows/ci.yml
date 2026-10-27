@@ -40,7 +40,16 @@ jobs:
       - name: go vet
         run: go vet ./...
       - name: go test -race
-        run: go test -race -count=1 ./...
+        run: |
+          set +e
+          go test -race -count=1 ./... > test.log 2>&1
+          code=$?
+          cat test.log
+          if [ $code -ne 0 ]; then
+            # упавшие тесты — отдельными аннотациями (видны в сводке запуска и через API)
+            grep -E '^(--- FAIL|FAIL|panic:|WARNING: DATA RACE)|_test\.go:[0-9]+:|\.go:[0-9]+ \+0x' test.log | head -40 | while IFS= read -r l; do echo "::error::$l"; done
+          fi
+          exit $code
       - name: tsc (клиент и SDK)
         run: npm run check
         working-directory: web
