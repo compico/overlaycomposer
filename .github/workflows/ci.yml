@@ -55,6 +55,8 @@ jobs:
         working-directory: web
       - name: Тесты геометрии (TS)
         run: node --experimental-strip-types web/shared/geometry.test.ts
+      - name: BDD-сценарии (features/*.feature)
+        run: node --experimental-strip-types web/bdd/run.ts
       - name: Кросс-сборка (без cgo, как в релизе)
         run: |
           CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -o /dev/null ./cmd/overlay-composer

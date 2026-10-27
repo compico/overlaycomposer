@@ -2,6 +2,8 @@ import { PluginHost } from "../shared/pluginhost.ts";
 import type { Layout, LayoutObject, ObsInfo, PluginManifest, PluginSetting, ServerMessage, Source, Transform } from "../../shared/types.ts";
 import { contentCenter, defaultTransform, placeByContentCenter, uid, visibleBox } from "../../shared/types.ts";
 import { OverlayScene } from "../shared/scene.ts";
+import { History } from "../../shared/history.ts";
+import { boundsOf, snapMove, snapResize, type Guide, type Rect } from "../../shared/snap.ts";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -85,7 +87,121 @@ const objName = (o: LayoutObject) => o.name || (sourceOf(o.sourceId)?.name ?? `(
 function markDirty() {
   dirty = true;
   updateBadges();
+  scheduleRecord();
 }
+
+// ---------- layout mode and snapping (настройки помним между запусками) ----------
+
+const pref = {
+  get(key: string, def: boolean): boolean {
+    try { const v = localStorage.getItem("oc." + key); return v === null ? def : v === "1"; } catch { return def; }
+  },
+  set(key: string, v: boolean) { try { localStorage.setItem("oc." + key, v ? "1" : "0"); } catch { /* хранилище недоступно */ } },
+};
+let composeMode = pref.get("compose", false);
+let snapOn = pref.get("snap", true);
+const SNAP_PX = 8; // порог прилипания в экранных пикселях
+
+function syncToggles() {
+  $("canvasFrame").classList.toggle("compose", composeMode);
+  $("composeBtn").setAttribute("aria-pressed", String(composeMode));
+  $("snapBtn").setAttribute("aria-pressed", String(snapOn));
+}
+function toggleCompose() { composeMode = !composeMode; pref.set("compose", composeMode); syncToggles(); renderOverlay(); }
+function toggleSnap() { snapOn = !snapOn; pref.set("snap", snapOn); syncToggles(); toast(snapOn ? "Snapping on" : "Snapping off"); }
+$("composeBtn").addEventListener("click", toggleCompose);
+$("snapBtn").addEventListener("click", toggleSnap);
+syncToggles();
+
+/** Рамки других видимых виджетов — цели прилипания. */
+function snapTargets(except: LayoutObject): Rect[] {
+  return layout ? layout.objects.filter((o) => o.visible && o !== except).map((o) => boundsOf(o.transform)) : [];
+}
+
+function drawGuides(guides: Guide[]) {
+  const layer = $("guideLayer");
+  layer.replaceChildren(...guides.map((g) => {
+    const d = el("div", { class: "guide" });
+    if (g.axis === "x") { d.style.left = `${g.pos * k}px`; d.style.top = `${g.from * k}px`; d.style.width = "1px"; d.style.height = `${(g.to - g.from) * k}px`; }
+    else { d.style.top = `${g.pos * k}px`; d.style.left = `${g.from * k}px`; d.style.height = "1px"; d.style.width = `${(g.to - g.from) * k}px`; }
+    return d;
+  }));
+}
+
+const snapActive = (e: PointerEvent) => snapOn && !e.ctrlKey && !e.metaKey; // Ctrl на время жеста — без прилипания
+
+// ---------- history of edits (Ctrl+Z / Ctrl+Y) ----------
+
+let editLog: History | null = null;
+let recordTimer = 0;
+
+/** Снимок правимых частей layout (то, что сохраняет кнопка Save). */
+const snapshot = () => JSON.stringify(layout ? { canvas: layout.canvas, objects: layout.objects } : null);
+
+/** Новая история для только что открытого layout. */
+function resetHistory() {
+  clearTimeout(recordTimer);
+  editLog = layout ? new History(snapshot()) : null;
+  syncHistoryButtons();
+}
+
+/** Правки, идущие подряд (ввод в поле, стрелки), склеиваются в один шаг; жест мыши фиксируется сразу по отпусканию. */
+function scheduleRecord() {
+  clearTimeout(recordTimer);
+  recordTimer = setTimeout(flushHistory, 500) as unknown as number;
+}
+
+function flushHistory() {
+  clearTimeout(recordTimer);
+  if (!editLog || !layout) return;
+  editLog.record(snapshot());
+  dirty = editLog.dirty;
+  updateBadges();
+  syncHistoryButtons();
+}
+
+/** Состояние после загрузки с сервера (сохранение, чужая правка): отдельный шаг истории и «сохранённое» состояние. */
+function adoptServerState() {
+  if (!editLog) return resetHistory();
+  clearTimeout(recordTimer);
+  editLog.record(snapshot());
+  editLog.markSaved();
+  dirty = false;
+  syncHistoryButtons();
+}
+
+function applySnapshot(s: string | null) {
+  if (s === null || !layout) return;
+  const st = JSON.parse(s) as { canvas: Layout["canvas"]; objects: LayoutObject[] } | null;
+  if (!st) return;
+  layout.canvas = st.canvas;
+  layout.objects = st.objects;
+  if (selectedId && !selected()) selectedId = null;
+  dirty = editLog!.dirty;
+  refreshAll();
+  syncHistoryButtons();
+}
+
+function undo() {
+  if (!editLog) return;
+  flushHistory();
+  if (!editLog.canUndo) return toast("Nothing to undo");
+  applySnapshot(editLog.undo());
+}
+
+function redo() {
+  if (!editLog) return;
+  flushHistory();
+  if (!editLog.canRedo) return toast("Nothing to redo");
+  applySnapshot(editLog.redo());
+}
+
+function syncHistoryButtons() {
+  ($("undoBtn") as HTMLButtonElement).disabled = !editLog?.canUndo;
+  ($("redoBtn") as HTMLButtonElement).disabled = !editLog?.canRedo;
+}
+$("undoBtn").addEventListener("click", undo);
+$("redoBtn").addEventListener("click", redo);
 
 function updateBadges() {
   $("dirtyBadge").textContent = dirty ? "● unsaved" : "";
@@ -121,6 +237,7 @@ async function openLayout(id: string, force = false) {
   layout = await api<Layout>(`/api/layouts/${encodeURIComponent(id)}`);
   selectedId = null;
   dirty = false;
+  resetHistory();
   refreshAll();
 }
 
@@ -190,6 +307,7 @@ function renderOverlay() {
     box.style.pointerEvents = "auto";
     box.title = objName(o);
     positionBox(box, o);
+    if (composeMode) box.append(el("span", { class: "tag" }, objName(o)));
 
     // Выбранный (и не заблокированный) объект рисуем поверх всех рамок: клик внутри него двигает именно его,
     // а не тот, что лежит выше. Нижний объект выбирается кликом вне выбранного, из панели Layers или Alt+клик.
@@ -210,10 +328,19 @@ function renderOverlay() {
       if (o.locked) return;
       const t = o.transform;
       const x0 = t.x, y0 = t.y;
-      track(ev, (dx, dy) => {
-        t.x = Math.round(x0 + dx);
-        t.y = Math.round(y0 + dy);
+      track(ev, (dx, dy, e) => {
+        let nx = Math.round(x0 + dx), ny = Math.round(y0 + dy);
+        let guides: Guide[] = [];
+        if (snapActive(e) && layout) {
+          const m = snapMove(boundsOf({ ...t, x: nx, y: ny }), snapTargets(o), { threshold: SNAP_PX / k, canvas: layout.canvas });
+          nx += Math.round(m.dx);
+          ny += Math.round(m.dy);
+          guides = m.guides;
+        }
+        t.x = nx;
+        t.y = ny;
         touch(o);
+        drawGuides(guides);
       });
     });
 
@@ -297,6 +424,8 @@ function track(ev: PointerEvent, onMove: (dx: number, dy: number, e: PointerEven
     window.removeEventListener("pointermove", move);
     window.removeEventListener("pointerup", up);
     window.removeEventListener("pointercancel", up);
+    drawGuides([]);
+    flushHistory(); // жест мыши — один шаг истории
   };
   window.addEventListener("pointermove", move);
   window.addEventListener("pointerup", up);
@@ -323,6 +452,17 @@ function startResize(ev: PointerEvent, o: LayoutObject, dirx: number, diry: numb
       const r = w0 / h0;
       if (w / w0 > h / h0) h = w / r; else w = h * r;
     }
+    // Прилипание краёв (только без поворота и без Shift — пропорции важнее): тянем только двигаемые края.
+    if (snapActive(e) && layout && !e.shiftKey && !t.rotationZ) {
+      const left = cx0 - w0 / 2, top = cy0 - h0 / 2;
+      const r: Rect = {
+        x: dirx < 0 ? left + w0 - w : left, y: diry < 0 ? top + h0 - h : top, w, h,
+      };
+      const sn = snapResize(r, { l: dirx < 0, r: dirx > 0, t: diry < 0, b: diry > 0 }, snapTargets(o), { threshold: SNAP_PX / k, canvas: layout.canvas });
+      w = Math.max(MIN_SIZE, sn.rect.w);
+      h = Math.max(MIN_SIZE, sn.rect.h);
+      drawGuides(sn.guides);
+    } else drawGuides([]);
     // противоположная сторона остаётся на месте: центр смещается на половину прироста
     const lx = (dirx * (w - w0)) / 2;
     const ly = (diry * (h - h0)) / 2;
@@ -1693,8 +1833,11 @@ $("impBtn").addEventListener("click", async () => {
 async function save() {
   if (!layout) return;
   try {
+    flushHistory(); // отправляем и запоминаем ровно то же состояние
     await api(`/api/layouts/${encodeURIComponent(layout.id)}`, "PUT", layout);
+    editLog?.markSaved();
     dirty = false;
+    syncHistoryButtons();
     await loadLayouts();
     renderLayouts();
     updateBadges();
@@ -1713,6 +1856,13 @@ addEventListener("keydown", (e) => {
     return;
   }
   const tag = (e.target as HTMLElement).tagName;
+  // В полях ввода Ctrl+Z — родная отмена текста; везде остальное — отмена правок layout.
+  const typing = tag === "TEXTAREA" || tag === "SELECT" || (tag === "INPUT" && !["checkbox", "radio", "range", "button"].includes((e.target as HTMLInputElement).type));
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && !typing) {
+    const key = e.key.toLowerCase();
+    if (key === "z" && !e.shiftKey) { e.preventDefault(); undo(); return; }
+    if ((key === "z" && e.shiftKey) || key === "y") { e.preventDefault(); redo(); return; }
+  }
   if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
   if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "c" && selected()) {
     e.preventDefault();
@@ -1724,6 +1874,7 @@ addEventListener("keydown", (e) => {
     pasteClip();
     return;
   }
+  if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === "l") { e.preventDefault(); toggleCompose(); return; }
   const o = selected();
   if (!o) return;
   if (e.key === "Escape") return select(null);
@@ -1815,6 +1966,7 @@ function connectWs() {
           if (layout && msg.layoutId === layout.id && !dirty) {
             layout = await api<Layout>(`/api/layouts/${encodeURIComponent(layout.id)}`);
             if (selectedId && !selected()) selectedId = null;
+            adoptServerState();
             refreshAll();
           }
           break;
