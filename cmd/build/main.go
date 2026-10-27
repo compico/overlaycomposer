@@ -183,8 +183,16 @@ func buildBin(root, which string) error {
 		return err
 	}
 	version := gitVersion(root)
+	// Релизная сборка (CI): версия — тег релиза, и включается проверка обновлений. Локально этого нет.
+	release := os.Getenv("OC_RELEASE") == "1"
+	if v := os.Getenv("OC_VERSION"); release && v != "" {
+		version = v
+	}
 	for _, t := range list {
 		ldflags := "-s -w -X main.version=" + version
+		if release {
+			ldflags += " -X main.channel=release"
+		}
 		if t.goos == "windows" {
 			ldflags += " -H=windowsgui" // GUI-подсистема: консольное окно не появляется
 			if err := windowsIcon(root, t.goarch); err != nil {

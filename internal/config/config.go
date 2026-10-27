@@ -25,6 +25,8 @@ type Config struct {
 	Port       int    `json:"port"`
 	DebugProxy bool   `json:"debugProxy"`
 	Obs        Obs    `json:"obs"`
+	// NoUpdateCheck — не проверять новые версии на GitHub (только вручную в config.json).
+	NoUpdateCheck bool `json:"noUpdateCheck"`
 }
 
 func Default() Config {

@@ -42,6 +42,8 @@ type App struct {
 	Quit          func()
 	TrayRunning   func() bool
 	TrayAvailable bool
+	Version       string
+	Update        func() any // последний известный результат проверки обновлений (nil — проверки нет)
 }
 
 type Deps struct {

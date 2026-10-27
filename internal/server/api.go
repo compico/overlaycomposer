@@ -435,6 +435,10 @@ func (s *Server) appInfo(c fiber.Ctx) error {
 	if a.Autostart != nil {
 		autostart = a.Autostart()
 	}
+	var upd any
+	if a.Update != nil {
+		upd = a.Update()
+	}
 	osName := a.OS
 	if osName == "" {
 		osName = runtime.GOOS
@@ -449,6 +453,8 @@ func (s *Server) appInfo(c fiber.Ctx) error {
 		"autostart":     autostart, // null — не поддерживается
 		"tray":          a.TrayRunning != nil && a.TrayRunning(),
 		"trayAvailable": a.TrayAvailable,
+		"version":       a.Version,
+		"update":        upd,
 	})
 }
 
