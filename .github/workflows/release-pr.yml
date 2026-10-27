@@ -1,0 +1,33 @@
+name: Release PR
+
+# При каждом пуше в dev создаёт (или обновляет) PR dev → main со списком изменений.
+# Пока в dev нет новых коммитов относительно main, PR не существует (GitHub не создаёт PR без diff).
+on:
+  push:
+    branches: [dev]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  open-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Создать или обновить PR dev → main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch origin main
+          log=$(git log --no-merges --pretty='- %s' origin/main..origin/dev | head -100)
+          body=$(printf '## Изменения в релизе\n\n%s\n\nПосле merge (**merge commit**, не squash) автоматически соберутся релизные бинарники Windows и Linux.\n' "$log")
+          n=$(gh pr list --base main --head dev --state open --json number --jq '.[0].number // empty')
+          if [ -n "$n" ]; then
+            gh pr edit "$n" --body "$body"
+            echo "Updated PR #$n"
+          else
+            gh pr create --base main --head dev --title "Release: dev → main" --body "$body"
+          fi
