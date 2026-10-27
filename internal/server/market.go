@@ -92,6 +92,9 @@ func (s *Server) marketInstall(c fiber.Ctx) error {
 		return marketErr(c, err)
 	}
 	slog.Info("store: плагин установлен", "id", e.ID, "version", e.Version, "repo", e.Repo)
+	if s.d.Notify != nil {
+		s.d.Notify.DismissPrefix("plugin:" + e.ID + "@") // напоминание об обновлении этого плагина больше не нужно
+	}
 	return c.JSON(e)
 }
 

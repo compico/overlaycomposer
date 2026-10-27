@@ -24,6 +24,7 @@ import (
 	"github.com/compico/overlaycomposer/internal/hub"
 	"github.com/compico/overlaycomposer/internal/kv"
 	"github.com/compico/overlaycomposer/internal/market"
+	"github.com/compico/overlaycomposer/internal/notify"
 	"github.com/compico/overlaycomposer/internal/obs"
 	"github.com/compico/overlaycomposer/internal/paths"
 	"github.com/compico/overlaycomposer/internal/plugins"
@@ -60,7 +61,10 @@ type Deps struct {
 	Chat    *chat.Service
 	KV      *kv.Service
 	Market  *market.Market
-	App     App
+	Notify  *notify.Center
+	// CheckPlugins запускает проверку обновлений плагинов (force — по кнопке); nil — недоступно.
+	CheckPlugins func(ctx context.Context, force bool) error
+	App          App
 }
 
 type Server struct {
@@ -124,6 +128,7 @@ func (s *Server) routes() {
 	s.twitchRoutes()
 	s.storageRoutes()
 	s.marketRoutes()
+	s.notifyRoutes()
 
 	// 1. прокси (маршруты /proxy*, затем запросы со страниц, открытых через прокси)
 	s.d.Proxy.Register(app)

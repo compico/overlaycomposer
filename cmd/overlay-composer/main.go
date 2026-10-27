@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -26,6 +27,7 @@ import (
 	"github.com/compico/overlaycomposer/internal/logx"
 	"github.com/compico/overlaycomposer/internal/market"
 	"github.com/compico/overlaycomposer/internal/model"
+	"github.com/compico/overlaycomposer/internal/notify"
 	"github.com/compico/overlaycomposer/internal/obs"
 	"github.com/compico/overlaycomposer/internal/paths"
 	"github.com/compico/overlaycomposer/internal/platform"
@@ -173,14 +175,34 @@ func run() int {
 		return 1
 	}
 
+	// Центр уведомлений: обновления плагинов (проверка при запуске и по кнопке) и новая версия приложения.
+	center := notify.Open(filepath.Join(p.DataDir, "notifications.json"))
+	checkPlugins := func(ctx context.Context, force bool) error {
+		return center.Check(ctx, force, func(ctx context.Context) ([]notify.Candidate, bool) {
+			ups, ok := mk.Updates(ctx, force)
+			out := make([]notify.Candidate, 0, len(ups))
+			for _, u := range ups {
+				out = append(out, notify.Candidate{
+					Key:   "plugin:" + u.ID + "@" + u.To,
+					Title: fmt.Sprintf("%s: update %s", u.Name, u.To),
+					Text:  fmt.Sprintf("Plugin %s %s → %s is available", u.Name, u.From, u.To),
+					Data:  u,
+				})
+			}
+			return out, ok
+		})
+	}
+
 	srv = server.New(server.Deps{
 		Paths: p, Cfg: cfgStore, Running: cfg, Store: st, Hub: h, Obs: obsClient, Proxy: px,
-		Auth:    authMgr,
-		Twitch:  twMgr,
-		Chat:    chatSvc,
-		KV:      kv.New(st.KV()),
-		Plugins: pluginReg,
-		Market:  mk,
+		Auth:         authMgr,
+		Twitch:       twMgr,
+		Chat:         chatSvc,
+		KV:           kv.New(st.KV()),
+		Plugins:      pluginReg,
+		Market:       mk,
+		Notify:       center,
+		CheckPlugins: checkPlugins,
 		App: server.App{
 			OS:           runtime.GOOS,
 			Autostart:    platform.Autostart,
@@ -248,6 +270,20 @@ func run() int {
 
 	// Запрос версии — в самом конце запуска, когда всё остальное уже поднялось (при падении раньше его не будет),
 	// и с задержкой; частоту ограничивает update.Checker (состояние на диске, переживает перезапуски).
+	if !cfg.NoUpdateCheck {
+		go func() {
+			select {
+			case <-time.After(15 * time.Second):
+			case <-quit:
+				return
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+			if err := checkPlugins(ctx, false); err != nil && !errors.Is(err, notify.ErrTooSoon) {
+				slog.Warn("проверка обновлений плагинов не удалась", "err", err)
+			}
+		}()
+	}
 	if upd != nil {
 		go func() {
 			select {
@@ -260,6 +296,17 @@ func run() int {
 			info, err := upd.Check(ctx)
 			if err != nil {
 				slog.Warn("проверка обновлений не удалась", "err", err)
+			}
+			keep := map[string]bool{}
+			if info.Available {
+				key := "app:" + info.Latest
+				keep[key] = true
+				center.Upsert(notify.Item{Key: key, Kind: notify.KindAppUpdate, Title: "New version " + info.Latest,
+					Text: "Overlay Composer " + version + " → " + info.Latest, Data: mustJSON(map[string]string{
+						"current": version, "latest": info.Latest, "url": info.URL, "notes": info.Notes})})
+			}
+			if err == nil { // при ошибке сети ничего не снимаем
+				center.Resolve(notify.KindAppUpdate, keep) // версия уже установлена — напоминание снимается
 			}
 			if info.Available {
 				slog.Info("доступна новая версия", "current", version, "latest", info.Latest, "url", info.URL)
@@ -373,4 +420,9 @@ func openStore(p paths.Paths) (*store.Store, error) {
 		return nil, err
 	}
 	return st, nil
+}
+
+func mustJSON(v any) json.RawMessage {
+	b, _ := json.Marshal(v)
+	return b
 }

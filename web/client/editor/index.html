@@ -94,6 +94,17 @@
       color: var(--text, inherit); transform: translateX(-50%); background: var(--panel2);
       border: 1px solid var(--line); padding: 8px 14px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none; }
     .toast.show { opacity: 1; }
+    #bellBtn { position: relative; }
+    .bellcount { position: absolute; top: -6px; right: -6px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 99px; background: var(--danger);
+      color: #fff; font-size: 10px; line-height: 16px; text-align: center; }
+    #notifPanel { position: fixed; inset: auto; margin: 0; width: 360px; max-width: 94vw; max-height: 70vh; overflow: auto; padding: 8px;
+      background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px; }
+    .notif { display: block; width: 100%; text-align: left; padding: 8px; margin: 0 0 4px; border-radius: 8px; background: var(--panel2); }
+    .notif.unread { border-left: 3px solid var(--accent, #6aa9ff); }
+    .notif small { display: block; color: var(--muted); margin-top: 2px; }
+    .migration { border: 1px solid var(--line); border-left: 3px solid #e0a030; border-radius: 6px; padding: 8px; margin: 6px 0; white-space: pre-wrap; }
+    #notifDetail h4 { margin: 12px 0 4px; }
+    #notifDetail ul { margin: 4px 0; padding-left: 20px; }
   </style>
 </head>
 <body>
@@ -108,6 +119,7 @@
       <span class="badge" id="obsBadge">OBS: …</span>
       <span class="badge" id="sceneBadge"></span>
       <span class="badge" id="dirtyBadge"></span>
+      <button id="bellBtn" title="Notifications" aria-label="Notifications">🔔<span class="bellcount" id="bellCount" hidden></span></button>
       <button id="settingsBtn" title="Settings">⚙ Settings</button>
       <button class="primary" id="saveBtn">Save (Ctrl+S)</button>
     </header>
@@ -206,6 +218,13 @@
       </details>
       <div id="storeBody" style="max-height:60vh;overflow:auto"></div>
       <div class="row" style="justify-content:flex-end;margin-top:12px"><button value="close">Close</button></div>
+    </form>
+  </dialog>
+  <div id="notifPanel" popover="auto"></div>
+  <dialog id="notifDialog" style="width:520px;max-width:94vw">
+    <form method="dialog">
+      <div id="notifDetail" style="max-height:65vh;overflow:auto"></div>
+      <div class="row" style="justify-content:flex-end;margin-top:12px" id="notifActions"></div>
     </form>
   </dialog>
   <dialog id="copyDialog">

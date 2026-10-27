@@ -718,3 +718,54 @@ func TestHTTPFetcherSizeLimitAndSchemeRedirect(t *testing.T) {
 		t.Fatal("redirect to another scheme must be refused")
 	}
 }
+
+func TestChangelogAndUpdates(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	e.repos["bob/tools"] = makeZip(t, plug("alpha", "1.0.0")...)
+	e.m.AddSource(ctx, "bob/tools")
+	en := catalogEntry(t, e, "bob/tools", "alpha")
+	e.m.Install(ctx, "bob/tools", "alpha", en.Digest)
+	if ups, ok := e.m.Updates(ctx, true); !ok || len(ups) != 0 {
+		t.Fatalf("нет обновлений: %+v %v", ups, ok)
+	}
+	log := `[{"version":"1.2.0","changes":["b"],"migration":"fill X"},{"version":"1.1.0","date":"2026-10-01","changes":["a"]},{"version":"1.0.0","changes":["old"]},{"version":"2.0.0","changes":["future"]},{"version":"","changes":["bad"]}]`
+	e.repos["bob/tools"] = makeZip(t,
+		file{name: "repo-abc/plugins/alpha/plugin.json", body: `{"id":"alpha","name":"Plugin alpha","version":"1.2.0","permissions":["chat.read","net.local"]}`},
+		file{name: "repo-abc/plugins/alpha/index.html", body: "<html>2</html>"},
+		file{name: "repo-abc/plugins/alpha/changelog.json", body: log})
+	ups, ok := e.m.Updates(ctx, true)
+	if !ok || len(ups) != 1 {
+		t.Fatalf("updates: %+v %v", ups, ok)
+	}
+	u := ups[0]
+	if u.From != "1.0.0" || u.To != "1.2.0" || len(u.AddedPermissions) != 1 || u.AddedPermissions[0] != "net.local" {
+		t.Fatalf("update: %+v", u)
+	}
+	// только записи новее установленной (1.0.0) и не новее доступной (1.2.0); пустая версия отброшена
+	if len(u.Changelog) != 2 || u.Changelog[0].Version != "1.2.0" || u.Changelog[0].Migration != "fill X" || u.Changelog[1].Version != "1.1.0" {
+		t.Fatalf("changelog: %+v", u.Changelog)
+	}
+}
+
+func TestBrokenChangelogIsIgnored(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	e.repos["bob/tools"] = makeZip(t, plug("alpha", "1.0.0")...)
+	e.m.AddSource(ctx, "bob/tools")
+	en := catalogEntry(t, e, "bob/tools", "alpha")
+	e.m.Install(ctx, "bob/tools", "alpha", en.Digest)
+	e.repos["bob/tools"] = makeZip(t, append(plug("alpha", "1.1.0"), file{name: "repo-abc/plugins/alpha/changelog.json", body: "{not json"})...)
+	ups, ok := e.m.Updates(ctx, true)
+	if !ok || len(ups) != 1 || len(ups[0].Changelog) != 0 {
+		t.Fatalf("битый changelog не должен ломать обновление: %+v", ups)
+	}
+}
+
+func TestUpdatesAllSourcesFailing(t *testing.T) {
+	e := newEnv(t)
+	e.m.AddSource(context.Background(), "bob/tools") // каталога нет → ошибка
+	if _, ok := e.m.Updates(context.Background(), true); ok {
+		t.Fatal("при недоступных источниках ok должен быть false")
+	}
+}
