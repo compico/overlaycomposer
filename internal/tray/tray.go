@@ -4,6 +4,7 @@ package tray
 import (
 	"log/slog"
 	"runtime"
+	"sync"
 	"sync/atomic"
 
 	"fyne.io/systray"
@@ -19,6 +20,7 @@ type Handlers struct {
 	OnOpenEditor      func()
 	OnOpenData        func()
 	OnToggleAutostart func()
+	OnUpdate          func() // клик по пункту «Доступна версия …»
 	OnQuit            func()
 }
 
@@ -26,6 +28,9 @@ type Tray struct {
 	h       Handlers
 	running atomic.Bool
 	auto    *systray.MenuItem
+	upd     *systray.MenuItem
+	mu      sync.Mutex
+	pending string // заголовок пункта обновления, пришедший до создания меню
 }
 
 func New(h Handlers) *Tray { return &Tray{h: h} }
@@ -53,6 +58,15 @@ func (t *Tray) Run(ready func()) {
 			systray.AddSeparator()
 			t.auto = systray.AddMenuItemCheckbox("Запускать при входе в систему", "", *t.h.Autostart)
 		}
+		t.mu.Lock()
+		t.upd = systray.AddMenuItem("", "")
+		t.upd.Hide()
+		if t.pending != "" {
+			t.upd.SetTitle(t.pending)
+			t.upd.Show()
+		}
+		updCh := t.upd.ClickedCh
+		t.mu.Unlock()
 		systray.AddSeparator()
 		quit := systray.AddMenuItem("Выход", "")
 
@@ -70,6 +84,8 @@ func (t *Tray) Run(ready func()) {
 					call(t.h.OnOpenData)
 				case <-autoCh:
 					call(t.h.OnToggleAutostart)
+				case <-updCh:
+					call(t.h.OnUpdate)
 				case <-quit.ClickedCh:
 					call(t.h.OnQuit)
 					return
@@ -80,6 +96,22 @@ func (t *Tray) Run(ready func()) {
 			ready()
 		}
 	}, func() { t.running.Store(false) })
+}
+
+// SetUpdate показывает в меню пункт «Доступна версия …» (пустая строка — скрывает).
+func (t *Tray) SetUpdate(title string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.pending = title
+	if t.upd == nil {
+		return
+	}
+	if title == "" {
+		t.upd.Hide()
+		return
+	}
+	t.upd.SetTitle(title)
+	t.upd.Show()
 }
 
 // SetAutostart обновляет галочку (после смены из UI редактора).

@@ -37,6 +37,9 @@ jobs:
           git tag "$tag"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
       - name: Сборка Windows и Linux
+        env:
+          OC_RELEASE: "1" # включает проверку обновлений в собранном приложении
+          OC_VERSION: ${{ steps.ver.outputs.tag }}
         run: go run ./cmd/build bin all
       - name: Релиз
         env:

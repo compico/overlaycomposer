@@ -1318,11 +1318,23 @@ interface AppView {
   autostart: boolean | null;
   tray: boolean;
   trayAvailable: boolean;
+  version?: string;
+  update?: { latest: string; url: string; notes: string; available: boolean } | null;
 }
 
+let updateToasted = false;
 async function loadAppInfo() {
   try {
     const a = await api<AppView>("/api/app");
+    const ver = $("cfgVersion");
+    ver.textContent = a.version ? `Version: ${a.version}` : "";
+    if (a.update?.available && /^https:\/\/github\.com\//.test(a.update.url)) {
+      const link = document.createElement("a");
+      link.href = a.update.url; link.target = "_blank"; link.rel = "noopener noreferrer";
+      link.textContent = `New version ${a.update.latest} is available`;
+      ver.append(" — ", link);
+      if (!updateToasted) { updateToasted = true; toast(`New version ${a.update.latest} is available (Settings)`); }
+    }
     $("cfgPaths").textContent = `Config: ${a.configFile}\nData: ${a.dataDir}\nLog: ${a.logFile}`;
     const cb = $<HTMLInputElement>("cfgAutostart");
     cb.checked = a.autostart === true;
@@ -1813,3 +1825,6 @@ function connectWs() {
 }
 
 init().catch(fail);
+
+// Проверка обновлений на сервере идёт чуть позже старта — один раз перепроверяем, чтобы подсказка появилась без захода в настройки.
+setTimeout(() => void loadAppInfo(), 15000);

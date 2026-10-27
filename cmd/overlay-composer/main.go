@@ -36,10 +36,14 @@ import (
 	"github.com/compico/overlaycomposer/internal/store"
 	"github.com/compico/overlaycomposer/internal/tray"
 	"github.com/compico/overlaycomposer/internal/twitch"
+	"github.com/compico/overlaycomposer/internal/update"
 )
 
 // version подставляется при сборке: -ldflags "-X main.version=1.2.3"
 var version = "dev"
+
+// channel == "release" ставит только релизная сборка в CI (-X main.channel=release); только у неё работают обновления.
+var channel = ""
 
 func main() { os.Exit(run()) }
 
@@ -96,6 +100,12 @@ func run() int {
 
 	var srv *server.Server
 	var tr *tray.Tray
+
+	// Проверка обновлений — только релизная сборка и если не выключено в config.json.
+	var upd *update.Checker
+	if update.Enabled(channel, version) && !cfg.NoUpdateCheck {
+		upd = &update.Checker{Current: version, StateFile: filepath.Join(p.DataDir, "update.json")}
+	}
 
 	obsClient := obs.New(cfg.Obs.URL, cfg.Obs.Password)
 	h := hub.New(st, obsClient, func() string { return srv.OverlayURL() }, func() bool { return cfgStore.Get().Obs.Enabled })
@@ -187,6 +197,13 @@ func run() int {
 			Quit:          shutdown,
 			TrayRunning:   func() bool { return tr != nil && tr.Running() },
 			TrayAvailable: !*noTray,
+			Version:       version,
+			Update: func() any {
+				if upd == nil {
+					return nil
+				}
+				return upd.Info()
+			},
 		},
 	})
 
@@ -229,6 +246,30 @@ func run() int {
 	}
 	first := !*autostart && !*noOpen
 
+	// Запрос версии — в самом конце запуска, когда всё остальное уже поднялось (при падении раньше его не будет),
+	// и с задержкой; частоту ограничивает update.Checker (состояние на диске, переживает перезапуски).
+	if upd != nil {
+		go func() {
+			select {
+			case <-time.After(10 * time.Second):
+			case <-quit:
+				return
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			info, err := upd.Check(ctx)
+			if err != nil {
+				slog.Warn("проверка обновлений не удалась", "err", err)
+			}
+			if info.Available {
+				slog.Info("доступна новая версия", "current", version, "latest", info.Latest, "url", info.URL)
+				if tr != nil {
+					tr.SetUpdate("Доступна версия " + info.Latest)
+				}
+			}
+		}()
+	}
+
 	if *noTray {
 		if first {
 			openEditor()
@@ -248,6 +289,14 @@ func run() int {
 					}
 				}
 				syncTray(tr)
+			},
+			OnUpdate: func() {
+				if upd == nil {
+					return
+				}
+				if i := upd.Info(); i.URL != "" {
+					_ = platform.OpenTarget(i.URL)
+				}
 			},
 			OnQuit: shutdown,
 		})
