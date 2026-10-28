@@ -2,11 +2,26 @@ import { PluginHost } from "../shared/pluginhost.ts";
 import type { Layout, LayoutObject, ObsInfo, PluginManifest, PluginSetting, ServerMessage, Source, Transform } from "../../shared/types.ts";
 import { contentCenter, defaultTransform, placeByContentCenter, uid, visibleBox } from "../../shared/types.ts";
 import { OverlayScene } from "../shared/scene.ts";
-import { History } from "../../shared/history.ts";
+import { createEditorModel } from "./features/editor/model.ts";
 import { $, el } from "./lib/dom.ts";
 import { type Api, httpApi } from "./lib/api.ts";
 import { createNotificationsModel } from "./features/notifications/model.ts";
 import { mountNotifications } from "./features/notifications/view.ts";
+import { createStoreModel } from "./features/store/model.ts";
+import { mountStore } from "./features/store/view.ts";
+import { PERM_TEXT } from "./lib/permissions.ts";
+import { copyText, COPY_ICON } from "./lib/clipboard.ts";
+import { createAppModel } from "./features/app/model.ts";
+import { mountApp } from "./features/app/view.ts";
+import { createConfigModel } from "./features/config/model.ts";
+import { mountConfig } from "./features/config/view.ts";
+import { createTwitchModel } from "./features/twitch/model.ts";
+import { mountTwitch } from "./features/twitch/view.ts";
+import { createDevicesModel } from "./features/devices/model.ts";
+import { mountDevices } from "./features/devices/view.ts";
+import { createObsImportModel } from "./features/obs-import/model.ts";
+import { mountObsImport } from "./features/obs-import/view.ts";
+import { mountSceneBinding } from "./features/scene-binding/view.ts";
 import { boundsOf, snapMove, snapResize, type Guide, type Rect } from "../../shared/snap.ts";
 
 
@@ -14,17 +29,25 @@ const MIN_SIZE = 20;
 
 // ---------- state ----------
 
+const api: Api = httpApi;
+
+// Состояние живёт в модели редактора (features/editor). Эти переменные — только для чтения: «зеркало» модели,
+// обновляется синхронно при каждом её изменении. Менять состояние — только через `editor.*`.
+const editor = createEditorModel({ api, confirmDiscard: () => confirm("Discard unsaved changes?") });
 let layouts: Layout[] = [];
 let sources: Source[] = [];
 let plugins: PluginManifest[] = [];
 let layout: Layout | null = null; // рабочая копия, сохраняется кнопкой Save
 let selectedId: string | null = null;
 let dirty = false;
-let k = 1; // экранных px на 1 px canvas
 let obsScenes: string[] = [];
 /** layout для сцен без собственного layout */
 let defaultLayoutId: string | null = null;
 let activeLayoutId: string | null = null;
+editor.subscribe((st) => {
+  ({ layouts, sources, plugins, layout, selectedId, dirty, obsScenes, defaultLayoutId, activeLayoutId } = st);
+});
+let k = 1; // экранных px на 1 px canvas
 let propSync: (() => void)[] = [];
 /** Буфер Ctrl+C: снимок слоя и layout, из которого он скопирован (живёт, пока открыта страница). */
 let clip: { obj: LayoutObject; fromLayoutId: string } | null = null;
@@ -34,8 +57,6 @@ const pluginHost = new PluginHost({ send: (m) => wsSend(m), canSend: false });
 const scene = new OverlayScene($("stage"), { interactive: true, plugins: pluginHost });
 
 // ---------- helpers ----------
-
-const api: Api = httpApi;
 
 let toastTimer = 0;
 function toast(msg: string) {
@@ -60,11 +81,7 @@ const sourceOf = (id: string) => sources.find((s) => s.id === id);
 const selected = () => layout?.objects.find((o) => o.id === selectedId) ?? null;
 const objName = (o: LayoutObject) => o.name || (sourceOf(o.sourceId)?.name ?? `(missing ${o.sourceId})`);
 
-function markDirty() {
-  dirty = true;
-  updateBadges();
-  scheduleRecord();
-}
+const markDirty = () => editor.markDirty();
 
 // ---------- layout mode and snapping (настройки помним между запусками) ----------
 
@@ -106,76 +123,10 @@ function drawGuides(guides: Guide[]) {
 
 const snapActive = (e: PointerEvent) => snapOn && !e.ctrlKey && !e.metaKey; // Ctrl на время жеста — без прилипания
 
-// ---------- history of edits (Ctrl+Z / Ctrl+Y) ----------
+// ---------- history of edits (Ctrl+Z / Ctrl+Y): логика — в editor model ----------
 
-let editLog: History | null = null;
-let recordTimer = 0;
-
-/** Снимок правимых частей layout (то, что сохраняет кнопка Save). */
-const snapshot = () => JSON.stringify(layout ? { canvas: layout.canvas, objects: layout.objects } : null);
-
-/** Новая история для только что открытого layout. */
-function resetHistory() {
-  clearTimeout(recordTimer);
-  editLog = layout ? new History(snapshot()) : null;
-  syncHistoryButtons();
-}
-
-/** Правки, идущие подряд (ввод в поле, стрелки), склеиваются в один шаг; жест мыши фиксируется сразу по отпусканию. */
-function scheduleRecord() {
-  clearTimeout(recordTimer);
-  recordTimer = setTimeout(flushHistory, 500) as unknown as number;
-}
-
-function flushHistory() {
-  clearTimeout(recordTimer);
-  if (!editLog || !layout) return;
-  editLog.record(snapshot());
-  dirty = editLog.dirty;
-  updateBadges();
-  syncHistoryButtons();
-}
-
-/** Состояние после загрузки с сервера (сохранение, чужая правка): отдельный шаг истории и «сохранённое» состояние. */
-function adoptServerState() {
-  if (!editLog) return resetHistory();
-  clearTimeout(recordTimer);
-  editLog.record(snapshot());
-  editLog.markSaved();
-  dirty = false;
-  syncHistoryButtons();
-}
-
-function applySnapshot(s: string | null) {
-  if (s === null || !layout) return;
-  const st = JSON.parse(s) as { canvas: Layout["canvas"]; objects: LayoutObject[] } | null;
-  if (!st) return;
-  layout.canvas = st.canvas;
-  layout.objects = st.objects;
-  if (selectedId && !selected()) selectedId = null;
-  dirty = editLog!.dirty;
-  refreshAll();
-  syncHistoryButtons();
-}
-
-function undo() {
-  if (!editLog) return;
-  flushHistory();
-  if (!editLog.canUndo) return toast("Nothing to undo");
-  applySnapshot(editLog.undo());
-}
-
-function redo() {
-  if (!editLog) return;
-  flushHistory();
-  if (!editLog.canRedo) return toast("Nothing to redo");
-  applySnapshot(editLog.redo());
-}
-
-function syncHistoryButtons() {
-  ($("undoBtn") as HTMLButtonElement).disabled = !editLog?.canUndo;
-  ($("redoBtn") as HTMLButtonElement).disabled = !editLog?.canRedo;
-}
+function undo() { if (!editor.undo()) toast("Nothing to undo"); }
+function redo() { if (!editor.redo()) toast("Nothing to redo"); }
 $("undoBtn").addEventListener("click", undo);
 $("redoBtn").addEventListener("click", redo);
 
@@ -184,53 +135,17 @@ function updateBadges() {
   $("canvasSize").textContent = layout ? `${layout.canvas.width}×${layout.canvas.height}` : "";
 }
 
-// ---------- loading ----------
+// ---------- loading (логика — в editor model; здесь только перерисовка по ChangeKind) ----------
 
-async function loadSources() {
-  sources = await api<Source[]>("/api/sources");
-  scene.setSources(sources);
-}
-
-async function loadPlugins() {
-  plugins = await api<PluginManifest[]>("/api/plugins"); // сервер пересматривает папку plugins/ при каждом запросе
-}
-
-async function loadLayouts() {
-  const [list, def] = await Promise.all([
-    api<Layout[]>("/api/layouts"),
-    api<{ layoutId: string | null }>("/api/default-layout"),
-  ]);
-  layouts = list;
-  defaultLayoutId = def.layoutId;
-  renderSceneBox(); // привязки могли измениться
-}
-
-async function openLayout(id: string, force = false) {
-  if (!force && dirty && !confirm("Discard unsaved changes?")) {
-    renderLayouts(); // вернуть select на текущий layout
-    return;
-  }
-  layout = await api<Layout>(`/api/layouts/${encodeURIComponent(id)}`);
-  selectedId = null;
-  dirty = false;
-  resetHistory();
-  refreshAll();
-}
+const loadSources = () => editor.loadSources();
+const loadPlugins = () => editor.loadPlugins();
+const loadLayouts = () => editor.loadLayouts();
+async function openLayout(id: string, force = false) { await editor.openLayout(id, force); }
 
 async function init() {
-  await Promise.all([loadSources(), loadLayouts(), loadPlugins()]);
-  if (layouts.length === 0) {
-    const l = await api<Layout>("/api/layouts", "POST", { name: "Layout 1" });
-    layouts = [l];
-  }
-  const st = await api<{ activeLayoutId: string | null; scene: string | null; obs: ObsInfo }>("/api/state");
-  activeLayoutId = st.activeLayoutId;
-  applyObsInfo(st.obs);
-  await openLayout(st.activeLayoutId && layouts.some((l) => l.id === st.activeLayoutId) ? st.activeLayoutId : layouts[0].id, true);
+  applyObsInfo(await editor.bootstrap());
   connectWs();
 }
-
-// ---------- rendering ----------
 
 function refreshAll() {
   renderLayouts();
@@ -385,7 +300,7 @@ function positionBox(box: HTMLElement, o: LayoutObject) {
 
 /** Применить изменение объекта во время drag: сцена + рамка + поля свойств. */
 function touch(o: LayoutObject) {
-  markDirty();
+  editor.touch();
   scene.setLayout(layout!);
   const box = $("overlayLayer").querySelector<HTMLElement>(`[data-id="${o.id}"]`);
   if (box) positionBox(box, o);
@@ -401,7 +316,7 @@ function track(ev: PointerEvent, onMove: (dx: number, dy: number, e: PointerEven
     window.removeEventListener("pointerup", up);
     window.removeEventListener("pointercancel", up);
     drawGuides([]);
-    flushHistory(); // жест мыши — один шаг истории
+    editor.flush(); // жест мыши — один шаг истории
   };
   window.addEventListener("pointermove", move);
   window.addEventListener("pointerup", up);
@@ -525,12 +440,7 @@ function startRotate(ev: PointerEvent, o: LayoutObject) {
 
 // ---------- selection ----------
 
-function select(id: string | null) {
-  selectedId = id;
-  renderOverlay();
-  renderLayers();
-  renderProps();
-}
+const select = (id: string | null) => editor.select(id);
 
 $("viewport").addEventListener("pointerdown", (e) => {
   if (!(e.target as HTMLElement).closest(".box")) select(null);
@@ -573,33 +483,20 @@ $<HTMLSelectElement>("layoutSelect").addEventListener("change", (e) => {
 $("newLayoutBtn").addEventListener("click", async () => {
   const name = prompt("Layout name (will also be used as OBS scene name):", "New Layout");
   if (!name) return;
-  try {
-    const l = await api<Layout>("/api/layouts", "POST", { name });
-    await loadLayouts();
-    await openLayout(l.id);
-  } catch (e) { fail(e); }
+  try { await editor.createLayout(name); } catch (e) { fail(e); }
 });
 
 $("dupLayoutBtn").addEventListener("click", async () => {
   if (!layout) return;
   const name = prompt("Name for the copy:", `${layout.name} copy`);
   if (!name) return;
-  try {
-    // дублируем сохранённую версию на сервере
-    const l = await api<Layout>("/api/layouts", "POST", { name, duplicateOf: layout.id });
-    await loadLayouts();
-    await openLayout(l.id, true);
-  } catch (e) { fail(e); }
+  try { await editor.duplicateCurrent(name); } catch (e) { fail(e); }
 });
 
 $("delLayoutBtn").addEventListener("click", async () => {
   if (!layout || layouts.length <= 1) return;
   if (!confirm(`Delete layout "${layout.name}"?`)) return;
-  try {
-    await api(`/api/layouts/${encodeURIComponent(layout.id)}`, "DELETE");
-    await loadLayouts();
-    await openLayout(layouts[0].id, true);
-  } catch (e) { fail(e); }
+  try { await editor.deleteCurrent(); } catch (e) { fail(e); }
 });
 
 // ---------- layers panel ----------
@@ -620,27 +517,19 @@ function renderLayers() {
     const eye = el("button", { class: "ib", textContent: o.visible ? "👁" : "◌", title: "Visibility" });
     eye.addEventListener("click", (e) => {
       e.stopPropagation();
-      o.visible = !o.visible;
-      markDirty();
-      refreshCanvas();
-      renderLayers();
+      editor.setVisible(o.id, !o.visible);
     });
     const lock = el("button", { class: "ib", textContent: o.locked ? "🔒" : "🔓", title: "Lock" });
     lock.addEventListener("click", (e) => {
       e.stopPropagation();
-      o.locked = !o.locked;
-      markDirty();
-      renderOverlay();
-      renderLayers();
+      editor.setLocked(o.id, !o.locked);
     });
     const name = el("span", { class: "name", textContent: objName(o), title: "Double-click to rename this layer (the source keeps its name)" });
     name.addEventListener("dblclick", (e) => {
       e.stopPropagation();
       const n = prompt("Layer name:", objName(o));
       if (n === null || !n.trim() || n.trim() === objName(o)) return;
-      o.name = n.trim();
-      markDirty();
-      renderLayers();
+      editor.rename(o.id, n.trim());
     });
     const del = el("button", { class: "ib", textContent: "✕", title: "Remove from layout" });
     del.addEventListener("click", (e) => {
@@ -672,31 +561,8 @@ function renderLayers() {
   }
 }
 
-/** Переносит `movedId` непосредственно над `beforeId` в отображаемом порядке (верх = больший zIndex). */
-function reorder(movedId: string, beforeId: string) {
-  if (!layout) return;
-  const order = [...layout.objects].sort((a, b) => b.zIndex - a.zIndex).map((o) => o.id);
-  order.splice(order.indexOf(movedId), 1);
-  order.splice(order.indexOf(beforeId), 0, movedId);
-  const n = order.length;
-  order.forEach((id, i) => {
-    const o = layout!.objects.find((x) => x.id === id)!;
-    o.zIndex = n - i;
-  });
-  markDirty();
-  refreshCanvas();
-  renderLayers();
-}
-
-function removeObject(id: string) {
-  if (!layout) return;
-  layout.objects = layout.objects.filter((o) => o.id !== id);
-  if (selectedId === id) selectedId = null;
-  markDirty();
-  refreshCanvas();
-  renderLayers();
-  renderProps();
-}
+const reorder = (movedId: string, beforeId: string) => editor.reorder(movedId, beforeId);
+const removeObject = (id: string) => editor.removeObject(id);
 
 // ---------- copy between layouts ----------
 
@@ -770,12 +636,7 @@ function pasteClip() {
   const same = clip.fromLayoutId === layout.id;
   // В тот же layout — независимая копия со сдвигом; в другой — связанная (тот же виджет).
   const c = cloneObject(clip.obj, layout, { linked: !same, offset: same ? 20 : 0, copySuffix: same });
-  layout.objects.push(c);
-  selectedId = c.id;
-  markDirty();
-  refreshCanvas();
-  renderLayers();
-  renderProps();
+  editor.insertObject(c);
 }
 
 // ---------- add source ----------
@@ -848,30 +709,8 @@ function renderPluginPicker() {
   $("usePluginBtn").toggleAttribute("disabled", !p);
 }
 
-$("openStoreBtn").addEventListener("click", () => { storeDialog.showModal(); void loadStore(); });
 
 // ---------- plugin store ----------
-
-type StoreEntry = {
-  id: string; name: string; version?: string; description?: string; author?: string; permissions?: string[]; repo: string;
-  installed: boolean; installedVersion?: string; installedCommit?: string; updateAvailable: boolean; blocked?: "builtin" | "foreign";
-  digest: string; commit?: string; addedPermissions?: string[];
-};
-type StoreSource = { repo: string; error?: string; plugins: StoreEntry[] };
-type StoreData = { sources: StoreSource[]; installed: Record<string, { repo: string; version?: string }>; hasToken: boolean };
-
-const storeDialog = $<HTMLDialogElement>("storeDialog");
-const BLOCKED_TEXT = { builtin: "built in", foreign: "id is taken by another plugin" };
-
-async function loadStore(refresh = false) {
-  const body = $("storeBody");
-  body.replaceChildren(el("div", { class: "empty", textContent: "Loading…" }));
-  try {
-    renderStore(await api<StoreData>(`/api/market${refresh ? "?refresh=1" : ""}`));
-  } catch (e) {
-    body.replaceChildren(el("div", { class: "hint warn", textContent: `Store is unavailable: ${e instanceof Error ? e.message : e}` }));
-  }
-}
 
 /** Плагин поменялся на диске: подхватить в редакторе (список для Add Source, виджеты на холсте). */
 async function afterPluginChange() {
@@ -883,111 +722,21 @@ async function afterPluginChange() {
   renderProps();
 }
 
-function renderStore(d: StoreData) {
-  const body = $("storeBody");
-  $("storeTokenSummary").textContent = d.hasToken ? "Private repositories — GitHub token is set" : "Private repositories (GitHub token)";
-  $<HTMLButtonElement>("storeTokenClear").toggleAttribute("disabled", !d.hasToken);
-  const shown = new Set<string>();
-  const parts: HTMLElement[] = [];
-  const act = (btn: HTMLButtonElement, fn: () => Promise<unknown>) => {
-    btn.addEventListener("click", async () => {
-      btn.disabled = true;
-      try { await fn(); } catch (e) { fail(e); }
-      await loadStore();
-    });
-    return btn;
-  };
-  for (const s of d.sources) {
-    const rm = act(el("button", { type: "button", textContent: "Remove source", title: "Plugins already installed from it stay" }), async () => {
-      if (confirm(`Remove source ${s.repo}? Plugins already installed from it stay installed.`)) await api(`/api/market/sources?repo=${encodeURIComponent(s.repo)}`, "DELETE");
-    });
-    parts.push(el("div", { class: "row", style: "justify-content:space-between;margin-top:12px" }, el("strong", { textContent: s.repo }), rm));
-    if (s.error) parts.push(el("div", { class: "hint warn", textContent: s.error }));
-    else if (!s.plugins.length) parts.push(el("div", { class: "empty", textContent: "No plugins in this repository." }));
-    for (const p of s.plugins) {
-      if (p.installed) shown.add(p.id);
-      const used = sources.filter((x) => x.type === "plugin" && x.data.plugin === p.id).length;
-      const perms = p.permissions?.length ? `Asks for: ${p.permissions.map((x) => PERM_TEXT[x] ?? x).join("; ")}` : "Asks for no permissions";
-      let button: HTMLElement;
-      if (p.blocked) button = el("span", { class: "hint", textContent: BLOCKED_TEXT[p.blocked] });
-      else if (p.updateAvailable) button = act(el("button", { type: "button", class: "primary", textContent: p.version && p.version !== p.installedVersion ? `Update to ${p.version}` : "Update (files changed)" }), async () => {
-        // Новые права при обновлении — отдельное подтверждение: молча расширить доступ плагина нельзя.
-        if (p.addedPermissions?.length && !confirm(`The new version of “${p.name}” asks for additional permissions:\n\n${p.addedPermissions.map((x) => `• ${PERM_TEXT[x] ?? x}`).join("\n")}\n\nUpdate anyway? (Widgets keep only the permissions you already allowed; allow the new ones in the widget properties.)`)) return;
-        await api("/api/market/install", "POST", { repo: p.repo, id: p.id, digest: p.digest });
-        await afterPluginChange();
-        toast(`${p.name} updated. Reload the overlay page in OBS to apply.`);
-      });
-      else if (p.installed) button = act(el("button", { type: "button", class: "danger", textContent: "Uninstall" }), async () => {
-        const msg = used ? `Uninstall “${p.name}”? ${used} widget(s) using it will become empty. Its stored data is kept (erase it in widget properties).` : `Uninstall “${p.name}”?`;
-        if (!confirm(msg)) return;
-        await api("/api/market/uninstall", "POST", { id: p.id });
-        await afterPluginChange();
-      });
-      else button = act(el("button", { type: "button", class: "primary", textContent: "Install" }), async () => {
-        await api("/api/market/install", "POST", { repo: p.repo, id: p.id, digest: p.digest });
-        await afterPluginChange();
-        toast(`${p.name} installed. Add it via Add Source → widget plugin.`);
-      });
-      const src = p.commit ? ` · commit ${p.commit}` : "";
-      const title = `${p.name}${p.version ? ` ${p.version}` : ""}${src}${p.installed && p.installedVersion && p.installedVersion !== p.version ? ` (installed ${p.installedVersion})` : p.installed ? " — installed" : ""}`;
-      parts.push(el("div", { class: "row", style: "align-items:flex-start;justify-content:space-between;border-top:1px solid var(--line);padding-top:6px" },
-        el("div", { style: "flex:1;min-width:0" },
-          el("div", { textContent: title }),
-          el("div", { class: "hint", textContent: [p.author, p.description].filter(Boolean).join(" — ") }),
-          el("div", { class: "hint", textContent: perms })),
-        button));
-    }
-  }
-  // Поставленные из магазина, но источник уже убран: управлять ими всё равно надо.
-  const orphans = Object.entries(d.installed).filter(([id]) => !shown.has(id));
-  if (orphans.length) {
-    parts.push(el("div", { style: "margin-top:12px" }, el("strong", { textContent: "Installed from sources no longer in the list" })));
-    for (const [id, rec] of orphans) {
-      const name = plugins.find((x) => x.id === id)?.name ?? id;
-      const b = act(el("button", { type: "button", class: "danger", textContent: "Uninstall" }), async () => {
-        if (!confirm(`Uninstall “${name}”?`)) return;
-        await api("/api/market/uninstall", "POST", { id });
-        await afterPluginChange();
-      });
-      parts.push(el("div", { class: "row", style: "justify-content:space-between;border-top:1px solid var(--line);padding-top:6px" },
-        el("div", {}, el("div", { textContent: `${name}${rec.version ? ` ${rec.version}` : ""}` }), el("div", { class: "hint", textContent: rec.repo })), b));
-    }
-  }
-  if (!d.sources.length && !orphans.length) parts.push(el("div", { class: "empty", textContent: "No sources yet. Add a GitHub repository above." }));
-  body.replaceChildren(...parts);
-}
-
-$("storeRefreshBtn").addEventListener("click", () => void loadStore(true));
-$("storeAddBtn").addEventListener("click", async () => {
-  const inp = $<HTMLInputElement>("storeRepo");
-  if (!inp.value.trim()) return;
-  const btn = $<HTMLButtonElement>("storeAddBtn");
-  btn.disabled = true;
-  try { await api("/api/market/sources", "POST", { repo: inp.value }); inp.value = ""; } catch (e) { fail(e); }
-  btn.disabled = false;
-  await loadStore();
-});
-$("storeTokenSave").addEventListener("click", async () => {
-  const inp = $<HTMLInputElement>("storeToken");
-  if (!inp.value.trim()) return;
-  try { await api("/api/market/token", "PUT", { token: inp.value }); inp.value = ""; toast("GitHub token saved"); } catch (e) { fail(e); }
-  await loadStore(true);
-});
-$("storeTokenClear").addEventListener("click", async () => {
-  if (!confirm("Remove the saved GitHub token? Private repositories will stop loading.")) return;
-  try { await api("/api/market/token", "DELETE"); } catch (e) { fail(e); }
-  await loadStore(true);
-});
-$("storeRepo").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("storeAddBtn").click(); } });
-
-$("openPluginsBtn").addEventListener("click", () => api("/api/app/open", "POST", { what: "plugins" }).catch(fail));
-
-const PERM_TEXT: Record<string, string> = {
-  "chat.read": "Read Twitch chat",
-  "chat.send": "Write to Twitch chat as your bot / streamer account",
-  "net.local": "Read data from programs running on this computer (e.g. tosu)",
-  "storage": "Store this plugin’s data on this computer",
-};
+const pluginStore = mountStore(
+  {
+    openBtn: $("openStoreBtn"), dialog: $<HTMLDialogElement>("storeDialog"), body: $("storeBody"), refreshBtn: $("storeRefreshBtn"),
+    repoInput: $<HTMLInputElement>("storeRepo"), addBtn: $<HTMLButtonElement>("storeAddBtn"), tokenSummary: $("storeTokenSummary"),
+    tokenInput: $<HTMLInputElement>("storeToken"), tokenSave: $("storeTokenSave"), tokenClear: $<HTMLButtonElement>("storeTokenClear"),
+    openPluginsBtn: $("openPluginsBtn"),
+  },
+  createStoreModel({ api, afterChange: afterPluginChange }),
+  {
+    ui: { toast, fail },
+    usedBy: (id) => sources.filter((x) => x.type === "plugin" && x.data.plugin === id).length,
+    pluginName: (id) => plugins.find((x) => x.id === id)?.name,
+    openPluginsFolder: () => api("/api/app/open", "POST", { what: "plugins" }),
+  },
+);
 
 $("usePluginBtn").addEventListener("click", async () => {
   const p = plugins.find((x) => x.id === selectedPluginId);
@@ -1021,22 +770,7 @@ for (const id of ["newName", "newUrl"]) {
   $(id).addEventListener("keydown", (e) => { if ((e as KeyboardEvent).key === "Enter") { e.preventDefault(); $("createBtn").click(); } });
 }
 
-function placeObject(sourceId: string, w = 400, h = 300) {
-  if (!layout) return;
-  const maxZ = Math.max(0, ...layout.objects.map((o) => o.zIndex));
-  const t = { ...defaultTransform(), width: w, height: h };
-  t.x = Math.round((layout.canvas.width - w) / 2);
-  t.y = Math.round((layout.canvas.height - h) / 2);
-  const obj: LayoutObject = {
-    id: uid("obj"), name: sourceOf(sourceId)?.name, sourceId, transform: t, opacity: 1, visible: true, locked: false, zIndex: maxZ + 1,
-  };
-  layout.objects.push(obj);
-  selectedId = obj.id;
-  markDirty();
-  refreshCanvas();
-  renderLayers();
-  renderProps();
-}
+function placeObject(sourceId: string, w = 400, h = 300) { editor.addObject(sourceId, w, h); }
 
 $("useExistingBtn").addEventListener("click", () => {
   if (selectedExistingId) placeObject(selectedExistingId);
@@ -1332,10 +1066,8 @@ function renderProps() {
       try {
         await api(`/api/sources/${src.id}`, "DELETE");
         // сервер вычистил объекты в сохранённых layout; убираем и из рабочей копии
-        layout!.objects = layout!.objects.filter((x) => x.sourceId !== src.id);
-        selectedId = null;
         await loadSources();
-        refreshAll();
+        editor.dropSource(src.id);
       } catch (e) { fail(e); }
     });
     root.append(el("div", { class: "row", style: "margin-top:10px" }, rm, delSrc));
@@ -1377,446 +1109,94 @@ function renderProps() {
 
 // ---------- привязка layout к сценам OBS ----------
 
-/** Блок «OBS scenes» в свойствах layout. Перерисовывается отдельно (список сцен и привязки приходят асинхронно). */
-function renderSceneBox() {
-  const box = document.getElementById("sceneBox");
-  if (!box || !layout) return;
-  const cur = layout;
-  const owner = new Map<string, string>(); // сцена → имя другого layout, которому она принадлежит (сохранённое состояние)
-  for (const l of layouts) if (l.id !== cur.id) for (const s of l.scenes) owner.set(s, l.name);
-
-  // Сцены OBS + привязанные, которых в OBS сейчас нет (переименованы/удалены/OBS не подключён).
-  const names = [...obsScenes];
-  for (const s of cur.scenes) if (!names.includes(s)) names.push(s);
-
-  const rows = names.map((s) => {
-    const cb = el("input", { type: "checkbox", checked: cur.scenes.includes(s) });
-    cb.addEventListener("change", () => {
-      cur.scenes = cb.checked ? [...cur.scenes, s] : cur.scenes.filter((x) => x !== s);
-      markDirty();
-      renderSceneBox();
-    });
-    const notes: string[] = [];
-    if (owner.has(s)) notes.push(cb.checked ? `moves from “${owner.get(s)}”` : `used by “${owner.get(s)}”`);
-    if (obsScenes.length && !obsScenes.includes(s)) notes.push("not in OBS");
-    return el("label", { class: "chk" }, cb, ` ${s}`, notes.length ? el("span", { class: "hint", textContent: ` — ${notes.join(", ")}` }) : "");
-  });
-
-  const add = el("input", { type: "text", placeholder: "Add scene by name…" });
-  const addBtn = el("button", { type: "button", textContent: "Add" });
-  const doAdd = () => {
-    const v = add.value.trim();
-    if (!v || cur.scenes.includes(v)) return;
-    cur.scenes = [...cur.scenes, v];
-    markDirty();
-    renderSceneBox();
-  };
-  addBtn.addEventListener("click", doAdd);
-  add.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doAdd(); } });
-
-  box.replaceChildren(
-    el("div", { class: "hint", textContent: obsScenes.length
-      ? "Show this layout when OBS switches to the checked scenes:"
-      : "OBS scene list is not available yet (connect OBS in Settings). You can still add scene names by hand:" }),
-    ...(rows.length ? rows : [el("div", { class: "empty", textContent: "No scenes bound — this layout is shown only by ▶ or as the default." })]),
-    el("div", { class: "row", style: "margin-top:4px" }, add, addBtn),
-  );
-}
-
-// ---------- settings (config.json) ----------
-
-interface AppView {
-  compiled: boolean;
-  os: string;
-  configFile: string;
-  dataDir: string;
-  logFile: string;
-  autostart: boolean | null;
-  tray: boolean;
-  trayAvailable: boolean;
-  version?: string;
-  update?: { latest: string; url: string; notes: string; available: boolean } | null;
-}
-
-let updateToasted = false;
-async function loadAppInfo() {
-  try {
-    const a = await api<AppView>("/api/app");
-    const ver = $("cfgVersion");
-    ver.textContent = a.version ? `Version: ${a.version}` : "";
-    if (a.update?.available && /^https:\/\/github\.com\//.test(a.update.url)) {
-      const link = document.createElement("a");
-      link.href = a.update.url; link.target = "_blank"; link.rel = "noopener noreferrer";
-      link.textContent = `New version ${a.update.latest} is available`;
-      ver.append(" — ", link);
-      if (!updateToasted) { updateToasted = true; toast(`New version ${a.update.latest} is available (Settings)`); }
-    }
-    $("cfgPaths").textContent = `Config: ${a.configFile}\nData: ${a.dataDir}\nLog: ${a.logFile}`;
-    const cb = $<HTMLInputElement>("cfgAutostart");
-    cb.checked = a.autostart === true;
-    cb.disabled = a.autostart === null;
-    $("cfgAutostartHint").textContent = a.autostart === null
-      ? "Autostart is available in the packaged app (Windows, Linux)."
-      : "Starts minimized (no browser window) when you log in.";
-    $("cfgTrayHint").textContent = a.tray
-      ? "The app lives in the system tray (right-click the icon)."
-      : a.os === "windows" && a.compiled ? "Tray icon failed to start — see the log." : "";
-  } catch { /* старый сервер */ }
-}
-
-$("cfgAutostart").addEventListener("change", async (e) => {
-  const cb = e.target as HTMLInputElement;
-  try {
-    await api("/api/app/autostart", "PUT", { enabled: cb.checked });
-  } catch (err) {
-    cb.checked = !cb.checked;
-    fail(err);
-  }
+const sceneBinding = mountSceneBinding(() => document.getElementById("sceneBox"), {
+  current: () => layout,
+  layouts: () => layouts,
+  obsScenes: () => obsScenes,
+  changed: markDirty,
 });
-$("cfgOpenData").addEventListener("click", () => api("/api/app/open", "POST", { what: "data" }).catch(fail));
-$("cfgOpenLogs").addEventListener("click", () => api("/api/app/open", "POST", { what: "logs" }).catch(fail));
-$("cfgQuit").addEventListener("click", async () => {
-  if (!confirm("Quit Overlay Composer? Overlays in OBS will stop updating until it is started again.")) return;
-  try { await api("/api/app/quit", "POST", {}); } catch { /* сервер уже закрылся */ }
-  document.body.textContent = "Overlay Composer has been stopped. You can close this tab.";
-});
+const renderSceneBox = sceneBinding.render;
 
-interface ConfigView {
-  host: string;
-  port: number;
-  debugProxy: boolean;
-  obsEnabled: boolean;
-  obsUrl: string;
-  hasObsPassword: boolean;
-  obs: ObsInfo;
-  obsWsConnected: boolean;
-  obsWsError: string | null;
-  overlayUrl: string;
-  restartRequired: boolean;
-}
+// ---------- settings (config.json): приложение, сервер/OBS, Twitch, устройства ----------
 
-const settingsDialog = $<HTMLDialogElement>("settingsDialog");
-let statusTimer = 0;
+const appModel = createAppModel(api);
+mountApp(
+  {
+    version: $("cfgVersion"), paths: $("cfgPaths"), autostart: $<HTMLInputElement>("cfgAutostart"), autostartHint: $("cfgAutostartHint"),
+    trayHint: $("cfgTrayHint"), openData: $("cfgOpenData"), openLogs: $("cfgOpenLogs"), quit: $("cfgQuit"),
+  },
+  appModel,
+  { toast, fail },
+);
 
-function showStatus(c: ConfigView) {
-  const st = $("cfgStatus");
-  st.className = `hint ${c.obs.connected ? "" : "warn"}`;
-  st.textContent = c.obs.connected
-    ? `OBS: connected via ${c.obs.via === "overlay" ? "overlay" : "obs-websocket"}` +
-      (c.obs.scene ? ` · scene: ${c.obs.scene}` : "") +
-      (c.obs.scenes.length ? ` · ${c.obs.scenes.length} scenes known` : "")
-    : `OBS: no data — ${c.obs.error ?? "waiting…"}`;
-  if (c.restartRequired) st.textContent += " · restart pending for host/port";
+const twitchModel = createTwitchModel(api);
+const twitchView = mountTwitch(
+  {
+    box: $("twBox"), redirect: $("twRedirect"), clientId: $<HTMLInputElement>("twClientId"), clientSecret: $<HTMLInputElement>("twClientSecret"),
+    appHint: $("twAppHint"), accounts: $("twAccounts"), saveApp: $("twSaveApp"),
+  },
+  twitchModel,
+  { toast, fail },
+);
 
-  const ws = $("cfgWsStatus");
-  ws.className = `hint ${c.obsWsConnected ? "" : "warn"}`;
-  ws.textContent = c.obsWsConnected
-    ? "obs-websocket: connected"
-    : `obs-websocket: not connected${c.obsWsError ? ` — ${c.obsWsError}` : " (connecting…)"}`;
+const devicesModel = createDevicesModel(api);
+const devicesView = mountDevices(
+  {
+    box: $("devBox"), pair: $("devPair"), code: $<HTMLButtonElement>("devCode"), left: $("devLeft"), url: $("devUrl"),
+    hint: $("devHint"), list: $("devList"),
+  },
+  devicesModel,
+  { ui: { toast, fail }, wantsRemote: () => $<HTMLSelectElement>("cfgHost").value !== "127.0.0.1" },
+);
 
-  $("cfgOverlayUrl").textContent = c.overlayUrl;
-  applyObsInfo(c.obs);
-}
-
-async function refreshStatus() {
-  try { showStatus(await api<ConfigView>("/api/config")); } catch { /* сервер перезапускается */ }
-  loadDevices();
-  loadTwitch();
-}
-
-interface TwitchView {
-  clientId: string;
-  hasSecret: boolean;
-  redirectUri: string;
-  accounts: { role: string; login: string; scopes: string[]; error?: string }[];
-}
-
-const COPY_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg>';
-
-async function copyText(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch { /* нет доступа к буферу (не защищённый контекст/запрет) — запасной способ */ }
-  const ta = el("textarea", { value: text, style: "position:fixed;opacity:0;top:0;left:0" });
-  document.body.append(ta);
-  ta.select();
-  let ok = false;
-  try { ok = document.execCommand("copy"); } catch { ok = false; }
-  ta.remove();
-  return ok;
-}
-
-const TW_ROLES: [string, string][] = [["streamer", "Streamer"], ["bot", "Bot"]];
-let twFormFilled = false;
-
-// Раздел «Twitch accounts»; как и Remote devices, виден только на самом компьютере (с других сервер отвечает 403).
-async function loadTwitch() {
-  const box = $("twBox");
-  let v: TwitchView;
-  try { v = await api<TwitchView>("/api/twitch"); } catch { box.hidden = true; return; }
-  box.hidden = false;
-  $("twRedirect").textContent = v.redirectUri;
-  if (!twFormFilled) { // поля заполняем один раз, чтобы опрос не затирал ввод
-    $<HTMLInputElement>("twClientId").value = v.clientId;
-    $<HTMLInputElement>("twClientSecret").placeholder = v.hasSecret ? "saved — leave empty to keep" : "client secret";
-    twFormFilled = true;
-  }
-  $("twAppHint").textContent = v.clientId && v.hasSecret ? "" : "Enter Client ID and Client Secret, then connect accounts.";
-  const ready = !!v.clientId && v.hasSecret;
-  $("twAccounts").replaceChildren(...TW_ROLES.map(([role, title]) => {
-    const acc = v.accounts.find((a) => a.role === role);
-    const info = el("span", {
-      class: acc?.error ? "hint warn" : "hint",
-      textContent: acc ? `${title}: ${acc.login}${acc.error ? ` — ${acc.error}` : ""}` : `${title}: not connected`,
-    });
-    // Два аккаунта в одном браузере не подключить (Twitch помнит вход), поэтому вместо перехода — ссылка в буфер обмена:
-    // её можно открыть в другом браузере/профиле/приватном окне, где выполнен вход нужным аккаунтом.
-    const connect = el("button", {
-      type: "button", class: "iconbtn", disabled: !ready,
-      title: acc ? `Copy a link to reconnect the ${title.toLowerCase()} account` : `Copy the authorization link for the ${title.toLowerCase()} account`,
-    });
-    connect.setAttribute("aria-label", connect.title);
-    connect.innerHTML = COPY_ICON; // статическая разметка без пользовательских данных
-    connect.addEventListener("click", async () => {
-      try {
-        const r = await api<{ url: string }>(`/api/twitch/connect/${role}`, "POST", {});
-        const ok = await copyText(r.url);
-        toast(ok
-          ? `${title} link copied. Open it in a browser where the ${title.toLowerCase()} Twitch account is signed in (a private window works). It is valid for 10 minutes.`
-          : "Could not access the clipboard — copy the link from the prompt");
-        if (!ok) prompt("Authorization link (Ctrl+C):", r.url);
-      } catch (e) { fail(e); }
-    });
-    const btns = el("span", { class: "row" }, connect);
-    if (acc) {
-      const off = el("button", { type: "button", textContent: "Disconnect" });
-      off.addEventListener("click", async () => {
-        if (!confirm(`Disconnect Twitch account “${acc.login}”?`)) return;
-        try { await api(`/api/twitch/accounts/${role}`, "DELETE"); loadTwitch(); } catch (e) { fail(e); }
-      });
-      btns.append(off);
-    }
-    return el("div", { class: "row", style: "justify-content:space-between" }, info, btns);
-  }));
-}
-
-$("twSaveApp").addEventListener("click", async () => {
-  try {
-    await api("/api/twitch/app", "PUT", {
-      clientId: $<HTMLInputElement>("twClientId").value,
-      clientSecret: $<HTMLInputElement>("twClientSecret").value,
-    });
-    $<HTMLInputElement>("twClientSecret").value = "";
-    twFormFilled = false;
-    await loadTwitch();
-    toast("Twitch application saved");
-  } catch (e) { fail(e); }
-});
-
-interface DevicesView {
-  code: string;
-  expiresIn: number;
-  devices: { id: string; name: string; createdAt: string; lastSeen: string; lastIp: string }[];
-  remoteEnabled: boolean;
-  pairUrl: string;
-}
-
-// Раздел «Remote devices» (внутри группы «Listen on»): одноразовый код существует только при Listen on = All network interfaces
-// и по умолчанию скрыт — показывается по клику. Доступен только с этого компьютера (с других сервер отвечает 403).
-let devView: DevicesView | null = null;
-let codeShown = false;
-let codeTimer: ReturnType<typeof setTimeout> | undefined;
-const CODE_MASK = "••••••";
-
-function paintCode() {
-  const btn = $<HTMLButtonElement>("devCode");
-  btn.textContent = codeShown && devView?.code ? devView.code : CODE_MASK;
-  btn.classList.toggle("masked", !codeShown);
-  btn.setAttribute("aria-pressed", String(codeShown));
-}
-
-function setCodeShown(show: boolean) {
-  codeShown = show;
-  clearTimeout(codeTimer);
-  if (show) codeTimer = setTimeout(() => setCodeShown(false), 20000); // сам прячется — не остаётся на экране при демонстрации
-  paintCode();
-}
-$("devCode").addEventListener("click", () => setCodeShown(!codeShown));
-
-function paintDevHint() {
-  const v = devView;
-  if (!v) return;
-  const wantsRemote = $<HTMLSelectElement>("cfgHost").value !== "127.0.0.1";
-  $("devHint").textContent = v.remoteEnabled
-    ? (wantsRemote ? "Devices that enter the code can open the editor and overlay from your network."
-      : "You switched “Listen on” back to this computer only: pairing will stop after Save and restart. Already paired devices stay in the list until revoked.")
-    : (wantsRemote ? "Pairing will be available after you Save and restart the application."
-      : "Pairing is off while the server listens on this computer only. To connect another device (tablet, phone), set “Listen on” to “All network interfaces”, Save and restart.");
-}
-
-async function loadDevices() {
-  const box = $("devBox");
-  let v: DevicesView;
-  try { v = await api<DevicesView>("/api/devices"); } catch { box.hidden = true; return; }
-  devView = v;
-  box.hidden = false;
-  $("devPair").hidden = !v.remoteEnabled;
-  if (!v.remoteEnabled && codeShown) setCodeShown(false);
-  paintCode();
-  paintDevHint();
-  $("devLeft").textContent = v.remoteEnabled ? `changes in ${v.expiresIn}s` : "";
-  $("devUrl").textContent = v.pairUrl.replace("127.0.0.1", location.hostname === "127.0.0.1" || location.hostname === "localhost" ? "<this-computer-ip>" : location.hostname);
-  const list = $("devList");
-  list.replaceChildren(...v.devices.map((d) => {
-    const seen = new Date(d.lastSeen).toLocaleString();
-    const rm = el("button", { type: "button", textContent: "Revoke" });
-    rm.addEventListener("click", async () => {
-      if (!confirm(`Revoke access for “${d.name}”?`)) return;
-      try { await api(`/api/devices/${encodeURIComponent(d.id)}`, "DELETE"); loadDevices(); } catch (e) { fail(e); }
-    });
-    return el("div", { class: "row", style: "justify-content:space-between" },
-      el("span", { class: "hint", textContent: `${d.name} · ${d.lastIp} · seen ${seen}` }), rm);
-  }));
-}
-
-// Пока открыт диалог — обновляем статус, чтобы было видно результат Reconnect.
-settingsDialog.addEventListener("close", () => { clearInterval(statusTimer); setCodeShown(false); });
-
-$("cfgReconnectBtn").addEventListener("click", async () => {
-  try {
-    await api("/api/obs/reconnect", "POST", {});
-    $("cfgWsStatus").textContent = "obs-websocket: connecting…";
-    setTimeout(refreshStatus, 1500);
-  } catch (e) { fail(e); }
-});
-
-// Клик по значку OBS в шапке открывает настройки с подробностями.
-$("obsBadge").addEventListener("click", () => $("settingsBtn").click());
-
-function updateHostWarn() {
-  $("cfgHostWarn").hidden = $<HTMLSelectElement>("cfgHost").value === "127.0.0.1";
-  paintDevHint();
-}
-$("cfgHost").addEventListener("change", updateHostWarn);
-$("cfgObsEnabled").addEventListener("change", () => {
-  $("cfgObsWsBox").hidden = !$<HTMLInputElement>("cfgObsEnabled").checked;
-});
-
-$("settingsBtn").addEventListener("click", async () => {
-  try {
-    const c = await api<ConfigView>("/api/config");
-    $<HTMLInputElement>("cfgDebugProxy").checked = c.debugProxy;
-    $<HTMLInputElement>("cfgObsEnabled").checked = c.obsEnabled;
-    $("cfgObsWsBox").hidden = !c.obsEnabled;
-    $<HTMLInputElement>("cfgObsUrl").value = c.obsUrl;
-    const pw = $<HTMLInputElement>("cfgObsPass");
-    pw.value = "";
-    pw.placeholder = c.hasObsPassword ? "saved — leave empty to keep" : "no password";
-    $<HTMLInputElement>("cfgObsClear").checked = false;
-    $("cfgObsClearRow").hidden = !c.hasObsPassword;
-
-    const hosts = [
-      ["127.0.0.1", "This computer only (recommended)"],
-      ["0.0.0.0", "All network interfaces"],
-    ];
-    if (!hosts.some(([v]) => v === c.host)) hosts.push([c.host, c.host]);
-    const sel = $<HTMLSelectElement>("cfgHost");
-    sel.replaceChildren(...hosts.map(([v, t]) => el("option", { value: v, textContent: t, selected: v === c.host })));
-    updateHostWarn();
-    $<HTMLInputElement>("cfgPort").value = String(c.port);
-    showStatus(c);
-    loadAppInfo();
-    loadImportScenes();
-    loadDevices();
-    twFormFilled = false;
-    loadTwitch();
-    settingsDialog.showModal();
-    clearInterval(statusTimer);
-    statusTimer = setInterval(refreshStatus, 2000) as unknown as number;
-  } catch (e) { fail(e); }
-});
-
-$("cfgSaveBtn").addEventListener("click", async () => {
-  try {
-    const c = await api<ConfigView>("/api/config", "PUT", {
-      host: $<HTMLSelectElement>("cfgHost").value,
-      port: Number($<HTMLInputElement>("cfgPort").value),
-      debugProxy: $<HTMLInputElement>("cfgDebugProxy").checked,
-      obs: {
-        enabled: $<HTMLInputElement>("cfgObsEnabled").checked,
-        url: $<HTMLInputElement>("cfgObsUrl").value.trim(),
-        password: $<HTMLInputElement>("cfgObsPass").value,
-        clearPassword: $<HTMLInputElement>("cfgObsClear").checked,
-      },
-    });
-    settingsDialog.close();
-    toast(c.restartRequired ? "Saved. Restart the server to apply host/port" : "Settings saved");
-  } catch (e) { fail(e); }
-});
+const settings = mountConfig(
+  {
+    openBtn: $("settingsBtn"), obsBadge: $("obsBadge"), dialog: $<HTMLDialogElement>("settingsDialog"), status: $("cfgStatus"),
+    wsStatus: $("cfgWsStatus"), overlayUrl: $("cfgOverlayUrl"), debugProxy: $<HTMLInputElement>("cfgDebugProxy"),
+    obsEnabled: $<HTMLInputElement>("cfgObsEnabled"), obsWsBox: $("cfgObsWsBox"), obsUrl: $<HTMLInputElement>("cfgObsUrl"),
+    obsPass: $<HTMLInputElement>("cfgObsPass"), obsClear: $<HTMLInputElement>("cfgObsClear"), obsClearRow: $("cfgObsClearRow"),
+    host: $<HTMLSelectElement>("cfgHost"), hostWarn: $("cfgHostWarn"), port: $<HTMLInputElement>("cfgPort"),
+    saveBtn: $("cfgSaveBtn"), reconnectBtn: $("cfgReconnectBtn"),
+  },
+  createConfigModel(api),
+  {
+    ui: { toast, fail },
+    onOpen() {
+      void appModel.load();
+      loadImportScenes();
+      void devicesModel.load();
+      twitchView.resetForm();
+      void twitchModel.load();
+    },
+    onTick() { void devicesModel.load(); void twitchModel.load(); },
+    onClose() { devicesView.hideCode(); },
+    onHostChange() { devicesView.repaintHint(); },
+    onObsInfo: applyObsInfo,
+  },
+);
 
 // ---------- import scene from OBS ----------
 
-interface ImportReport {
-  layout: Layout;
-  newSources: Source[];
-  reusedSources: number;
-  proxied: number;
-  skipped: { name: string; reason: string }[];
-  warnings: string[];
-  bound: boolean;
-}
-
-async function loadImportScenes() {
-  const sel = $<HTMLSelectElement>("impScene");
-  const btn = $<HTMLButtonElement>("impBtn");
-  try {
-    const r = await api<{ scenes: string[] }>("/api/obs/scenes");
-    sel.replaceChildren(...r.scenes.map((s) => el("option", { value: s, textContent: s })));
-    sel.disabled = btn.disabled = r.scenes.length === 0;
-    $("impHint").textContent = r.scenes.length
-      ? "Browser Sources of the scene (including ones inside groups) become layers with the same size and position. External sites are added with proxy."
-      : "No scenes yet — enable obs-websocket above.";
-  } catch (e) {
-    sel.disabled = btn.disabled = true;
-    $("impHint").textContent = String(e);
-  }
-}
-
-$("impBtn").addEventListener("click", async () => {
-  const sceneName = $<HTMLSelectElement>("impScene").value;
-  if (!sceneName) return;
-  const btn = $<HTMLButtonElement>("impBtn");
-  btn.disabled = true;
-  try {
-    const r = await api<ImportReport>("/api/obs/import", "POST", { scene: sceneName, bind: $<HTMLInputElement>("impBind").checked });
-    await Promise.all([loadSources(), loadLayouts()]);
-    const lines = [
-      `Imported “${r.layout.name}”: ${r.layout.objects.length} layer(s), ${r.newSources.length} new source(s), ${r.proxied} via proxy` +
-        (r.bound ? ", bound to the scene" : ""),
-      ...r.skipped.map((x) => `skipped ${x.name}: ${x.reason}`),
-      ...r.warnings.map((x) => `warning: ${x}`),
-    ];
-    $("impResult").textContent = lines.join("\n");
-    settingsDialog.close();
-    await openLayout(r.layout.id, true);
-    toast(lines[0]);
-  } catch (e) { fail(e); } finally { btn.disabled = false; }
-});
+const obsImport = mountObsImport(
+  { scene: $<HTMLSelectElement>("impScene"), btn: $<HTMLButtonElement>("impBtn"), hint: $("impHint"), bind: $<HTMLInputElement>("impBind"), result: $("impResult") },
+  createObsImportModel(api),
+  {
+    ui: { toast, fail },
+    async afterImport(r) {
+      await Promise.all([loadSources(), loadLayouts()]);
+      settings.closeDialog();
+      await openLayout(r.layout.id, true);
+    },
+  },
+);
+const loadImportScenes = obsImport.load;
 
 // ---------- save ----------
 
 async function save() {
   if (!layout) return;
   try {
-    flushHistory(); // отправляем и запоминаем ровно то же состояние
-    await api(`/api/layouts/${encodeURIComponent(layout.id)}`, "PUT", layout);
-    editLog?.markSaved();
-    dirty = false;
-    syncHistoryButtons();
-    await loadLayouts();
-    renderLayouts();
-    updateBadges();
+    await editor.save();
     toast("Saved");
   } catch (e) { fail(e); }
 }
@@ -1901,10 +1281,7 @@ function setObsStatus(obs: ObsInfo) {
 /** Статус + список сцен для подсказок в поле «OBS scene» (без пересоздания панели свойств). */
 function applyObsInfo(obs: ObsInfo) {
   setObsStatus(obs);
-  if (JSON.stringify(obsScenes) !== JSON.stringify(obs.scenes)) {
-    obsScenes = obs.scenes;
-    renderSceneBox();
-  }
+  editor.setObsScenes(obs.scenes); // при изменении модель сообщит «meta» → перерисуется блок привязки сцен
 }
 
 function connectWs() {
@@ -1916,34 +1293,26 @@ function connectWs() {
     try {
       switch (msg.type) {
         case "hello":
-          activeLayoutId = msg.layoutId;
+          editor.setActive(msg.layoutId);
           applyObsInfo(msg.obs);
-          renderLayouts();
           break;
         case "obs:status":
           applyObsInfo(msg.obs);
           break;
         case "scene:changed":
-          if (msg.layoutId) activeLayoutId = msg.layoutId;
+          editor.setActive(msg.layoutId ?? null);
           if (msg.scene) $("sceneBadge").textContent = `scene: ${msg.scene}`;
-          renderLayouts();
           break;
         case "layouts:changed":
           await loadLayouts();
-          renderLayouts();
           break;
         case "sources:changed":
           await loadSources();
-          renderLayers();
-          renderProps();
           break;
         case "layout:updated":
           // Чужое изменение подтягиваем, только если у нас нет несохранённых правок.
           if (layout && msg.layoutId === layout.id && !dirty) {
-            layout = await api<Layout>(`/api/layouts/${encodeURIComponent(layout.id)}`);
-            if (selectedId && !selected()) selectedId = null;
-            adoptServerState();
-            refreshAll();
+            await editor.reloadCurrent();
           }
           break;
       }
@@ -1952,15 +1321,34 @@ function connectWs() {
   ws.onclose = () => setTimeout(connectWs, 1500);
 }
 
+// ---------- представление: перерисовка по виду изменения модели ----------
+
+editor.subscribe((st) => {
+  $("undoBtn").toggleAttribute("disabled", !st.canUndo);
+  $("redoBtn").toggleAttribute("disabled", !st.canRedo);
+  switch (st.change) {
+    case "reset": refreshAll(); break;
+    case "structure":
+      refreshCanvas(); renderLayers(); renderProps(); updateBadges(); break;
+    case "layers":
+      renderOverlay(); renderLayers(); updateBadges(); break;
+    case "selection":
+      renderOverlay(); renderLayers(); renderProps(); break;
+    case "geometry": updateBadges(); break;
+    case "meta": renderLayouts(); renderSceneBox(); updateBadges(); break;
+    case "data": renderLayers(); renderProps(); break;
+  }
+});
+
 init().catch(fail);
 
 // Проверка обновлений на сервере идёт чуть позже старта — один раз перепроверяем, чтобы подсказка появилась без захода в настройки.
-setTimeout(() => void loadAppInfo(), 15000);
+setTimeout(() => void appModel.load(), 15000);
 
 // ---------- notification center ----------
 
 mountNotifications(
   { bell: $("bellBtn"), count: $("bellCount"), panel: $("notifPanel"), dialog: $<HTMLDialogElement>("notifDialog"), detail: $("notifDetail"), actions: $("notifActions") },
   createNotificationsModel(api),
-  { ui: { toast, fail }, openStore: () => { storeDialog.showModal(); void loadStore(); } },
+  { ui: { toast, fail }, openStore: pluginStore.open },
 );
