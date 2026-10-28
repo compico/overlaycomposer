@@ -7,6 +7,8 @@ import { mountLayouts } from "./features/layouts/view.ts";
 import { mountKeyboard } from "./features/keyboard/view.ts";
 import { createLiveHandler } from "./features/live/model.ts";
 import { connectLive, type LiveConnection } from "./features/live/view.ts";
+import { createCopyModel } from "./features/copy/model.ts";
+import { mountCopy } from "./features/copy/view.ts";
 import { createEditorModel } from "./features/editor/model.ts";
 import { $, el } from "./lib/dom.ts";
 import { type Api, httpApi } from "./lib/api.ts";
@@ -55,7 +57,6 @@ editor.subscribe((st) => {
 let k = 1; // экранных px на 1 px canvas
 let propSync: (() => void)[] = [];
 /** Буфер Ctrl+C: снимок слоя и layout, из которого он скопирован (живёт, пока открыта страница). */
-let clip: { obj: LayoutObject; fromLayoutId: string } | null = null;
 
 // Предпросмотр плагинов в редакторе: чат читается, но писать (chat.say) нельзя — ответы шлёт только оверлей.
 const pluginHost = new PluginHost({ send: (m) => wsSend(m), canSend: false });
@@ -487,80 +488,15 @@ const renderLayersPanel = mountLayers($("layerList"), {
 const renderLayers = () => renderLayersPanel(editor.get());
 const removeObject = (id: string) => editor.removeObject(id);
 
-// ---------- copy between layouts ----------
+// ---------- copy between layouts (логика — features/copy) ----------
 
-/**
- * Гарантирует у слоя instanceId (нужен для связи копий между layout). Если он был назначен сейчас, а несохранённых правок
- * не было — сразу сохраняем layout, чтобы связь работала; иначе предупреждаем, что layout надо сохранить.
- */
-async function ensureInstanceId(o: LayoutObject) {
-  if (o.instanceId) return;
-  const wasDirty = dirty;
-  o.instanceId = uid("inst");
-  markDirty();
-  if (wasDirty) toast("Save this layout (Ctrl+S) so the copy stays linked");
-  else await save();
-}
-
-/** Копия слоя для layout `target`. linked: тот же instanceId (если в target его ещё нет) — виджет не перезагружается при смене сцены. */
-function cloneObject(o: LayoutObject, target: Layout, opts: { linked: boolean; offset?: number; copySuffix?: boolean }): LayoutObject {
-  const c = JSON.parse(JSON.stringify(o)) as LayoutObject;
-  c.id = uid("obj");
-  const canLink = opts.linked && !!o.instanceId && !target.objects.some((x) => x.instanceId === o.instanceId);
-  c.instanceId = canLink ? o.instanceId : uid("inst");
-  c.zIndex = Math.max(0, ...target.objects.map((x) => x.zIndex)) + 1;
-  c.transform.x += opts.offset ?? 0;
-  c.transform.y += opts.offset ?? 0;
-  if (opts.copySuffix) c.name = `${objName(o)} (copy)`;
-  return c;
-}
-
-const copyDialog = $<HTMLDialogElement>("copyDialog");
-
-function openCopyDialog() {
-  const o = selected();
-  if (!layout || !o) return toast("Select a layer first");
-  const others = layouts.filter((l) => l.id !== layout!.id);
-  if (others.length === 0) return toast("Create another layout first");
-  $("copyWhat").textContent = `Layer “${objName(o)}” from “${layout.name}”`;
-  $<HTMLSelectElement>("copyTarget").replaceChildren(...others.map((l) => el("option", { value: l.id, textContent: l.name })));
-  copyDialog.showModal();
-}
-
-$("copyObjBtn").addEventListener("click", openCopyDialog);
-
-$("copyGoBtn").addEventListener("click", async () => {
-  const o = selected();
-  const targetId = $<HTMLSelectElement>("copyTarget").value;
-  if (!layout || !o || !targetId) return;
-  const linked = $<HTMLInputElement>("copyLinked").checked;
-  copyDialog.close();
-  try {
-    if (linked) await ensureInstanceId(o);
-    const target = await api<Layout>(`/api/layouts/${encodeURIComponent(targetId)}`);
-    target.objects.push(cloneObject(o, target, { linked }));
-    await api(`/api/layouts/${encodeURIComponent(targetId)}`, "PUT", target);
-    await loadLayouts();
-    drawLayouts();
-    toast(`Copied to “${target.name}”`);
-  } catch (e) { fail(e); }
-});
-
-async function copySelected() {
-  const o = selected();
-  if (!layout || !o) return;
-  await ensureInstanceId(o);
-  clip = { obj: JSON.parse(JSON.stringify(o)) as LayoutObject, fromLayoutId: layout.id };
-  toast(`Copied “${objName(o)}” — Ctrl+V pastes it into the open layout`);
-}
-
-function pasteClip() {
-  if (!layout || !clip) return;
-  const same = clip.fromLayoutId === layout.id;
-  // В тот же layout — независимая копия со сдвигом; в другой — связанная (тот же виджет).
-  const c = cloneObject(clip.obj, layout, { linked: !same, offset: same ? 20 : 0, copySuffix: same });
-  editor.insertObject(c);
-}
+const copy = createCopyModel({ api, editor: { ...editor, loadLayouts: loadLayouts }, toast });
+mountCopy(
+  { dialog: $<HTMLDialogElement>("copyDialog"), what: $("copyWhat"), target: $<HTMLSelectElement>("copyTarget"), linked: $<HTMLInputElement>("copyLinked"), openBtn: $("copyObjBtn"), goBtn: $("copyGoBtn") },
+  copy, { toast, fail },
+);
+const copySelected = () => copy.copySelected();
+const pasteClip = () => copy.paste();
 
 // ---------- add source ----------
 
@@ -1129,7 +1065,7 @@ $("saveBtn").addEventListener("click", save);
 // ---------- keyboard (сопоставление клавиш — features/keyboard; здесь — исполнение команд) ----------
 
 mountKeyboard({
-  context: () => ({ hasSelection: !!selected(), selectionLocked: !!selected()?.locked, hasClip: !!clip }),
+  context: () => ({ hasSelection: !!selected(), selectionLocked: !!selected()?.locked, hasClip: copy.hasClip() }),
   run(cmd) {
     const o = selected();
     switch (cmd.type) {
