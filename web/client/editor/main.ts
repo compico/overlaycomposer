@@ -9,8 +9,14 @@ import { createLiveHandler } from "./features/live/model.ts";
 import { connectLive, type LiveConnection } from "./features/live/view.ts";
 import { createCopyModel } from "./features/copy/model.ts";
 import { mountCopy } from "./features/copy/view.ts";
-import { createAddSourceModel, maskUrl, MIN_SIZE } from "./features/add-source/model.ts";
+import { createAddSourceModel } from "./features/add-source/model.ts";
 import { mountAddSource } from "./features/add-source/view.ts";
+import { createPluginSettingsModel } from "./features/plugin-settings/model.ts";
+import { mountPluginSettings } from "./features/plugin-settings/view.ts";
+import { createPropertiesModel, MIN_SIZE, setCrop } from "./features/properties/model.ts";
+import { mountProperties } from "./features/properties/view.ts";
+import { createViewPrefsModel } from "./features/view-prefs/model.ts";
+import { mountViewPrefs } from "./features/view-prefs/view.ts";
 import { createEditorModel } from "./features/editor/model.ts";
 import { $, el } from "./lib/dom.ts";
 import { type Api, httpApi } from "./lib/api.ts";
@@ -56,7 +62,6 @@ editor.subscribe((st) => {
   ({ layouts, sources, plugins, layout, selectedId, dirty, obsScenes, defaultLayoutId, activeLayoutId } = st);
 });
 let k = 1; // экранных px на 1 px canvas
-let propSync: (() => void)[] = [];
 /** Буфер Ctrl+C: снимок слоя и layout, из которого он скопирован (живёт, пока открыта страница). */
 
 // Предпросмотр плагинов в редакторе: чат читается, но писать (chat.say) нельзя — ответы шлёт только оверлей.
@@ -92,26 +97,19 @@ const markDirty = () => editor.markDirty();
 
 // ---------- layout mode and snapping (настройки помним между запусками) ----------
 
-const pref = {
-  get(key: string, def: boolean): boolean {
-    try { const v = localStorage.getItem("oc." + key); return v === null ? def : v === "1"; } catch { return def; }
-  },
-  set(key: string, v: boolean) { try { localStorage.setItem("oc." + key, v ? "1" : "0"); } catch { /* хранилище недоступно */ } },
+const prefsStorage = {
+  get: (k: string) => localStorage.getItem(k),
+  set: (k: string, v: string) => localStorage.setItem(k, v),
 };
-let composeMode = pref.get("compose", false);
-let snapOn = pref.get("snap", true);
+const viewPrefs = createViewPrefsModel(prefsStorage);
 const SNAP_PX = 8; // порог прилипания в экранных пикселях
-
-function syncToggles() {
-  $("canvasFrame").classList.toggle("compose", composeMode);
-  $("composeBtn").setAttribute("aria-pressed", String(composeMode));
-  $("snapBtn").setAttribute("aria-pressed", String(snapOn));
-}
-function toggleCompose() { composeMode = !composeMode; pref.set("compose", composeMode); syncToggles(); renderOverlay(); }
-function toggleSnap() { snapOn = !snapOn; pref.set("snap", snapOn); syncToggles(); toast(snapOn ? "Snapping on" : "Snapping off"); }
-$("composeBtn").addEventListener("click", toggleCompose);
-$("snapBtn").addEventListener("click", toggleSnap);
-syncToggles();
+const toggleCompose = () => viewPrefs.toggleCompose();
+// вызывается после объявления renderOverlay и toast (function declarations поднимаются)
+mountViewPrefs(
+  { frame: $("canvasFrame"), composeBtn: $("composeBtn"), snapBtn: $("snapBtn") },
+  viewPrefs,
+  { composeChanged: () => renderOverlay(), toast },
+);
 
 /** Рамки других видимых виджетов — цели прилипания. */
 function snapTargets(except: LayoutObject): Rect[] {
@@ -128,7 +126,7 @@ function drawGuides(guides: Guide[]) {
   }));
 }
 
-const snapActive = (e: PointerEvent) => snapOn && !e.ctrlKey && !e.metaKey; // Ctrl на время жеста — без прилипания
+const snapActive = (e: PointerEvent) => viewPrefs.get().snap && !e.ctrlKey && !e.metaKey; // Ctrl на время жеста — без прилипания
 
 // ---------- history of edits (Ctrl+Z / Ctrl+Y): логика — в editor model ----------
 
@@ -205,7 +203,7 @@ function renderOverlay() {
     box.style.pointerEvents = "auto";
     box.title = objName(o);
     positionBox(box, o);
-    if (composeMode) box.append(el("span", { class: "tag" }, objName(o)));
+    if (viewPrefs.get().compose) box.append(el("span", { class: "tag" }, objName(o)));
 
     // Выбранный (и не заблокированный) объект рисуем поверх всех рамок: клик внутри него двигает именно его,
     // а не тот, что лежит выше. Нижний объект выбирается кликом вне выбранного, из панели Layers или Alt+клик.
@@ -311,7 +309,7 @@ function touch(o: LayoutObject) {
   scene.setLayout(layout!);
   const box = $("overlayLayer").querySelector<HTMLElement>(`[data-id="${o.id}"]`);
   if (box) positionBox(box, o);
-  propSync.forEach((f) => f());
+  props.sync();
 }
 
 function track(ev: PointerEvent, onMove: (dx: number, dy: number, e: PointerEvent) => void) {
@@ -373,37 +371,6 @@ function startResize(ev: PointerEvent, o: LayoutObject, dirx: number, diry: numb
     t.y = Math.round(cy - v0.oy - t.height / 2);
     touch(o);
   });
-}
-
-type CropSide = "cropLeft" | "cropTop" | "cropRight" | "cropBottom";
-
-/** Задать одну сторону обрезки с ограничениями (≥ 0, остаётся видимая часть) и сохранением положения содержимого. */
-function setCrop(t: Transform, side: CropSide, value: number, keep = contentCenter(t)) {
-  const other = side === "cropLeft" ? t.cropRight : side === "cropRight" ? t.cropLeft : side === "cropTop" ? t.cropBottom : t.cropTop;
-  const total = side === "cropLeft" || side === "cropRight" ? t.width : t.height;
-  const max = Math.max(0, total - (other ?? 0) - MIN_SIZE);
-  t[side] = Math.round(Math.min(max, Math.max(0, value)));
-  placeByContentCenter(t, keep);
-}
-
-function cropField(label: string, t: Transform, side: CropSide): HTMLLabelElement {
-  const input = el("input", { type: "number" });
-  input.min = "0";
-  const sync = () => {
-    if (document.activeElement !== input) input.value = String(t[side] ?? 0);
-  };
-  sync();
-  propSync.push(sync);
-  input.addEventListener("input", () => {
-    const v = parseFloat(input.value);
-    if (Number.isNaN(v)) return;
-    setCrop(t, side, v);
-    markDirty();
-    scene.setLayout(layout!);
-    renderOverlay();
-    propSync.forEach((f) => f());
-  });
-  return el("label", {}, label, input);
 }
 
 /**
@@ -552,316 +519,41 @@ const pluginStore = mountStore(
   },
 );
 
-// ---------- properties panel ----------
+// ---------- properties panel (features/properties) и форма настроек плагина (features/plugin-settings) ----------
 
-function numField(label: string, get: () => number, set: (v: number) => void, step = 1): HTMLLabelElement {
-  const input = el("input", { type: "number" });
-  input.step = String(step);
-  const sync = () => {
-    if (document.activeElement !== input) input.value = String(Math.round(get() * 100) / 100);
-  };
-  sync();
-  propSync.push(sync);
-  input.addEventListener("input", () => {
-    const v = parseFloat(input.value);
-    if (Number.isNaN(v)) return;
-    set(v);
+const pluginForm = mountPluginSettings(createPluginSettingsModel(api), {
+  fail,
+  rollback: () => renderProps(),
+  confirm: (t) => confirm(t),
+});
+
+const props = mountProperties($("props"), createPropertiesModel(api), {
+  state: () => editor.get(),
+  fieldEdited() {
     markDirty();
     scene.setLayout(layout!);
     renderOverlay();
-    propSync.forEach((f) => f());
-  });
-  return el("label", {}, label, input);
-}
-
-// ---------- plugin settings form ----------
-
-const COMMON_FONTS = ["Segoe UI", "Arial", "Verdana", "Tahoma", "Trebuchet MS", "Georgia", "Times New Roman", "Courier New", "Consolas",
-  "Impact", "Comic Sans MS", "Roboto", "Open Sans", "Montserrat", "Noto Sans", "system-ui"];
-{
-  const dl = el("datalist", { id: "fontList" }, ...COMMON_FONTS.map((f) => el("option", { value: f })));
-  document.body.append(dl);
-}
-
-type SettingValue = string | number | boolean;
-
-/** Форма настроек плагина-виджета по схеме из plugin.json. Каждое изменение сохраняется сразу (виджет перезагрузится с новыми query). */
-function pluginSettings(src: Source, m: PluginManifest): HTMLElement {
-  const root = el("div");
-  const save = async (key: string, v: SettingValue | undefined) => {
-    const next: Record<string, SettingValue> = { ...(src.data.settings ?? {}) };
-    if (v === undefined) delete next[key]; else next[key] = v;
-    try {
-      const r = await api<Source>(`/api/sources/${encodeURIComponent(src.id)}`, "PUT", { data: { settings: next } });
-      src.data.settings = r.data.settings ?? {};
-    } catch (e) { fail(e); renderProps(); }
-  };
-
-  if (m.permissions?.length) {
-    root.append(el("h4", { class: "group", textContent: "Permissions" }));
-    for (const perm of m.permissions) {
-      const chk = el("input", { type: "checkbox", checked: src.data.granted?.includes(perm) ?? false });
-      chk.addEventListener("change", async () => {
-        const set = new Set(src.data.granted ?? []);
-        if (chk.checked) set.add(perm); else set.delete(perm);
-        try {
-          const r = await api<Source>(`/api/sources/${encodeURIComponent(src.id)}`, "PUT", { data: { granted: [...set] } });
-          src.data.granted = r.data.granted ?? [];
-        } catch (e) { fail(e); renderProps(); }
-      });
-      root.append(el("label", { class: "chk" }, chk, ` ${PERM_TEXT[perm] ?? perm}`));
-    }
-    root.append(el("div", { class: "hint", textContent: "Changing permissions reloads the widget." }));
-    if (m.permissions.includes("storage")) root.append(pluginDataRow(m.id));
-  }
-
-  let group: string | undefined;
-  for (const s of m.settings ?? []) {
-    if (s.group !== group) {
-      group = s.group;
-      if (group) root.append(el("h4", { class: "group", textContent: group }));
-    }
-    root.append(settingControl(s, src.data.settings?.[s.key], save));
-  }
-  if (!m.settings?.length) root.append(el("div", { class: "empty", textContent: "This widget has no settings." }));
-  return root;
-}
-
-/** Сколько данных плагин хранит (oc.storage) и кнопка «стереть» — данные общие для всех виджетов этого плагина. */
-function pluginDataRow(pluginId: string): HTMLElement {
-  const info = el("span", { class: "hint", textContent: "Plugin data: …" });
-  const erase = el("button", { type: "button", textContent: "Erase data" });
-  const refresh = async () => {
-    try {
-      const st = await api<{ keys: number; bytes: number }>(`/api/plugins/${encodeURIComponent(pluginId)}/storage`);
-      info.textContent = `Plugin data: ${st.keys} keys, ${(st.bytes / 1024).toFixed(1)} KB`;
-      erase.toggleAttribute("disabled", st.keys === 0);
-    } catch { info.textContent = "Plugin data: unavailable"; }
-  };
-  erase.addEventListener("click", async () => {
-    if (!confirm("Erase all data stored by this plugin? This cannot be undone.")) return;
-    try { await api(`/api/plugins/${encodeURIComponent(pluginId)}/storage`, "DELETE"); await refresh(); } catch (e) { fail(e); }
-  });
-  refresh();
-  return el("div", { class: "row", style: "justify-content:space-between" }, info, erase);
-}
-
-function settingControl(s: PluginSetting, current: SettingValue | undefined, save: (key: string, v: SettingValue | undefined) => void): HTMLElement {
-  const val = current ?? s.default;
-  const line = el("div", { class: "line" });
-  let input: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
-
-  switch (s.type) {
-    case "bool": {
-      const chk = el("input", { type: "checkbox", checked: Boolean(val) });
-      chk.addEventListener("change", () => save(s.key, chk.checked));
-      input = chk;
-      break;
-    }
-    case "number":
-    case "range": {
-      const num = el("input", { type: s.type === "range" ? "range" : "number" });
-      if (s.min !== undefined) num.min = String(s.min);
-      if (s.max !== undefined) num.max = String(s.max);
-      num.step = String(s.step ?? 1);
-      num.value = String(val ?? s.min ?? 0);
-      const shown = el("span", { textContent: s.type === "range" ? String(num.value) : "" });
-      num.addEventListener("input", () => (shown.textContent = s.type === "range" ? num.value : ""));
-      num.addEventListener("change", () => {
-        const v = parseFloat(num.value);
-        if (!Number.isNaN(v)) save(s.key, v);
-      });
-      input = num;
-      if (s.type === "range") line.append(num, shown);
-      break;
-    }
-    case "color": {
-      const col = el("input", { type: "color", value: typeof val === "string" && /^#[0-9a-f]{6}$/i.test(val) ? val : "#000000" });
-      col.addEventListener("change", () => save(s.key, col.value));
-      input = col;
-      break;
-    }
-    case "select": {
-      const sel = el("select", {}, ...(s.options ?? []).map((o) => el("option", { value: o.value, textContent: o.label, selected: o.value === val })));
-      sel.addEventListener("change", () => save(s.key, sel.value));
-      input = sel;
-      break;
-    }
-    case "text": {
-      const ta = el("textarea", { value: String(val ?? ""), rows: 3 });
-      ta.addEventListener("change", () => save(s.key, ta.value));
-      input = ta;
-      break;
-    }
-    default: { // string, font
-      const txt = el("input", { type: "text", value: String(val ?? "") });
-      if (s.type === "font") txt.setAttribute("list", "fontList");
-      txt.addEventListener("change", () => save(s.key, txt.value));
-      input = txt;
-    }
-  }
-
-  const isBool = s.type === "bool";
-  if (!(s.type === "range")) line.append(input);
-  const wrap = el("div", { class: "setting" });
-  if (isBool) {
-    wrap.append(el("div", { class: "line" }, el("label", { class: "chk", style: "margin:0" }, input, s.label)));
-  } else {
-    wrap.append(el("span", { textContent: s.label }), line);
-  }
-  if (current !== undefined) { // значение отличается от умолчания → можно сбросить
-    const reset = el("button", { class: "ib", textContent: "↺", title: "Reset to default" });
-    reset.addEventListener("click", () => save(s.key, undefined));
-    (isBool ? wrap.firstElementChild! : line).append(reset);
-  }
-  if (s.help) wrap.append(el("div", { class: "hint", textContent: s.help }));
-  return wrap;
-}
-
-function renderProps() {
-  const root = $("props");
-  root.replaceChildren();
-  propSync = [];
-  if (!layout) return;
-
-  const o = selected();
-  if (o) {
-    const t = o.transform;
-    const src = sourceOf(o.sourceId);
-    root.append(el("h3", { textContent: "Source" }));
-    if (src?.type === "plugin") {
-      const name = el("input", { type: "text", value: src.name });
-      name.addEventListener("change", () => api(`/api/sources/${src.id}`, "PUT", { name: name.value }).catch(fail));
-      root.append(el("div", { class: "row" }, name));
-      const m = plugins.find((p) => p.id === src.data.plugin);
-      if (m) {
-        root.append(el("div", { class: "hint", textContent: `${m.name}${m.version ? ` ${m.version}` : ""}${m.builtin ? "" : " · custom plugin"}` }));
-        root.append(pluginSettings(src, m));
-      } else {
-        root.append(el("div", { class: "hint warn", textContent: `Plugin “${src.data.plugin}” is not installed — the widget will be empty. Put it back into the plugins folder.` }));
-      }
-    } else if (src) {
-      const name = el("input", { type: "text", value: src.name });
-      name.addEventListener("change", () => api(`/api/sources/${src.id}`, "PUT", { name: name.value }).catch(fail));
-      // В адресе виджета часто лежит токен: всё после «?»/«#» скрыто, поле открывается на редактирование двойным кликом,
-      // а скопировать адрес целиком можно кнопкой рядом.
-      let curUrl = src.data.url ?? "";
-      const url = el("input", { type: "text" });
-      const paintUrl = () => {
-        const masked = maskUrl(curUrl) !== curUrl;
-        url.value = masked ? maskUrl(curUrl) : curUrl;
-        url.readOnly = masked;
-        url.title = masked ? "Part of the address is hidden. Double-click to edit; the button copies the full address." : "";
-      };
-      paintUrl();
-      url.addEventListener("dblclick", () => {
-        if (!url.readOnly) return;
-        url.readOnly = false;
-        url.value = curUrl;
-        url.focus();
-      });
-      url.addEventListener("change", () => {
-        if (url.readOnly) return;
-        curUrl = url.value;
-        api(`/api/sources/${src.id}`, "PUT", { data: { url: curUrl } }).catch(fail);
-      });
-      url.addEventListener("blur", paintUrl);
-      const copyUrl = el("button", { type: "button", class: "iconbtn", title: "Copy the full address", ariaLabel: "Copy the full address" });
-      copyUrl.innerHTML = COPY_ICON; // статическая разметка без пользовательских данных
-      copyUrl.addEventListener("click", async () => {
-        toast((await copyText(curUrl)) ? "Address copied" : "Could not copy — select the address manually");
-      });
-      const proxyChk = el("input", { type: "checkbox", checked: !!src.data.proxy });
-      proxyChk.addEventListener("change", () =>
-        api(`/api/sources/${src.id}`, "PUT", { data: { proxy: proxyChk.checked } }).catch((e) => {
-          proxyChk.checked = !proxyChk.checked; // сервер отказал (например, относительный URL)
-          fail(e);
-        }));
-      root.append(
-        el("div", { class: "row" }, name),
-        el("div", { class: "row" }, url, copyUrl),
-        el("label", { class: "chk", title: "For sites that refuse to be embedded (X-Frame-Options)" }, proxyChk, "Load via server proxy"),
-      );
-    }
-
-    root.append(el("h3", { textContent: "Transform" }));
-    const g = el("div", { class: "grid2" });
-    g.append(
-      numField("X", () => t.x, (v) => (t.x = v)),
-      numField("Y", () => t.y, (v) => (t.y = v)),
-      numField("Width", () => t.width, (v) => (t.width = Math.max(1, v, (t.cropLeft ?? 0) + (t.cropRight ?? 0) + 1))),
-      numField("Height", () => t.height, (v) => (t.height = Math.max(1, v, (t.cropTop ?? 0) + (t.cropBottom ?? 0) + 1))),
-      numField("Rotation °", () => t.rotationZ, (v) => (t.rotationZ = v), 0.5),
-      numField("Opacity %", () => o.opacity * 100, (v) => (o.opacity = Math.min(1, Math.max(0, v / 100))), 5),
-      numField("Scale X", () => t.scaleX, (v) => (t.scaleX = v), 0.05),
-      numField("Scale Y", () => t.scaleY, (v) => (t.scaleY = v), 0.05),
-    );
-    root.append(g);
-
-    root.append(el("h3", { textContent: "Crop (px)" }));
-    const cropGrid = el("div", { class: "grid2" });
-    cropGrid.append(
-      cropField("Left", t, "cropLeft"), cropField("Right", t, "cropRight"),
-      cropField("Top", t, "cropTop"), cropField("Bottom", t, "cropBottom"),
-    );
-    const resetCrop = el("button", { textContent: "Reset crop" });
-    resetCrop.addEventListener("click", () => {
-      const f = contentCenter(t);
-      t.cropLeft = t.cropRight = t.cropTop = t.cropBottom = 0;
-      placeByContentCenter(t, f);
-      touch(o);
-      renderProps();
-    });
-    root.append(cropGrid, el("div", { class: "row" }, resetCrop), el("div", { class: "empty", textContent: "Alt+drag a handle crops, like in OBS." }));
-
-    const rm = el("button", { textContent: "Remove from layout" });
-    rm.addEventListener("click", () => removeObject(o.id));
-    const delSrc = el("button", { class: "danger", textContent: "Delete source" });
-    delSrc.addEventListener("click", async () => {
-      if (!src || !confirm(`Delete source "${src.name}" from ALL layouts?`)) return;
-      try {
-        await api(`/api/sources/${src.id}`, "DELETE");
-        // сервер вычистил объекты в сохранённых layout; убираем и из рабочей копии
-        await loadSources();
-        editor.dropSource(src.id);
-      } catch (e) { fail(e); }
-    });
-    root.append(el("div", { class: "row", style: "margin-top:10px" }, rm, delSrc));
-  }
-
-  // layout settings
-  root.append(el("h3", { textContent: "Layout" }));
-  const lname = el("input", { type: "text", value: layout.name });
-  lname.addEventListener("input", () => { layout!.name = lname.value; markDirty(); });
-  const isDefault = el("input", { type: "checkbox", checked: layout.id === defaultLayoutId });
-  isDefault.addEventListener("change", async () => {
-    try {
-      await api("/api/default-layout", "PUT", { layoutId: isDefault.checked ? layout!.id : null });
-      await loadLayouts();
-      drawLayouts();
-      toast(isDefault.checked ? "Default layout set" : "No default layout");
-    } catch (e) { isDefault.checked = !isDefault.checked; fail(e); }
-  });
-  const cw = el("input", { type: "number", value: String(layout.canvas.width) });
-  const ch = el("input", { type: "number", value: String(layout.canvas.height) });
-  const canvasChanged = () => {
-    const w = Math.max(16, Number(cw.value) || 1920);
-    const h = Math.max(16, Number(ch.value) || 1080);
-    layout!.canvas = { width: w, height: h };
-    markDirty();
-    refreshCanvas();
-  };
-  cw.addEventListener("input", canvasChanged);
-  ch.addEventListener("input", canvasChanged);
-  root.append(
-    el("label", {}, "Name", lname),
-    el("label", { class: "chk", style: "margin-top:6px" }, isDefault, " Default layout (for scenes without their own)"),
-    el("div", { id: "sceneBox", style: "margin-top:6px" }),
-    el("div", { class: "grid2", style: "margin-top:6px" }, el("label", {}, "Canvas W", cw), el("label", {}, "Canvas H", ch)),
-    el("div", { class: "empty", textContent: "Shift while resizing keeps aspect; Shift while rotating snaps to 15°. Arrows nudge (Shift = 10px)." }),
-  );
-  renderSceneBox();
-}
+  },
+  touched: (o) => touch(o),
+  layoutRenamed(name) { layout!.name = name; markDirty(); },
+  canvasChanged() { markDirty(); refreshCanvas(); },
+  removeObject: (id) => removeObject(id),
+  async sourceDeleted(id) {
+    // сервер вычистил объекты в сохранённых layout; убираем и из рабочей копии
+    await loadSources();
+    editor.dropSource(id);
+  },
+  async defaultChanged() {
+    await loadLayouts();
+    drawLayouts();
+  },
+  pluginForm,
+  renderSceneBox: () => renderSceneBox(),
+  toast,
+  fail,
+  confirm: (t) => confirm(t),
+});
+const renderProps = props.render;
 
 // ---------- привязка layout к сценам OBS ----------
 

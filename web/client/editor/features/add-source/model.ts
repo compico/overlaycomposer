@@ -3,8 +3,8 @@ import type { LayoutObject, PluginManifest, Source } from "../../../../shared/ty
 import { uid } from "../../../../shared/types.ts";
 import type { Api } from "../../lib/api.ts";
 import { PERM_TEXT } from "../../lib/permissions.ts";
+import { MIN_SIZE } from "../properties/model.ts";
 
-export const MIN_SIZE = 20;
 
 /** Всё после «?» (и «#») скрываем: в адресах виджетов часто лежат токены и секреты. */
 export function maskUrl(u: string): string {
