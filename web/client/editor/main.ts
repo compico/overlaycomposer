@@ -4,6 +4,9 @@ import { contentCenter, defaultTransform, placeByContentCenter, uid, visibleBox 
 import { OverlayScene } from "../shared/scene.ts";
 import { mountLayers } from "./features/layers/view.ts";
 import { mountLayouts } from "./features/layouts/view.ts";
+import { mountKeyboard } from "./features/keyboard/view.ts";
+import { createLiveHandler } from "./features/live/model.ts";
+import { connectLive, type LiveConnection } from "./features/live/view.ts";
 import { createEditorModel } from "./features/editor/model.ts";
 import { $, el } from "./lib/dom.ts";
 import { type Api, httpApi } from "./lib/api.ts";
@@ -1123,52 +1126,26 @@ async function save() {
 
 $("saveBtn").addEventListener("click", save);
 
-// ---------- keyboard ----------
+// ---------- keyboard (сопоставление клавиш — features/keyboard; здесь — исполнение команд) ----------
 
-addEventListener("keydown", (e) => {
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
-    e.preventDefault();
-    save();
-    return;
-  }
-  const tag = (e.target as HTMLElement).tagName;
-  // В полях ввода Ctrl+Z — родная отмена текста; везде остальное — отмена правок layout.
-  const typing = tag === "TEXTAREA" || tag === "SELECT" || (tag === "INPUT" && !["checkbox", "radio", "range", "button"].includes((e.target as HTMLInputElement).type));
-  if ((e.ctrlKey || e.metaKey) && !e.altKey && !typing) {
-    const key = e.key.toLowerCase();
-    if (key === "z" && !e.shiftKey) { e.preventDefault(); undo(); return; }
-    if ((key === "z" && e.shiftKey) || key === "y") { e.preventDefault(); redo(); return; }
-  }
-  if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
-  if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "c" && selected()) {
-    e.preventDefault();
-    copySelected().catch(fail);
-    return;
-  }
-  if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "v" && clip) {
-    e.preventDefault();
-    pasteClip();
-    return;
-  }
-  if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === "l") { e.preventDefault(); toggleCompose(); return; }
-  const o = selected();
-  if (!o) return;
-  if (e.key === "Escape") return select(null);
-  if (e.key === "Delete" || e.key === "Backspace") {
-    e.preventDefault();
-    return removeObject(o.id);
-  }
-  const step = e.shiftKey ? 10 : 1;
-  const moves: Record<string, [number, number]> = {
-    ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step],
-  };
-  const m = moves[e.key];
-  if (m && !o.locked) {
-    e.preventDefault();
-    o.transform.x += m[0];
-    o.transform.y += m[1];
-    touch(o);
-  }
+mountKeyboard({
+  context: () => ({ hasSelection: !!selected(), selectionLocked: !!selected()?.locked, hasClip: !!clip }),
+  run(cmd) {
+    const o = selected();
+    switch (cmd.type) {
+      case "save": void save(); break;
+      case "undo": undo(); break;
+      case "redo": redo(); break;
+      case "copy": copySelected().catch(fail); break;
+      case "paste": pasteClip(); break;
+      case "toggleCompose": toggleCompose(); break;
+      case "deselect": select(null); break;
+      case "delete": if (o) removeObject(o.id); break;
+      case "nudge":
+        if (o) { o.transform.x += cmd.dx; o.transform.y += cmd.dy; touch(o); }
+        break;
+    }
+  },
 });
 
 addEventListener("beforeunload", (e) => {
@@ -1182,11 +1159,9 @@ addEventListener("resize", () => {
 
 // ---------- websocket ----------
 
-let ws: WebSocket | null = null;
+let live: LiveConnection | null = null;
 
-function wsSend(msg: unknown) {
-  if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
-}
+function wsSend(msg: unknown) { live?.send(msg); }
 
 function setObsStatus(obs: ObsInfo) {
   const b = $("obsBadge");
@@ -1205,40 +1180,19 @@ function applyObsInfo(obs: ObsInfo) {
 }
 
 function connectWs() {
-  ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
-  ws.onopen = () => pluginHost.onConnected();
-  ws.onmessage = async (ev) => {
-    const msg = JSON.parse(ev.data) as ServerMessage;
-    if (pluginHost.onServerMessage(msg as unknown as { type: string })) return;
-    try {
-      switch (msg.type) {
-        case "hello":
-          editor.setActive(msg.layoutId);
-          applyObsInfo(msg.obs);
-          break;
-        case "obs:status":
-          applyObsInfo(msg.obs);
-          break;
-        case "scene:changed":
-          editor.setActive(msg.layoutId ?? null);
-          if (msg.scene) $("sceneBadge").textContent = `scene: ${msg.scene}`;
-          break;
-        case "layouts:changed":
-          await loadLayouts();
-          break;
-        case "sources:changed":
-          await loadSources();
-          break;
-        case "layout:updated":
-          // Чужое изменение подтягиваем, только если у нас нет несохранённых правок.
-          if (layout && msg.layoutId === layout.id && !dirty) {
-            await editor.reloadCurrent();
-          }
-          break;
-      }
-    } catch (e) { console.warn(e); }
-  };
-  ws.onclose = () => setTimeout(connectWs, 1500);
+  const handle = createLiveHandler({
+    setActive: (id) => editor.setActive(id),
+    obs: applyObsInfo,
+    scene: (name) => { $("sceneBadge").textContent = `scene: ${name}`; },
+    loadLayouts, loadSources,
+    reloadCurrent: () => editor.reloadCurrent(),
+    current: () => (layout ? { id: layout.id, dirty } : null),
+  });
+  live = connectLive({
+    intercept: (m) => pluginHost.onServerMessage(m as unknown as { type: string }),
+    handle,
+    onOpen: () => pluginHost.onConnected(),
+  });
 }
 
 // ---------- представление: перерисовка по виду изменения модели ----------
