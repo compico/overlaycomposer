@@ -10,6 +10,15 @@ import { mountNotifications } from "./features/notifications/view.ts";
 import { createStoreModel } from "./features/store/model.ts";
 import { mountStore } from "./features/store/view.ts";
 import { PERM_TEXT } from "./lib/permissions.ts";
+import { copyText, COPY_ICON } from "./lib/clipboard.ts";
+import { createAppModel } from "./features/app/model.ts";
+import { mountApp } from "./features/app/view.ts";
+import { createConfigModel } from "./features/config/model.ts";
+import { mountConfig } from "./features/config/view.ts";
+import { createTwitchModel } from "./features/twitch/model.ts";
+import { mountTwitch } from "./features/twitch/view.ts";
+import { createDevicesModel } from "./features/devices/model.ts";
+import { mountDevices } from "./features/devices/view.ts";
 import { boundsOf, snapMove, snapResize, type Guide, type Rect } from "../../shared/snap.ts";
 
 
@@ -1314,337 +1323,63 @@ function renderSceneBox() {
   );
 }
 
-// ---------- settings (config.json) ----------
+// ---------- settings (config.json): приложение, сервер/OBS, Twitch, устройства ----------
 
-interface AppView {
-  compiled: boolean;
-  os: string;
-  configFile: string;
-  dataDir: string;
-  logFile: string;
-  autostart: boolean | null;
-  tray: boolean;
-  trayAvailable: boolean;
-  version?: string;
-  update?: { latest: string; url: string; notes: string; available: boolean } | null;
-}
+const appModel = createAppModel(api);
+mountApp(
+  {
+    version: $("cfgVersion"), paths: $("cfgPaths"), autostart: $<HTMLInputElement>("cfgAutostart"), autostartHint: $("cfgAutostartHint"),
+    trayHint: $("cfgTrayHint"), openData: $("cfgOpenData"), openLogs: $("cfgOpenLogs"), quit: $("cfgQuit"),
+  },
+  appModel,
+  { toast, fail },
+);
 
-let updateToasted = false;
-async function loadAppInfo() {
-  try {
-    const a = await api<AppView>("/api/app");
-    const ver = $("cfgVersion");
-    ver.textContent = a.version ? `Version: ${a.version}` : "";
-    if (a.update?.available && /^https:\/\/github\.com\//.test(a.update.url)) {
-      const link = document.createElement("a");
-      link.href = a.update.url; link.target = "_blank"; link.rel = "noopener noreferrer";
-      link.textContent = `New version ${a.update.latest} is available`;
-      ver.append(" — ", link);
-      if (!updateToasted) { updateToasted = true; toast(`New version ${a.update.latest} is available (Settings)`); }
-    }
-    $("cfgPaths").textContent = `Config: ${a.configFile}\nData: ${a.dataDir}\nLog: ${a.logFile}`;
-    const cb = $<HTMLInputElement>("cfgAutostart");
-    cb.checked = a.autostart === true;
-    cb.disabled = a.autostart === null;
-    $("cfgAutostartHint").textContent = a.autostart === null
-      ? "Autostart is available in the packaged app (Windows, Linux)."
-      : "Starts minimized (no browser window) when you log in.";
-    $("cfgTrayHint").textContent = a.tray
-      ? "The app lives in the system tray (right-click the icon)."
-      : a.os === "windows" && a.compiled ? "Tray icon failed to start — see the log." : "";
-  } catch { /* старый сервер */ }
-}
+const twitchModel = createTwitchModel(api);
+const twitchView = mountTwitch(
+  {
+    box: $("twBox"), redirect: $("twRedirect"), clientId: $<HTMLInputElement>("twClientId"), clientSecret: $<HTMLInputElement>("twClientSecret"),
+    appHint: $("twAppHint"), accounts: $("twAccounts"), saveApp: $("twSaveApp"),
+  },
+  twitchModel,
+  { toast, fail },
+);
 
-$("cfgAutostart").addEventListener("change", async (e) => {
-  const cb = e.target as HTMLInputElement;
-  try {
-    await api("/api/app/autostart", "PUT", { enabled: cb.checked });
-  } catch (err) {
-    cb.checked = !cb.checked;
-    fail(err);
-  }
-});
-$("cfgOpenData").addEventListener("click", () => api("/api/app/open", "POST", { what: "data" }).catch(fail));
-$("cfgOpenLogs").addEventListener("click", () => api("/api/app/open", "POST", { what: "logs" }).catch(fail));
-$("cfgQuit").addEventListener("click", async () => {
-  if (!confirm("Quit Overlay Composer? Overlays in OBS will stop updating until it is started again.")) return;
-  try { await api("/api/app/quit", "POST", {}); } catch { /* сервер уже закрылся */ }
-  document.body.textContent = "Overlay Composer has been stopped. You can close this tab.";
-});
+const devicesModel = createDevicesModel(api);
+const devicesView = mountDevices(
+  {
+    box: $("devBox"), pair: $("devPair"), code: $<HTMLButtonElement>("devCode"), left: $("devLeft"), url: $("devUrl"),
+    hint: $("devHint"), list: $("devList"),
+  },
+  devicesModel,
+  { ui: { toast, fail }, wantsRemote: () => $<HTMLSelectElement>("cfgHost").value !== "127.0.0.1" },
+);
 
-interface ConfigView {
-  host: string;
-  port: number;
-  debugProxy: boolean;
-  obsEnabled: boolean;
-  obsUrl: string;
-  hasObsPassword: boolean;
-  obs: ObsInfo;
-  obsWsConnected: boolean;
-  obsWsError: string | null;
-  overlayUrl: string;
-  restartRequired: boolean;
-}
-
-const settingsDialog = $<HTMLDialogElement>("settingsDialog");
-let statusTimer = 0;
-
-function showStatus(c: ConfigView) {
-  const st = $("cfgStatus");
-  st.className = `hint ${c.obs.connected ? "" : "warn"}`;
-  st.textContent = c.obs.connected
-    ? `OBS: connected via ${c.obs.via === "overlay" ? "overlay" : "obs-websocket"}` +
-      (c.obs.scene ? ` · scene: ${c.obs.scene}` : "") +
-      (c.obs.scenes.length ? ` · ${c.obs.scenes.length} scenes known` : "")
-    : `OBS: no data — ${c.obs.error ?? "waiting…"}`;
-  if (c.restartRequired) st.textContent += " · restart pending for host/port";
-
-  const ws = $("cfgWsStatus");
-  ws.className = `hint ${c.obsWsConnected ? "" : "warn"}`;
-  ws.textContent = c.obsWsConnected
-    ? "obs-websocket: connected"
-    : `obs-websocket: not connected${c.obsWsError ? ` — ${c.obsWsError}` : " (connecting…)"}`;
-
-  $("cfgOverlayUrl").textContent = c.overlayUrl;
-  applyObsInfo(c.obs);
-}
-
-async function refreshStatus() {
-  try { showStatus(await api<ConfigView>("/api/config")); } catch { /* сервер перезапускается */ }
-  loadDevices();
-  loadTwitch();
-}
-
-interface TwitchView {
-  clientId: string;
-  hasSecret: boolean;
-  redirectUri: string;
-  accounts: { role: string; login: string; scopes: string[]; error?: string }[];
-}
-
-const COPY_ICON = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg>';
-
-async function copyText(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch { /* нет доступа к буферу (не защищённый контекст/запрет) — запасной способ */ }
-  const ta = el("textarea", { value: text, style: "position:fixed;opacity:0;top:0;left:0" });
-  document.body.append(ta);
-  ta.select();
-  let ok = false;
-  try { ok = document.execCommand("copy"); } catch { ok = false; }
-  ta.remove();
-  return ok;
-}
-
-const TW_ROLES: [string, string][] = [["streamer", "Streamer"], ["bot", "Bot"]];
-let twFormFilled = false;
-
-// Раздел «Twitch accounts»; как и Remote devices, виден только на самом компьютере (с других сервер отвечает 403).
-async function loadTwitch() {
-  const box = $("twBox");
-  let v: TwitchView;
-  try { v = await api<TwitchView>("/api/twitch"); } catch { box.hidden = true; return; }
-  box.hidden = false;
-  $("twRedirect").textContent = v.redirectUri;
-  if (!twFormFilled) { // поля заполняем один раз, чтобы опрос не затирал ввод
-    $<HTMLInputElement>("twClientId").value = v.clientId;
-    $<HTMLInputElement>("twClientSecret").placeholder = v.hasSecret ? "saved — leave empty to keep" : "client secret";
-    twFormFilled = true;
-  }
-  $("twAppHint").textContent = v.clientId && v.hasSecret ? "" : "Enter Client ID and Client Secret, then connect accounts.";
-  const ready = !!v.clientId && v.hasSecret;
-  $("twAccounts").replaceChildren(...TW_ROLES.map(([role, title]) => {
-    const acc = v.accounts.find((a) => a.role === role);
-    const info = el("span", {
-      class: acc?.error ? "hint warn" : "hint",
-      textContent: acc ? `${title}: ${acc.login}${acc.error ? ` — ${acc.error}` : ""}` : `${title}: not connected`,
-    });
-    // Два аккаунта в одном браузере не подключить (Twitch помнит вход), поэтому вместо перехода — ссылка в буфер обмена:
-    // её можно открыть в другом браузере/профиле/приватном окне, где выполнен вход нужным аккаунтом.
-    const connect = el("button", {
-      type: "button", class: "iconbtn", disabled: !ready,
-      title: acc ? `Copy a link to reconnect the ${title.toLowerCase()} account` : `Copy the authorization link for the ${title.toLowerCase()} account`,
-    });
-    connect.setAttribute("aria-label", connect.title);
-    connect.innerHTML = COPY_ICON; // статическая разметка без пользовательских данных
-    connect.addEventListener("click", async () => {
-      try {
-        const r = await api<{ url: string }>(`/api/twitch/connect/${role}`, "POST", {});
-        const ok = await copyText(r.url);
-        toast(ok
-          ? `${title} link copied. Open it in a browser where the ${title.toLowerCase()} Twitch account is signed in (a private window works). It is valid for 10 minutes.`
-          : "Could not access the clipboard — copy the link from the prompt");
-        if (!ok) prompt("Authorization link (Ctrl+C):", r.url);
-      } catch (e) { fail(e); }
-    });
-    const btns = el("span", { class: "row" }, connect);
-    if (acc) {
-      const off = el("button", { type: "button", textContent: "Disconnect" });
-      off.addEventListener("click", async () => {
-        if (!confirm(`Disconnect Twitch account “${acc.login}”?`)) return;
-        try { await api(`/api/twitch/accounts/${role}`, "DELETE"); loadTwitch(); } catch (e) { fail(e); }
-      });
-      btns.append(off);
-    }
-    return el("div", { class: "row", style: "justify-content:space-between" }, info, btns);
-  }));
-}
-
-$("twSaveApp").addEventListener("click", async () => {
-  try {
-    await api("/api/twitch/app", "PUT", {
-      clientId: $<HTMLInputElement>("twClientId").value,
-      clientSecret: $<HTMLInputElement>("twClientSecret").value,
-    });
-    $<HTMLInputElement>("twClientSecret").value = "";
-    twFormFilled = false;
-    await loadTwitch();
-    toast("Twitch application saved");
-  } catch (e) { fail(e); }
-});
-
-interface DevicesView {
-  code: string;
-  expiresIn: number;
-  devices: { id: string; name: string; createdAt: string; lastSeen: string; lastIp: string }[];
-  remoteEnabled: boolean;
-  pairUrl: string;
-}
-
-// Раздел «Remote devices» (внутри группы «Listen on»): одноразовый код существует только при Listen on = All network interfaces
-// и по умолчанию скрыт — показывается по клику. Доступен только с этого компьютера (с других сервер отвечает 403).
-let devView: DevicesView | null = null;
-let codeShown = false;
-let codeTimer: ReturnType<typeof setTimeout> | undefined;
-const CODE_MASK = "••••••";
-
-function paintCode() {
-  const btn = $<HTMLButtonElement>("devCode");
-  btn.textContent = codeShown && devView?.code ? devView.code : CODE_MASK;
-  btn.classList.toggle("masked", !codeShown);
-  btn.setAttribute("aria-pressed", String(codeShown));
-}
-
-function setCodeShown(show: boolean) {
-  codeShown = show;
-  clearTimeout(codeTimer);
-  if (show) codeTimer = setTimeout(() => setCodeShown(false), 20000); // сам прячется — не остаётся на экране при демонстрации
-  paintCode();
-}
-$("devCode").addEventListener("click", () => setCodeShown(!codeShown));
-
-function paintDevHint() {
-  const v = devView;
-  if (!v) return;
-  const wantsRemote = $<HTMLSelectElement>("cfgHost").value !== "127.0.0.1";
-  $("devHint").textContent = v.remoteEnabled
-    ? (wantsRemote ? "Devices that enter the code can open the editor and overlay from your network."
-      : "You switched “Listen on” back to this computer only: pairing will stop after Save and restart. Already paired devices stay in the list until revoked.")
-    : (wantsRemote ? "Pairing will be available after you Save and restart the application."
-      : "Pairing is off while the server listens on this computer only. To connect another device (tablet, phone), set “Listen on” to “All network interfaces”, Save and restart.");
-}
-
-async function loadDevices() {
-  const box = $("devBox");
-  let v: DevicesView;
-  try { v = await api<DevicesView>("/api/devices"); } catch { box.hidden = true; return; }
-  devView = v;
-  box.hidden = false;
-  $("devPair").hidden = !v.remoteEnabled;
-  if (!v.remoteEnabled && codeShown) setCodeShown(false);
-  paintCode();
-  paintDevHint();
-  $("devLeft").textContent = v.remoteEnabled ? `changes in ${v.expiresIn}s` : "";
-  $("devUrl").textContent = v.pairUrl.replace("127.0.0.1", location.hostname === "127.0.0.1" || location.hostname === "localhost" ? "<this-computer-ip>" : location.hostname);
-  const list = $("devList");
-  list.replaceChildren(...v.devices.map((d) => {
-    const seen = new Date(d.lastSeen).toLocaleString();
-    const rm = el("button", { type: "button", textContent: "Revoke" });
-    rm.addEventListener("click", async () => {
-      if (!confirm(`Revoke access for “${d.name}”?`)) return;
-      try { await api(`/api/devices/${encodeURIComponent(d.id)}`, "DELETE"); loadDevices(); } catch (e) { fail(e); }
-    });
-    return el("div", { class: "row", style: "justify-content:space-between" },
-      el("span", { class: "hint", textContent: `${d.name} · ${d.lastIp} · seen ${seen}` }), rm);
-  }));
-}
-
-// Пока открыт диалог — обновляем статус, чтобы было видно результат Reconnect.
-settingsDialog.addEventListener("close", () => { clearInterval(statusTimer); setCodeShown(false); });
-
-$("cfgReconnectBtn").addEventListener("click", async () => {
-  try {
-    await api("/api/obs/reconnect", "POST", {});
-    $("cfgWsStatus").textContent = "obs-websocket: connecting…";
-    setTimeout(refreshStatus, 1500);
-  } catch (e) { fail(e); }
-});
-
-// Клик по значку OBS в шапке открывает настройки с подробностями.
-$("obsBadge").addEventListener("click", () => $("settingsBtn").click());
-
-function updateHostWarn() {
-  $("cfgHostWarn").hidden = $<HTMLSelectElement>("cfgHost").value === "127.0.0.1";
-  paintDevHint();
-}
-$("cfgHost").addEventListener("change", updateHostWarn);
-$("cfgObsEnabled").addEventListener("change", () => {
-  $("cfgObsWsBox").hidden = !$<HTMLInputElement>("cfgObsEnabled").checked;
-});
-
-$("settingsBtn").addEventListener("click", async () => {
-  try {
-    const c = await api<ConfigView>("/api/config");
-    $<HTMLInputElement>("cfgDebugProxy").checked = c.debugProxy;
-    $<HTMLInputElement>("cfgObsEnabled").checked = c.obsEnabled;
-    $("cfgObsWsBox").hidden = !c.obsEnabled;
-    $<HTMLInputElement>("cfgObsUrl").value = c.obsUrl;
-    const pw = $<HTMLInputElement>("cfgObsPass");
-    pw.value = "";
-    pw.placeholder = c.hasObsPassword ? "saved — leave empty to keep" : "no password";
-    $<HTMLInputElement>("cfgObsClear").checked = false;
-    $("cfgObsClearRow").hidden = !c.hasObsPassword;
-
-    const hosts = [
-      ["127.0.0.1", "This computer only (recommended)"],
-      ["0.0.0.0", "All network interfaces"],
-    ];
-    if (!hosts.some(([v]) => v === c.host)) hosts.push([c.host, c.host]);
-    const sel = $<HTMLSelectElement>("cfgHost");
-    sel.replaceChildren(...hosts.map(([v, t]) => el("option", { value: v, textContent: t, selected: v === c.host })));
-    updateHostWarn();
-    $<HTMLInputElement>("cfgPort").value = String(c.port);
-    showStatus(c);
-    loadAppInfo();
-    loadImportScenes();
-    loadDevices();
-    twFormFilled = false;
-    loadTwitch();
-    settingsDialog.showModal();
-    clearInterval(statusTimer);
-    statusTimer = setInterval(refreshStatus, 2000) as unknown as number;
-  } catch (e) { fail(e); }
-});
-
-$("cfgSaveBtn").addEventListener("click", async () => {
-  try {
-    const c = await api<ConfigView>("/api/config", "PUT", {
-      host: $<HTMLSelectElement>("cfgHost").value,
-      port: Number($<HTMLInputElement>("cfgPort").value),
-      debugProxy: $<HTMLInputElement>("cfgDebugProxy").checked,
-      obs: {
-        enabled: $<HTMLInputElement>("cfgObsEnabled").checked,
-        url: $<HTMLInputElement>("cfgObsUrl").value.trim(),
-        password: $<HTMLInputElement>("cfgObsPass").value,
-        clearPassword: $<HTMLInputElement>("cfgObsClear").checked,
-      },
-    });
-    settingsDialog.close();
-    toast(c.restartRequired ? "Saved. Restart the server to apply host/port" : "Settings saved");
-  } catch (e) { fail(e); }
-});
+const settings = mountConfig(
+  {
+    openBtn: $("settingsBtn"), obsBadge: $("obsBadge"), dialog: $<HTMLDialogElement>("settingsDialog"), status: $("cfgStatus"),
+    wsStatus: $("cfgWsStatus"), overlayUrl: $("cfgOverlayUrl"), debugProxy: $<HTMLInputElement>("cfgDebugProxy"),
+    obsEnabled: $<HTMLInputElement>("cfgObsEnabled"), obsWsBox: $("cfgObsWsBox"), obsUrl: $<HTMLInputElement>("cfgObsUrl"),
+    obsPass: $<HTMLInputElement>("cfgObsPass"), obsClear: $<HTMLInputElement>("cfgObsClear"), obsClearRow: $("cfgObsClearRow"),
+    host: $<HTMLSelectElement>("cfgHost"), hostWarn: $("cfgHostWarn"), port: $<HTMLInputElement>("cfgPort"),
+    saveBtn: $("cfgSaveBtn"), reconnectBtn: $("cfgReconnectBtn"),
+  },
+  createConfigModel(api),
+  {
+    ui: { toast, fail },
+    onOpen() {
+      void appModel.load();
+      loadImportScenes();
+      void devicesModel.load();
+      twitchView.resetForm();
+      void twitchModel.load();
+    },
+    onTick() { void devicesModel.load(); void twitchModel.load(); },
+    onClose() { devicesView.hideCode(); },
+    onHostChange() { devicesView.repaintHint(); },
+    onObsInfo: applyObsInfo,
+  },
+);
 
 // ---------- import scene from OBS ----------
 
@@ -1689,7 +1424,7 @@ $("impBtn").addEventListener("click", async () => {
       ...r.warnings.map((x) => `warning: ${x}`),
     ];
     $("impResult").textContent = lines.join("\n");
-    settingsDialog.close();
+    settings.closeDialog();
     await openLayout(r.layout.id, true);
     toast(lines[0]);
   } catch (e) { fail(e); } finally { btn.disabled = false; }
@@ -1846,7 +1581,7 @@ function connectWs() {
 init().catch(fail);
 
 // Проверка обновлений на сервере идёт чуть позже старта — один раз перепроверяем, чтобы подсказка появилась без захода в настройки.
-setTimeout(() => void loadAppInfo(), 15000);
+setTimeout(() => void appModel.load(), 15000);
 
 // ---------- notification center ----------
 
