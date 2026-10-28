@@ -7,6 +7,9 @@ import { $, el } from "./lib/dom.ts";
 import { type Api, httpApi } from "./lib/api.ts";
 import { createNotificationsModel } from "./features/notifications/model.ts";
 import { mountNotifications } from "./features/notifications/view.ts";
+import { createStoreModel } from "./features/store/model.ts";
+import { mountStore } from "./features/store/view.ts";
+import { PERM_TEXT } from "./lib/permissions.ts";
 import { boundsOf, snapMove, snapResize, type Guide, type Rect } from "../../shared/snap.ts";
 
 
@@ -848,30 +851,8 @@ function renderPluginPicker() {
   $("usePluginBtn").toggleAttribute("disabled", !p);
 }
 
-$("openStoreBtn").addEventListener("click", () => { storeDialog.showModal(); void loadStore(); });
 
 // ---------- plugin store ----------
-
-type StoreEntry = {
-  id: string; name: string; version?: string; description?: string; author?: string; permissions?: string[]; repo: string;
-  installed: boolean; installedVersion?: string; installedCommit?: string; updateAvailable: boolean; blocked?: "builtin" | "foreign";
-  digest: string; commit?: string; addedPermissions?: string[];
-};
-type StoreSource = { repo: string; error?: string; plugins: StoreEntry[] };
-type StoreData = { sources: StoreSource[]; installed: Record<string, { repo: string; version?: string }>; hasToken: boolean };
-
-const storeDialog = $<HTMLDialogElement>("storeDialog");
-const BLOCKED_TEXT = { builtin: "built in", foreign: "id is taken by another plugin" };
-
-async function loadStore(refresh = false) {
-  const body = $("storeBody");
-  body.replaceChildren(el("div", { class: "empty", textContent: "Loading…" }));
-  try {
-    renderStore(await api<StoreData>(`/api/market${refresh ? "?refresh=1" : ""}`));
-  } catch (e) {
-    body.replaceChildren(el("div", { class: "hint warn", textContent: `Store is unavailable: ${e instanceof Error ? e.message : e}` }));
-  }
-}
 
 /** Плагин поменялся на диске: подхватить в редакторе (список для Add Source, виджеты на холсте). */
 async function afterPluginChange() {
@@ -883,111 +864,21 @@ async function afterPluginChange() {
   renderProps();
 }
 
-function renderStore(d: StoreData) {
-  const body = $("storeBody");
-  $("storeTokenSummary").textContent = d.hasToken ? "Private repositories — GitHub token is set" : "Private repositories (GitHub token)";
-  $<HTMLButtonElement>("storeTokenClear").toggleAttribute("disabled", !d.hasToken);
-  const shown = new Set<string>();
-  const parts: HTMLElement[] = [];
-  const act = (btn: HTMLButtonElement, fn: () => Promise<unknown>) => {
-    btn.addEventListener("click", async () => {
-      btn.disabled = true;
-      try { await fn(); } catch (e) { fail(e); }
-      await loadStore();
-    });
-    return btn;
-  };
-  for (const s of d.sources) {
-    const rm = act(el("button", { type: "button", textContent: "Remove source", title: "Plugins already installed from it stay" }), async () => {
-      if (confirm(`Remove source ${s.repo}? Plugins already installed from it stay installed.`)) await api(`/api/market/sources?repo=${encodeURIComponent(s.repo)}`, "DELETE");
-    });
-    parts.push(el("div", { class: "row", style: "justify-content:space-between;margin-top:12px" }, el("strong", { textContent: s.repo }), rm));
-    if (s.error) parts.push(el("div", { class: "hint warn", textContent: s.error }));
-    else if (!s.plugins.length) parts.push(el("div", { class: "empty", textContent: "No plugins in this repository." }));
-    for (const p of s.plugins) {
-      if (p.installed) shown.add(p.id);
-      const used = sources.filter((x) => x.type === "plugin" && x.data.plugin === p.id).length;
-      const perms = p.permissions?.length ? `Asks for: ${p.permissions.map((x) => PERM_TEXT[x] ?? x).join("; ")}` : "Asks for no permissions";
-      let button: HTMLElement;
-      if (p.blocked) button = el("span", { class: "hint", textContent: BLOCKED_TEXT[p.blocked] });
-      else if (p.updateAvailable) button = act(el("button", { type: "button", class: "primary", textContent: p.version && p.version !== p.installedVersion ? `Update to ${p.version}` : "Update (files changed)" }), async () => {
-        // Новые права при обновлении — отдельное подтверждение: молча расширить доступ плагина нельзя.
-        if (p.addedPermissions?.length && !confirm(`The new version of “${p.name}” asks for additional permissions:\n\n${p.addedPermissions.map((x) => `• ${PERM_TEXT[x] ?? x}`).join("\n")}\n\nUpdate anyway? (Widgets keep only the permissions you already allowed; allow the new ones in the widget properties.)`)) return;
-        await api("/api/market/install", "POST", { repo: p.repo, id: p.id, digest: p.digest });
-        await afterPluginChange();
-        toast(`${p.name} updated. Reload the overlay page in OBS to apply.`);
-      });
-      else if (p.installed) button = act(el("button", { type: "button", class: "danger", textContent: "Uninstall" }), async () => {
-        const msg = used ? `Uninstall “${p.name}”? ${used} widget(s) using it will become empty. Its stored data is kept (erase it in widget properties).` : `Uninstall “${p.name}”?`;
-        if (!confirm(msg)) return;
-        await api("/api/market/uninstall", "POST", { id: p.id });
-        await afterPluginChange();
-      });
-      else button = act(el("button", { type: "button", class: "primary", textContent: "Install" }), async () => {
-        await api("/api/market/install", "POST", { repo: p.repo, id: p.id, digest: p.digest });
-        await afterPluginChange();
-        toast(`${p.name} installed. Add it via Add Source → widget plugin.`);
-      });
-      const src = p.commit ? ` · commit ${p.commit}` : "";
-      const title = `${p.name}${p.version ? ` ${p.version}` : ""}${src}${p.installed && p.installedVersion && p.installedVersion !== p.version ? ` (installed ${p.installedVersion})` : p.installed ? " — installed" : ""}`;
-      parts.push(el("div", { class: "row", style: "align-items:flex-start;justify-content:space-between;border-top:1px solid var(--line);padding-top:6px" },
-        el("div", { style: "flex:1;min-width:0" },
-          el("div", { textContent: title }),
-          el("div", { class: "hint", textContent: [p.author, p.description].filter(Boolean).join(" — ") }),
-          el("div", { class: "hint", textContent: perms })),
-        button));
-    }
-  }
-  // Поставленные из магазина, но источник уже убран: управлять ими всё равно надо.
-  const orphans = Object.entries(d.installed).filter(([id]) => !shown.has(id));
-  if (orphans.length) {
-    parts.push(el("div", { style: "margin-top:12px" }, el("strong", { textContent: "Installed from sources no longer in the list" })));
-    for (const [id, rec] of orphans) {
-      const name = plugins.find((x) => x.id === id)?.name ?? id;
-      const b = act(el("button", { type: "button", class: "danger", textContent: "Uninstall" }), async () => {
-        if (!confirm(`Uninstall “${name}”?`)) return;
-        await api("/api/market/uninstall", "POST", { id });
-        await afterPluginChange();
-      });
-      parts.push(el("div", { class: "row", style: "justify-content:space-between;border-top:1px solid var(--line);padding-top:6px" },
-        el("div", {}, el("div", { textContent: `${name}${rec.version ? ` ${rec.version}` : ""}` }), el("div", { class: "hint", textContent: rec.repo })), b));
-    }
-  }
-  if (!d.sources.length && !orphans.length) parts.push(el("div", { class: "empty", textContent: "No sources yet. Add a GitHub repository above." }));
-  body.replaceChildren(...parts);
-}
-
-$("storeRefreshBtn").addEventListener("click", () => void loadStore(true));
-$("storeAddBtn").addEventListener("click", async () => {
-  const inp = $<HTMLInputElement>("storeRepo");
-  if (!inp.value.trim()) return;
-  const btn = $<HTMLButtonElement>("storeAddBtn");
-  btn.disabled = true;
-  try { await api("/api/market/sources", "POST", { repo: inp.value }); inp.value = ""; } catch (e) { fail(e); }
-  btn.disabled = false;
-  await loadStore();
-});
-$("storeTokenSave").addEventListener("click", async () => {
-  const inp = $<HTMLInputElement>("storeToken");
-  if (!inp.value.trim()) return;
-  try { await api("/api/market/token", "PUT", { token: inp.value }); inp.value = ""; toast("GitHub token saved"); } catch (e) { fail(e); }
-  await loadStore(true);
-});
-$("storeTokenClear").addEventListener("click", async () => {
-  if (!confirm("Remove the saved GitHub token? Private repositories will stop loading.")) return;
-  try { await api("/api/market/token", "DELETE"); } catch (e) { fail(e); }
-  await loadStore(true);
-});
-$("storeRepo").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("storeAddBtn").click(); } });
-
-$("openPluginsBtn").addEventListener("click", () => api("/api/app/open", "POST", { what: "plugins" }).catch(fail));
-
-const PERM_TEXT: Record<string, string> = {
-  "chat.read": "Read Twitch chat",
-  "chat.send": "Write to Twitch chat as your bot / streamer account",
-  "net.local": "Read data from programs running on this computer (e.g. tosu)",
-  "storage": "Store this plugin’s data on this computer",
-};
+const pluginStore = mountStore(
+  {
+    openBtn: $("openStoreBtn"), dialog: $<HTMLDialogElement>("storeDialog"), body: $("storeBody"), refreshBtn: $("storeRefreshBtn"),
+    repoInput: $<HTMLInputElement>("storeRepo"), addBtn: $<HTMLButtonElement>("storeAddBtn"), tokenSummary: $("storeTokenSummary"),
+    tokenInput: $<HTMLInputElement>("storeToken"), tokenSave: $("storeTokenSave"), tokenClear: $<HTMLButtonElement>("storeTokenClear"),
+    openPluginsBtn: $("openPluginsBtn"),
+  },
+  createStoreModel({ api, afterChange: afterPluginChange }),
+  {
+    ui: { toast, fail },
+    usedBy: (id) => sources.filter((x) => x.type === "plugin" && x.data.plugin === id).length,
+    pluginName: (id) => plugins.find((x) => x.id === id)?.name,
+    openPluginsFolder: () => api("/api/app/open", "POST", { what: "plugins" }),
+  },
+);
 
 $("usePluginBtn").addEventListener("click", async () => {
   const p = plugins.find((x) => x.id === selectedPluginId);
@@ -1962,5 +1853,5 @@ setTimeout(() => void loadAppInfo(), 15000);
 mountNotifications(
   { bell: $("bellBtn"), count: $("bellCount"), panel: $("notifPanel"), dialog: $<HTMLDialogElement>("notifDialog"), detail: $("notifDetail"), actions: $("notifActions") },
   createNotificationsModel(api),
-  { ui: { toast, fail }, openStore: () => { storeDialog.showModal(); void loadStore(); } },
+  { ui: { toast, fail }, openStore: pluginStore.open },
 );
