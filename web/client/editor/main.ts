@@ -1,6 +1,6 @@
 import { PluginHost } from "../shared/pluginhost.ts";
 import type { Layout, LayoutObject, ObsInfo, PluginManifest, PluginSetting, ServerMessage, Source, Transform } from "../../shared/types.ts";
-import { contentCenter, defaultTransform, placeByContentCenter, uid, visibleBox } from "../../shared/types.ts";
+import { visibleBox } from "../../shared/types.ts";
 import { OverlayScene } from "../shared/scene.ts";
 import { mountLayers } from "./features/layers/view.ts";
 import { mountLayouts } from "./features/layouts/view.ts";
@@ -13,7 +13,7 @@ import { createAddSourceModel } from "./features/add-source/model.ts";
 import { mountAddSource } from "./features/add-source/view.ts";
 import { createPluginSettingsModel } from "./features/plugin-settings/model.ts";
 import { mountPluginSettings } from "./features/plugin-settings/view.ts";
-import { createPropertiesModel, MIN_SIZE, setCrop } from "./features/properties/model.ts";
+import { createPropertiesModel } from "./features/properties/model.ts";
 import { mountProperties } from "./features/properties/view.ts";
 import { createViewPrefsModel } from "./features/view-prefs/model.ts";
 import { mountViewPrefs } from "./features/view-prefs/view.ts";
@@ -38,6 +38,7 @@ import { createObsImportModel } from "./features/obs-import/model.ts";
 import { mountObsImport } from "./features/obs-import/view.ts";
 import { mountSceneBinding } from "./features/scene-binding/view.ts";
 import { boundsOf, snapMove, snapResize, type Guide, type Rect } from "../../shared/snap.ts";
+import { beginCrop, beginResize, boxRect, fitScale, objectsAtPoint, rotationAngle } from "../../shared/gestures.ts";
 
 
 
@@ -176,7 +177,7 @@ function fitView() {
   if (!layout) return;
   const vp = $("viewport");
   const { width: W, height: H } = layout.canvas;
-  k = Math.max(0.05, Math.min((vp.clientWidth - 40) / W, (vp.clientHeight - 40) / H));
+  k = fitScale(vp.clientWidth, vp.clientHeight, W, H);
   const frame = $("canvasFrame");
   frame.style.width = `${W * k}px`;
   frame.style.height = `${H * k}px`;
@@ -276,31 +277,16 @@ function renderOverlay() {
 function objectsAt(ev: PointerEvent): LayoutObject[] {
   if (!layout) return [];
   const r = $("overlayLayer").getBoundingClientRect();
-  const px = (ev.clientX - r.left) / k, py = (ev.clientY - r.top) / k;
-  return [...layout.objects]
-    .filter((o) => o.visible)
-    .sort((a, b) => b.zIndex - a.zIndex)
-    .filter((o) => {
-      const t = o.transform;
-      const v = visibleBox(t);
-      const hw = (v.w * Math.abs(t.scaleX)) / 2, hh = (v.h * Math.abs(t.scaleY)) / 2;
-      const a = (-t.rotationZ * Math.PI) / 180;
-      const dx = px - v.cx, dy = py - v.cy;
-      const lx = dx * Math.cos(a) - dy * Math.sin(a), ly = dx * Math.sin(a) + dy * Math.cos(a);
-      return Math.abs(lx) <= hw && Math.abs(ly) <= hh;
-    });
+  return objectsAtPoint(layout.objects, (ev.clientX - r.left) / k, (ev.clientY - r.top) / k);
 }
 
 function positionBox(box: HTMLElement, o: LayoutObject) {
-  const t = o.transform;
-  const v = visibleBox(t); // рамка — видимая (необрезанная) часть
-  const w = v.w * Math.abs(t.scaleX) * k;
-  const h = v.h * Math.abs(t.scaleY) * k;
-  box.style.left = `${v.cx * k - w / 2}px`;
-  box.style.top = `${v.cy * k - h / 2}px`;
-  box.style.width = `${w}px`;
-  box.style.height = `${h}px`;
-  box.style.transform = `rotate(${t.rotationZ}deg)`;
+  const r = boxRect(o.transform, k); // рамка — видимая (необрезанная) часть
+  box.style.left = `${r.left}px`;
+  box.style.top = `${r.top}px`;
+  box.style.width = `${r.width}px`;
+  box.style.height = `${r.height}px`;
+  box.style.transform = `rotate(${r.rotation}deg)`;
 }
 
 /** Применить изменение объекта во время drag: сцена + рамка + поля свойств. */
@@ -329,70 +315,24 @@ function track(ev: PointerEvent, onMove: (dx: number, dy: number, e: PointerEven
 }
 
 function startResize(ev: PointerEvent, o: LayoutObject, dirx: number, diry: number) {
-  const t = o.transform;
-  const v0 = visibleBox(t);
-  const sxAbs = Math.abs(t.scaleX) || 1;
-  const syAbs = Math.abs(t.scaleY) || 1;
-  const w0 = v0.w * sxAbs, h0 = v0.h * syAbs; // видимая часть на canvas
-  const cx0 = v0.cx, cy0 = v0.cy;
-  const th = (t.rotationZ * Math.PI) / 180;
-  const cos = Math.cos(th), sin = Math.sin(th);
-
+  const apply = beginResize(o.transform, dirx, diry);
   track(ev, (dx, dy, e) => {
-    // дельта указателя в локальной (повёрнутой) системе объекта
-    const ldx = dx * cos + dy * sin;
-    const ldy = -dx * sin + dy * cos;
-    let w = dirx ? Math.max(MIN_SIZE, w0 + dirx * ldx) : w0;
-    let h = diry ? Math.max(MIN_SIZE, h0 + diry * ldy) : h0;
-    if (e.shiftKey && dirx && diry) {
-      const r = w0 / h0;
-      if (w / w0 > h / h0) h = w / r; else w = h * r;
-    }
-    // Прилипание краёв (только без поворота и без Shift — пропорции важнее): тянем только двигаемые края.
-    if (snapActive(e) && layout && !e.shiftKey && !t.rotationZ) {
-      const left = cx0 - w0 / 2, top = cy0 - h0 / 2;
-      const r: Rect = {
-        x: dirx < 0 ? left + w0 - w : left, y: diry < 0 ? top + h0 - h : top, w, h,
-      };
-      const sn = snapResize(r, { l: dirx < 0, r: dirx > 0, t: diry < 0, b: diry > 0 }, snapTargets(o), { threshold: SNAP_PX / k, canvas: layout.canvas });
-      w = Math.max(MIN_SIZE, sn.rect.w);
-      h = Math.max(MIN_SIZE, sn.rect.h);
-      drawGuides(sn.guides);
-    } else drawGuides([]);
-    // противоположная сторона остаётся на месте: центр смещается на половину прироста
-    const lx = (dirx * (w - w0)) / 2;
-    const ly = (diry * (h - h0)) / 2;
-    const cx = cx0 + lx * cos - ly * sin;
-    const cy = cy0 + lx * sin + ly * cos;
-    // меняется размер видимой части; обрезка остаётся, полный размер виджета растёт вместе с ней
-    t.width = Math.round(w / sxAbs) + v0.cl + v0.cr;
-    t.height = Math.round(h / syAbs) + v0.ct + v0.cb;
-    t.x = Math.round(cx - v0.ox - t.width / 2);
-    t.y = Math.round(cy - v0.oy - t.height / 2);
+    const guides = apply(dx, dy, {
+      keepAspect: e.shiftKey,
+      snap: snapActive(e) && layout
+        ? (r, edges) => snapResize(r, edges, snapTargets(o), { threshold: SNAP_PX / k, canvas: layout!.canvas })
+        : undefined,
+    });
+    drawGuides(guides);
     touch(o);
   });
 }
 
-/**
- * Alt+перетаскивание ручки — обрезка (как в OBS). Угол обрезает сразу две стороны. Содержимое виджета остаётся на месте,
- * сдвигается только граница видимой части; поворот и масштаб учитываются.
- */
+/** Alt+перетаскивание ручки — обрезка (как в OBS); математика — shared/gestures. */
 function startCrop(ev: PointerEvent, o: LayoutObject, dirx: number, diry: number) {
-  const t = o.transform;
-  const c0 = visibleBox(t);
-  const f = contentCenter(t);
-  const th = (t.rotationZ * Math.PI) / 180;
-  const cos = Math.cos(th), sin = Math.sin(th);
-  const sx = Math.abs(t.scaleX) || 1, sy = Math.abs(t.scaleY) || 1;
-
+  const apply = beginCrop(o.transform, dirx, diry);
   track(ev, (dx, dy) => {
-    // дельта указателя в локальных пикселях виджета (до масштаба)
-    const ldx = (dx * cos + dy * sin) / sx;
-    const ldy = (-dx * sin + dy * cos) / sy;
-    if (dirx < 0) setCrop(t, "cropLeft", c0.cl + ldx, f);
-    if (dirx > 0) setCrop(t, "cropRight", c0.cr - ldx, f);
-    if (diry < 0) setCrop(t, "cropTop", c0.ct + ldy, f);
-    if (diry > 0) setCrop(t, "cropBottom", c0.cb - ldy, f);
+    apply(dx, dy);
     touch(o);
   });
 }
@@ -402,12 +342,7 @@ function startRotate(ev: PointerEvent, o: LayoutObject) {
   const { cx, cy } = visibleBox(t); // вращение вокруг центра видимой части (как в OBS)
   const rect = $("canvasFrame").getBoundingClientRect();
   track(ev, (_dx, _dy, e) => {
-    const px = (e.clientX - rect.left) / k;
-    const py = (e.clientY - rect.top) / k;
-    let a = (Math.atan2(py - cy, px - cx) * 180) / Math.PI + 90; // ручка сверху = 0°
-    if (a > 180) a -= 360;
-    if (e.shiftKey) a = Math.round(a / 15) * 15;
-    t.rotationZ = Math.round(a * 10) / 10;
+    t.rotationZ = rotationAngle(cx, cy, (e.clientX - rect.left) / k, (e.clientY - rect.top) / k, e.shiftKey);
     touch(o);
   });
 }

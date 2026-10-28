@@ -1,28 +1,9 @@
 // Панель свойств: поля трансформации и обрезки (чистая логика), операции над источником и layout. Без DOM.
 import type { LayoutObject, Source, Transform } from "../../../../shared/types.ts";
-import { contentCenter, placeByContentCenter } from "../../../../shared/types.ts";
 import type { Api } from "../../lib/api.ts";
 
-/** Минимальный размер видимой части виджета, px. */
-export const MIN_SIZE = 20;
-
-export type CropSide = "cropLeft" | "cropTop" | "cropRight" | "cropBottom";
-
-/** Задать одну сторону обрезки с ограничениями (≥ 0, остаётся видимая часть) и сохранением положения содержимого. */
-export function setCrop(t: Transform, side: CropSide, value: number, keep = contentCenter(t)) {
-  const other = side === "cropLeft" ? t.cropRight : side === "cropRight" ? t.cropLeft : side === "cropTop" ? t.cropBottom : t.cropTop;
-  const total = side === "cropLeft" || side === "cropRight" ? t.width : t.height;
-  const max = Math.max(0, total - (other ?? 0) - MIN_SIZE);
-  t[side] = Math.round(Math.min(max, Math.max(0, value)));
-  placeByContentCenter(t, keep);
-}
-
-/** Сбросить обрезку так, чтобы содержимое осталось на месте. */
-export function resetCrop(t: Transform) {
-  const f = contentCenter(t);
-  t.cropLeft = t.cropRight = t.cropTop = t.cropBottom = 0;
-  placeByContentCenter(t, f);
-}
+export { MIN_SIZE, resetCrop, setCrop, type CropSide } from "../../../../shared/gestures.ts";
+import { type CropSide, setCrop } from "../../../../shared/gestures.ts";
 
 export interface NumSpec {
   label: string;
