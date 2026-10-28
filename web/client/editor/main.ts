@@ -19,6 +19,9 @@ import { createTwitchModel } from "./features/twitch/model.ts";
 import { mountTwitch } from "./features/twitch/view.ts";
 import { createDevicesModel } from "./features/devices/model.ts";
 import { mountDevices } from "./features/devices/view.ts";
+import { createObsImportModel } from "./features/obs-import/model.ts";
+import { mountObsImport } from "./features/obs-import/view.ts";
+import { mountSceneBinding } from "./features/scene-binding/view.ts";
 import { boundsOf, snapMove, snapResize, type Guide, type Rect } from "../../shared/snap.ts";
 
 
@@ -1277,51 +1280,13 @@ function renderProps() {
 
 // ---------- привязка layout к сценам OBS ----------
 
-/** Блок «OBS scenes» в свойствах layout. Перерисовывается отдельно (список сцен и привязки приходят асинхронно). */
-function renderSceneBox() {
-  const box = document.getElementById("sceneBox");
-  if (!box || !layout) return;
-  const cur = layout;
-  const owner = new Map<string, string>(); // сцена → имя другого layout, которому она принадлежит (сохранённое состояние)
-  for (const l of layouts) if (l.id !== cur.id) for (const s of l.scenes) owner.set(s, l.name);
-
-  // Сцены OBS + привязанные, которых в OBS сейчас нет (переименованы/удалены/OBS не подключён).
-  const names = [...obsScenes];
-  for (const s of cur.scenes) if (!names.includes(s)) names.push(s);
-
-  const rows = names.map((s) => {
-    const cb = el("input", { type: "checkbox", checked: cur.scenes.includes(s) });
-    cb.addEventListener("change", () => {
-      cur.scenes = cb.checked ? [...cur.scenes, s] : cur.scenes.filter((x) => x !== s);
-      markDirty();
-      renderSceneBox();
-    });
-    const notes: string[] = [];
-    if (owner.has(s)) notes.push(cb.checked ? `moves from “${owner.get(s)}”` : `used by “${owner.get(s)}”`);
-    if (obsScenes.length && !obsScenes.includes(s)) notes.push("not in OBS");
-    return el("label", { class: "chk" }, cb, ` ${s}`, notes.length ? el("span", { class: "hint", textContent: ` — ${notes.join(", ")}` }) : "");
-  });
-
-  const add = el("input", { type: "text", placeholder: "Add scene by name…" });
-  const addBtn = el("button", { type: "button", textContent: "Add" });
-  const doAdd = () => {
-    const v = add.value.trim();
-    if (!v || cur.scenes.includes(v)) return;
-    cur.scenes = [...cur.scenes, v];
-    markDirty();
-    renderSceneBox();
-  };
-  addBtn.addEventListener("click", doAdd);
-  add.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doAdd(); } });
-
-  box.replaceChildren(
-    el("div", { class: "hint", textContent: obsScenes.length
-      ? "Show this layout when OBS switches to the checked scenes:"
-      : "OBS scene list is not available yet (connect OBS in Settings). You can still add scene names by hand:" }),
-    ...(rows.length ? rows : [el("div", { class: "empty", textContent: "No scenes bound — this layout is shown only by ▶ or as the default." })]),
-    el("div", { class: "row", style: "margin-top:4px" }, add, addBtn),
-  );
-}
+const sceneBinding = mountSceneBinding(() => document.getElementById("sceneBox"), {
+  current: () => layout,
+  layouts: () => layouts,
+  obsScenes: () => obsScenes,
+  changed: markDirty,
+});
+const renderSceneBox = sceneBinding.render;
 
 // ---------- settings (config.json): приложение, сервер/OBS, Twitch, устройства ----------
 
@@ -1383,52 +1348,19 @@ const settings = mountConfig(
 
 // ---------- import scene from OBS ----------
 
-interface ImportReport {
-  layout: Layout;
-  newSources: Source[];
-  reusedSources: number;
-  proxied: number;
-  skipped: { name: string; reason: string }[];
-  warnings: string[];
-  bound: boolean;
-}
-
-async function loadImportScenes() {
-  const sel = $<HTMLSelectElement>("impScene");
-  const btn = $<HTMLButtonElement>("impBtn");
-  try {
-    const r = await api<{ scenes: string[] }>("/api/obs/scenes");
-    sel.replaceChildren(...r.scenes.map((s) => el("option", { value: s, textContent: s })));
-    sel.disabled = btn.disabled = r.scenes.length === 0;
-    $("impHint").textContent = r.scenes.length
-      ? "Browser Sources of the scene (including ones inside groups) become layers with the same size and position. External sites are added with proxy."
-      : "No scenes yet — enable obs-websocket above.";
-  } catch (e) {
-    sel.disabled = btn.disabled = true;
-    $("impHint").textContent = String(e);
-  }
-}
-
-$("impBtn").addEventListener("click", async () => {
-  const sceneName = $<HTMLSelectElement>("impScene").value;
-  if (!sceneName) return;
-  const btn = $<HTMLButtonElement>("impBtn");
-  btn.disabled = true;
-  try {
-    const r = await api<ImportReport>("/api/obs/import", "POST", { scene: sceneName, bind: $<HTMLInputElement>("impBind").checked });
-    await Promise.all([loadSources(), loadLayouts()]);
-    const lines = [
-      `Imported “${r.layout.name}”: ${r.layout.objects.length} layer(s), ${r.newSources.length} new source(s), ${r.proxied} via proxy` +
-        (r.bound ? ", bound to the scene" : ""),
-      ...r.skipped.map((x) => `skipped ${x.name}: ${x.reason}`),
-      ...r.warnings.map((x) => `warning: ${x}`),
-    ];
-    $("impResult").textContent = lines.join("\n");
-    settings.closeDialog();
-    await openLayout(r.layout.id, true);
-    toast(lines[0]);
-  } catch (e) { fail(e); } finally { btn.disabled = false; }
-});
+const obsImport = mountObsImport(
+  { scene: $<HTMLSelectElement>("impScene"), btn: $<HTMLButtonElement>("impBtn"), hint: $("impHint"), bind: $<HTMLInputElement>("impBind"), result: $("impResult") },
+  createObsImportModel(api),
+  {
+    ui: { toast, fail },
+    async afterImport(r) {
+      await Promise.all([loadSources(), loadLayouts()]);
+      settings.closeDialog();
+      await openLayout(r.layout.id, true);
+    },
+  },
+);
+const loadImportScenes = obsImport.load;
 
 // ---------- save ----------
 
