@@ -2,6 +2,8 @@ import { PluginHost } from "../shared/pluginhost.ts";
 import type { Layout, LayoutObject, ObsInfo, PluginManifest, PluginSetting, ServerMessage, Source, Transform } from "../../shared/types.ts";
 import { contentCenter, defaultTransform, placeByContentCenter, uid, visibleBox } from "../../shared/types.ts";
 import { OverlayScene } from "../shared/scene.ts";
+import { mountLayers } from "./features/layers/view.ts";
+import { mountLayouts } from "./features/layouts/view.ts";
 import { createEditorModel } from "./features/editor/model.ts";
 import { $, el } from "./lib/dom.ts";
 import { type Api, httpApi } from "./lib/api.ts";
@@ -148,7 +150,7 @@ async function init() {
 }
 
 function refreshAll() {
-  renderLayouts();
+  drawLayouts();
   refreshCanvas();
   renderLayers();
   renderProps();
@@ -446,39 +448,13 @@ $("viewport").addEventListener("pointerdown", (e) => {
   if (!(e.target as HTMLElement).closest(".box")) select(null);
 });
 
-// ---------- layouts panel ----------
+// ---------- layouts panel (вид — features/layouts) ----------
 
-function renderLayouts() {
-  const list = $("layoutList");
-  list.replaceChildren();
-  for (const l of layouts) {
-    const item = el("div", { class: `item${l.id === layout?.id ? " sel" : ""}` });
-    const name = el("span", { class: "name", textContent: l.name });
-    name.title = l.scenes.length ? `OBS scenes: ${l.scenes.join(", ")}` : "No OBS scenes bound";
-    item.append(name);
-    if (l.id === defaultLayoutId) item.append(el("span", { class: "badge", textContent: "★ default", title: "Shown for scenes that have no layout of their own" }));
-    else if (l.scenes.length) item.append(el("span", { class: "badge", textContent: String(l.scenes.length), title: l.scenes.join(", ") }));
-    if (l.id === activeLayoutId) item.append(el("span", { class: "badge ok", textContent: "live", title: "Shown in /overlay now" }));
-    const play = el("button", { class: "ib", textContent: "▶", title: "Show this layout in /overlay now" });
-    play.addEventListener("click", (e) => {
-      e.stopPropagation();
-      wsSend({ type: "layout:activate", layoutId: l.id });
-    });
-    item.append(play);
-    item.addEventListener("click", () => {
-      if (l.id !== layout?.id) openLayout(l.id).catch(fail);
-    });
-    list.append(item);
-  }
-
-  const sel = $<HTMLSelectElement>("layoutSelect");
-  sel.replaceChildren(...layouts.map((l) => el("option", { value: l.id, textContent: l.name, selected: l.id === layout?.id })));
-  $("delLayoutBtn").toggleAttribute("disabled", layouts.length <= 1);
-}
-
-$<HTMLSelectElement>("layoutSelect").addEventListener("change", (e) => {
-  openLayout((e.target as HTMLSelectElement).value).catch(fail);
-});
+const renderLayouts = mountLayouts(
+  { list: $("layoutList"), select: $<HTMLSelectElement>("layoutSelect"), deleteBtn: $("delLayoutBtn") },
+  { open: (id) => openLayout(id).catch(fail), activate: (id) => wsSend({ type: "layout:activate", layoutId: id }) },
+);
+const drawLayouts = () => renderLayouts(editor.get());
 
 $("newLayoutBtn").addEventListener("click", async () => {
   const name = prompt("Layout name (will also be used as OBS scene name):", "New Layout");
@@ -499,69 +475,13 @@ $("delLayoutBtn").addEventListener("click", async () => {
   try { await editor.deleteCurrent(); } catch (e) { fail(e); }
 });
 
-// ---------- layers panel ----------
+// ---------- layers panel (вид — features/layers) ----------
 
-let dragLayerId: string | null = null;
-
-function renderLayers() {
-  const list = $("layerList");
-  list.replaceChildren();
-  if (!layout) return;
-  const objs = [...layout.objects].sort((a, b) => b.zIndex - a.zIndex); // верхний слой сверху
-  if (objs.length === 0) list.append(el("div", { class: "empty", textContent: "No objects. Click “+ Add Source”." }));
-
-  for (const o of objs) {
-    const item = el("div", { class: `item${o.id === selectedId ? " sel" : ""}${o.visible ? "" : " hidden"}` });
-    item.draggable = true;
-
-    const eye = el("button", { class: "ib", textContent: o.visible ? "👁" : "◌", title: "Visibility" });
-    eye.addEventListener("click", (e) => {
-      e.stopPropagation();
-      editor.setVisible(o.id, !o.visible);
-    });
-    const lock = el("button", { class: "ib", textContent: o.locked ? "🔒" : "🔓", title: "Lock" });
-    lock.addEventListener("click", (e) => {
-      e.stopPropagation();
-      editor.setLocked(o.id, !o.locked);
-    });
-    const name = el("span", { class: "name", textContent: objName(o), title: "Double-click to rename this layer (the source keeps its name)" });
-    name.addEventListener("dblclick", (e) => {
-      e.stopPropagation();
-      const n = prompt("Layer name:", objName(o));
-      if (n === null || !n.trim() || n.trim() === objName(o)) return;
-      editor.rename(o.id, n.trim());
-    });
-    const del = el("button", { class: "ib", textContent: "✕", title: "Remove from layout" });
-    del.addEventListener("click", (e) => {
-      e.stopPropagation();
-      removeObject(o.id);
-    });
-
-    item.append(eye, lock, name, del);
-    item.addEventListener("click", () => select(o.id));
-
-    item.addEventListener("dragstart", (e) => {
-      dragLayerId = o.id;
-      e.dataTransfer?.setData("text/plain", o.id);
-    });
-    item.addEventListener("dragover", (e) => {
-      if (!dragLayerId) return;
-      e.preventDefault();
-      item.classList.add("drop-before");
-    });
-    item.addEventListener("dragleave", () => item.classList.remove("drop-before"));
-    item.addEventListener("drop", (e) => {
-      e.preventDefault();
-      item.classList.remove("drop-before");
-      if (dragLayerId && dragLayerId !== o.id) reorder(dragLayerId, o.id);
-      dragLayerId = null;
-    });
-    item.addEventListener("dragend", () => { dragLayerId = null; });
-    list.append(item);
-  }
-}
-
-const reorder = (movedId: string, beforeId: string) => editor.reorder(movedId, beforeId);
+const renderLayersPanel = mountLayers($("layerList"), {
+  select, setVisible: editor.setVisible, setLocked: editor.setLocked, rename: editor.rename,
+  removeObject: editor.removeObject, reorder: editor.reorder, askName: (cur) => prompt("Layer name:", cur),
+});
+const renderLayers = () => renderLayersPanel(editor.get());
 const removeObject = (id: string) => editor.removeObject(id);
 
 // ---------- copy between layouts ----------
@@ -618,7 +538,7 @@ $("copyGoBtn").addEventListener("click", async () => {
     target.objects.push(cloneObject(o, target, { linked }));
     await api(`/api/layouts/${encodeURIComponent(targetId)}`, "PUT", target);
     await loadLayouts();
-    renderLayouts();
+    drawLayouts();
     toast(`Copied to “${target.name}”`);
   } catch (e) { fail(e); }
 });
@@ -1082,7 +1002,7 @@ function renderProps() {
     try {
       await api("/api/default-layout", "PUT", { layoutId: isDefault.checked ? layout!.id : null });
       await loadLayouts();
-      renderLayouts();
+      drawLayouts();
       toast(isDefault.checked ? "Default layout set" : "No default layout");
     } catch (e) { isDefault.checked = !isDefault.checked; fail(e); }
   });
@@ -1335,7 +1255,7 @@ editor.subscribe((st) => {
     case "selection":
       renderOverlay(); renderLayers(); renderProps(); break;
     case "geometry": updateBadges(); break;
-    case "meta": renderLayouts(); renderSceneBox(); updateBadges(); break;
+    case "meta": drawLayouts(); renderSceneBox(); updateBadges(); break;
     case "data": renderLayers(); renderProps(); break;
   }
 });
