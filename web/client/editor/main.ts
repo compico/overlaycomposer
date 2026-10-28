@@ -2,7 +2,7 @@ import { PluginHost } from "../shared/pluginhost.ts";
 import type { Layout, LayoutObject, ObsInfo, PluginManifest, PluginSetting, ServerMessage, Source, Transform } from "../../shared/types.ts";
 import { contentCenter, defaultTransform, placeByContentCenter, uid, visibleBox } from "../../shared/types.ts";
 import { OverlayScene } from "../shared/scene.ts";
-import { History } from "../../shared/history.ts";
+import { createEditorModel } from "./features/editor/model.ts";
 import { $, el } from "./lib/dom.ts";
 import { type Api, httpApi } from "./lib/api.ts";
 import { createNotificationsModel } from "./features/notifications/model.ts";
@@ -29,17 +29,25 @@ const MIN_SIZE = 20;
 
 // ---------- state ----------
 
+const api: Api = httpApi;
+
+// Состояние живёт в модели редактора (features/editor). Эти переменные — только для чтения: «зеркало» модели,
+// обновляется синхронно при каждом её изменении. Менять состояние — только через `editor.*`.
+const editor = createEditorModel({ api, confirmDiscard: () => confirm("Discard unsaved changes?") });
 let layouts: Layout[] = [];
 let sources: Source[] = [];
 let plugins: PluginManifest[] = [];
 let layout: Layout | null = null; // рабочая копия, сохраняется кнопкой Save
 let selectedId: string | null = null;
 let dirty = false;
-let k = 1; // экранных px на 1 px canvas
 let obsScenes: string[] = [];
 /** layout для сцен без собственного layout */
 let defaultLayoutId: string | null = null;
 let activeLayoutId: string | null = null;
+editor.subscribe((st) => {
+  ({ layouts, sources, plugins, layout, selectedId, dirty, obsScenes, defaultLayoutId, activeLayoutId } = st);
+});
+let k = 1; // экранных px на 1 px canvas
 let propSync: (() => void)[] = [];
 /** Буфер Ctrl+C: снимок слоя и layout, из которого он скопирован (живёт, пока открыта страница). */
 let clip: { obj: LayoutObject; fromLayoutId: string } | null = null;
@@ -49,8 +57,6 @@ const pluginHost = new PluginHost({ send: (m) => wsSend(m), canSend: false });
 const scene = new OverlayScene($("stage"), { interactive: true, plugins: pluginHost });
 
 // ---------- helpers ----------
-
-const api: Api = httpApi;
 
 let toastTimer = 0;
 function toast(msg: string) {
@@ -75,11 +81,7 @@ const sourceOf = (id: string) => sources.find((s) => s.id === id);
 const selected = () => layout?.objects.find((o) => o.id === selectedId) ?? null;
 const objName = (o: LayoutObject) => o.name || (sourceOf(o.sourceId)?.name ?? `(missing ${o.sourceId})`);
 
-function markDirty() {
-  dirty = true;
-  updateBadges();
-  scheduleRecord();
-}
+const markDirty = () => editor.markDirty();
 
 // ---------- layout mode and snapping (настройки помним между запусками) ----------
 
@@ -121,76 +123,10 @@ function drawGuides(guides: Guide[]) {
 
 const snapActive = (e: PointerEvent) => snapOn && !e.ctrlKey && !e.metaKey; // Ctrl на время жеста — без прилипания
 
-// ---------- history of edits (Ctrl+Z / Ctrl+Y) ----------
+// ---------- history of edits (Ctrl+Z / Ctrl+Y): логика — в editor model ----------
 
-let editLog: History | null = null;
-let recordTimer = 0;
-
-/** Снимок правимых частей layout (то, что сохраняет кнопка Save). */
-const snapshot = () => JSON.stringify(layout ? { canvas: layout.canvas, objects: layout.objects } : null);
-
-/** Новая история для только что открытого layout. */
-function resetHistory() {
-  clearTimeout(recordTimer);
-  editLog = layout ? new History(snapshot()) : null;
-  syncHistoryButtons();
-}
-
-/** Правки, идущие подряд (ввод в поле, стрелки), склеиваются в один шаг; жест мыши фиксируется сразу по отпусканию. */
-function scheduleRecord() {
-  clearTimeout(recordTimer);
-  recordTimer = setTimeout(flushHistory, 500) as unknown as number;
-}
-
-function flushHistory() {
-  clearTimeout(recordTimer);
-  if (!editLog || !layout) return;
-  editLog.record(snapshot());
-  dirty = editLog.dirty;
-  updateBadges();
-  syncHistoryButtons();
-}
-
-/** Состояние после загрузки с сервера (сохранение, чужая правка): отдельный шаг истории и «сохранённое» состояние. */
-function adoptServerState() {
-  if (!editLog) return resetHistory();
-  clearTimeout(recordTimer);
-  editLog.record(snapshot());
-  editLog.markSaved();
-  dirty = false;
-  syncHistoryButtons();
-}
-
-function applySnapshot(s: string | null) {
-  if (s === null || !layout) return;
-  const st = JSON.parse(s) as { canvas: Layout["canvas"]; objects: LayoutObject[] } | null;
-  if (!st) return;
-  layout.canvas = st.canvas;
-  layout.objects = st.objects;
-  if (selectedId && !selected()) selectedId = null;
-  dirty = editLog!.dirty;
-  refreshAll();
-  syncHistoryButtons();
-}
-
-function undo() {
-  if (!editLog) return;
-  flushHistory();
-  if (!editLog.canUndo) return toast("Nothing to undo");
-  applySnapshot(editLog.undo());
-}
-
-function redo() {
-  if (!editLog) return;
-  flushHistory();
-  if (!editLog.canRedo) return toast("Nothing to redo");
-  applySnapshot(editLog.redo());
-}
-
-function syncHistoryButtons() {
-  ($("undoBtn") as HTMLButtonElement).disabled = !editLog?.canUndo;
-  ($("redoBtn") as HTMLButtonElement).disabled = !editLog?.canRedo;
-}
+function undo() { if (!editor.undo()) toast("Nothing to undo"); }
+function redo() { if (!editor.redo()) toast("Nothing to redo"); }
 $("undoBtn").addEventListener("click", undo);
 $("redoBtn").addEventListener("click", redo);
 
@@ -199,53 +135,17 @@ function updateBadges() {
   $("canvasSize").textContent = layout ? `${layout.canvas.width}×${layout.canvas.height}` : "";
 }
 
-// ---------- loading ----------
+// ---------- loading (логика — в editor model; здесь только перерисовка по ChangeKind) ----------
 
-async function loadSources() {
-  sources = await api<Source[]>("/api/sources");
-  scene.setSources(sources);
-}
-
-async function loadPlugins() {
-  plugins = await api<PluginManifest[]>("/api/plugins"); // сервер пересматривает папку plugins/ при каждом запросе
-}
-
-async function loadLayouts() {
-  const [list, def] = await Promise.all([
-    api<Layout[]>("/api/layouts"),
-    api<{ layoutId: string | null }>("/api/default-layout"),
-  ]);
-  layouts = list;
-  defaultLayoutId = def.layoutId;
-  renderSceneBox(); // привязки могли измениться
-}
-
-async function openLayout(id: string, force = false) {
-  if (!force && dirty && !confirm("Discard unsaved changes?")) {
-    renderLayouts(); // вернуть select на текущий layout
-    return;
-  }
-  layout = await api<Layout>(`/api/layouts/${encodeURIComponent(id)}`);
-  selectedId = null;
-  dirty = false;
-  resetHistory();
-  refreshAll();
-}
+const loadSources = () => editor.loadSources();
+const loadPlugins = () => editor.loadPlugins();
+const loadLayouts = () => editor.loadLayouts();
+async function openLayout(id: string, force = false) { await editor.openLayout(id, force); }
 
 async function init() {
-  await Promise.all([loadSources(), loadLayouts(), loadPlugins()]);
-  if (layouts.length === 0) {
-    const l = await api<Layout>("/api/layouts", "POST", { name: "Layout 1" });
-    layouts = [l];
-  }
-  const st = await api<{ activeLayoutId: string | null; scene: string | null; obs: ObsInfo }>("/api/state");
-  activeLayoutId = st.activeLayoutId;
-  applyObsInfo(st.obs);
-  await openLayout(st.activeLayoutId && layouts.some((l) => l.id === st.activeLayoutId) ? st.activeLayoutId : layouts[0].id, true);
+  applyObsInfo(await editor.bootstrap());
   connectWs();
 }
-
-// ---------- rendering ----------
 
 function refreshAll() {
   renderLayouts();
@@ -400,7 +300,7 @@ function positionBox(box: HTMLElement, o: LayoutObject) {
 
 /** Применить изменение объекта во время drag: сцена + рамка + поля свойств. */
 function touch(o: LayoutObject) {
-  markDirty();
+  editor.touch();
   scene.setLayout(layout!);
   const box = $("overlayLayer").querySelector<HTMLElement>(`[data-id="${o.id}"]`);
   if (box) positionBox(box, o);
@@ -416,7 +316,7 @@ function track(ev: PointerEvent, onMove: (dx: number, dy: number, e: PointerEven
     window.removeEventListener("pointerup", up);
     window.removeEventListener("pointercancel", up);
     drawGuides([]);
-    flushHistory(); // жест мыши — один шаг истории
+    editor.flush(); // жест мыши — один шаг истории
   };
   window.addEventListener("pointermove", move);
   window.addEventListener("pointerup", up);
@@ -540,12 +440,7 @@ function startRotate(ev: PointerEvent, o: LayoutObject) {
 
 // ---------- selection ----------
 
-function select(id: string | null) {
-  selectedId = id;
-  renderOverlay();
-  renderLayers();
-  renderProps();
-}
+const select = (id: string | null) => editor.select(id);
 
 $("viewport").addEventListener("pointerdown", (e) => {
   if (!(e.target as HTMLElement).closest(".box")) select(null);
@@ -588,33 +483,20 @@ $<HTMLSelectElement>("layoutSelect").addEventListener("change", (e) => {
 $("newLayoutBtn").addEventListener("click", async () => {
   const name = prompt("Layout name (will also be used as OBS scene name):", "New Layout");
   if (!name) return;
-  try {
-    const l = await api<Layout>("/api/layouts", "POST", { name });
-    await loadLayouts();
-    await openLayout(l.id);
-  } catch (e) { fail(e); }
+  try { await editor.createLayout(name); } catch (e) { fail(e); }
 });
 
 $("dupLayoutBtn").addEventListener("click", async () => {
   if (!layout) return;
   const name = prompt("Name for the copy:", `${layout.name} copy`);
   if (!name) return;
-  try {
-    // дублируем сохранённую версию на сервере
-    const l = await api<Layout>("/api/layouts", "POST", { name, duplicateOf: layout.id });
-    await loadLayouts();
-    await openLayout(l.id, true);
-  } catch (e) { fail(e); }
+  try { await editor.duplicateCurrent(name); } catch (e) { fail(e); }
 });
 
 $("delLayoutBtn").addEventListener("click", async () => {
   if (!layout || layouts.length <= 1) return;
   if (!confirm(`Delete layout "${layout.name}"?`)) return;
-  try {
-    await api(`/api/layouts/${encodeURIComponent(layout.id)}`, "DELETE");
-    await loadLayouts();
-    await openLayout(layouts[0].id, true);
-  } catch (e) { fail(e); }
+  try { await editor.deleteCurrent(); } catch (e) { fail(e); }
 });
 
 // ---------- layers panel ----------
@@ -635,27 +517,19 @@ function renderLayers() {
     const eye = el("button", { class: "ib", textContent: o.visible ? "👁" : "◌", title: "Visibility" });
     eye.addEventListener("click", (e) => {
       e.stopPropagation();
-      o.visible = !o.visible;
-      markDirty();
-      refreshCanvas();
-      renderLayers();
+      editor.setVisible(o.id, !o.visible);
     });
     const lock = el("button", { class: "ib", textContent: o.locked ? "🔒" : "🔓", title: "Lock" });
     lock.addEventListener("click", (e) => {
       e.stopPropagation();
-      o.locked = !o.locked;
-      markDirty();
-      renderOverlay();
-      renderLayers();
+      editor.setLocked(o.id, !o.locked);
     });
     const name = el("span", { class: "name", textContent: objName(o), title: "Double-click to rename this layer (the source keeps its name)" });
     name.addEventListener("dblclick", (e) => {
       e.stopPropagation();
       const n = prompt("Layer name:", objName(o));
       if (n === null || !n.trim() || n.trim() === objName(o)) return;
-      o.name = n.trim();
-      markDirty();
-      renderLayers();
+      editor.rename(o.id, n.trim());
     });
     const del = el("button", { class: "ib", textContent: "✕", title: "Remove from layout" });
     del.addEventListener("click", (e) => {
@@ -687,31 +561,8 @@ function renderLayers() {
   }
 }
 
-/** Переносит `movedId` непосредственно над `beforeId` в отображаемом порядке (верх = больший zIndex). */
-function reorder(movedId: string, beforeId: string) {
-  if (!layout) return;
-  const order = [...layout.objects].sort((a, b) => b.zIndex - a.zIndex).map((o) => o.id);
-  order.splice(order.indexOf(movedId), 1);
-  order.splice(order.indexOf(beforeId), 0, movedId);
-  const n = order.length;
-  order.forEach((id, i) => {
-    const o = layout!.objects.find((x) => x.id === id)!;
-    o.zIndex = n - i;
-  });
-  markDirty();
-  refreshCanvas();
-  renderLayers();
-}
-
-function removeObject(id: string) {
-  if (!layout) return;
-  layout.objects = layout.objects.filter((o) => o.id !== id);
-  if (selectedId === id) selectedId = null;
-  markDirty();
-  refreshCanvas();
-  renderLayers();
-  renderProps();
-}
+const reorder = (movedId: string, beforeId: string) => editor.reorder(movedId, beforeId);
+const removeObject = (id: string) => editor.removeObject(id);
 
 // ---------- copy between layouts ----------
 
@@ -785,12 +636,7 @@ function pasteClip() {
   const same = clip.fromLayoutId === layout.id;
   // В тот же layout — независимая копия со сдвигом; в другой — связанная (тот же виджет).
   const c = cloneObject(clip.obj, layout, { linked: !same, offset: same ? 20 : 0, copySuffix: same });
-  layout.objects.push(c);
-  selectedId = c.id;
-  markDirty();
-  refreshCanvas();
-  renderLayers();
-  renderProps();
+  editor.insertObject(c);
 }
 
 // ---------- add source ----------
@@ -924,22 +770,7 @@ for (const id of ["newName", "newUrl"]) {
   $(id).addEventListener("keydown", (e) => { if ((e as KeyboardEvent).key === "Enter") { e.preventDefault(); $("createBtn").click(); } });
 }
 
-function placeObject(sourceId: string, w = 400, h = 300) {
-  if (!layout) return;
-  const maxZ = Math.max(0, ...layout.objects.map((o) => o.zIndex));
-  const t = { ...defaultTransform(), width: w, height: h };
-  t.x = Math.round((layout.canvas.width - w) / 2);
-  t.y = Math.round((layout.canvas.height - h) / 2);
-  const obj: LayoutObject = {
-    id: uid("obj"), name: sourceOf(sourceId)?.name, sourceId, transform: t, opacity: 1, visible: true, locked: false, zIndex: maxZ + 1,
-  };
-  layout.objects.push(obj);
-  selectedId = obj.id;
-  markDirty();
-  refreshCanvas();
-  renderLayers();
-  renderProps();
-}
+function placeObject(sourceId: string, w = 400, h = 300) { editor.addObject(sourceId, w, h); }
 
 $("useExistingBtn").addEventListener("click", () => {
   if (selectedExistingId) placeObject(selectedExistingId);
@@ -1235,10 +1066,8 @@ function renderProps() {
       try {
         await api(`/api/sources/${src.id}`, "DELETE");
         // сервер вычистил объекты в сохранённых layout; убираем и из рабочей копии
-        layout!.objects = layout!.objects.filter((x) => x.sourceId !== src.id);
-        selectedId = null;
         await loadSources();
-        refreshAll();
+        editor.dropSource(src.id);
       } catch (e) { fail(e); }
     });
     root.append(el("div", { class: "row", style: "margin-top:10px" }, rm, delSrc));
@@ -1367,14 +1196,7 @@ const loadImportScenes = obsImport.load;
 async function save() {
   if (!layout) return;
   try {
-    flushHistory(); // отправляем и запоминаем ровно то же состояние
-    await api(`/api/layouts/${encodeURIComponent(layout.id)}`, "PUT", layout);
-    editLog?.markSaved();
-    dirty = false;
-    syncHistoryButtons();
-    await loadLayouts();
-    renderLayouts();
-    updateBadges();
+    await editor.save();
     toast("Saved");
   } catch (e) { fail(e); }
 }
@@ -1459,10 +1281,7 @@ function setObsStatus(obs: ObsInfo) {
 /** Статус + список сцен для подсказок в поле «OBS scene» (без пересоздания панели свойств). */
 function applyObsInfo(obs: ObsInfo) {
   setObsStatus(obs);
-  if (JSON.stringify(obsScenes) !== JSON.stringify(obs.scenes)) {
-    obsScenes = obs.scenes;
-    renderSceneBox();
-  }
+  editor.setObsScenes(obs.scenes); // при изменении модель сообщит «meta» → перерисуется блок привязки сцен
 }
 
 function connectWs() {
@@ -1474,34 +1293,26 @@ function connectWs() {
     try {
       switch (msg.type) {
         case "hello":
-          activeLayoutId = msg.layoutId;
+          editor.setActive(msg.layoutId);
           applyObsInfo(msg.obs);
-          renderLayouts();
           break;
         case "obs:status":
           applyObsInfo(msg.obs);
           break;
         case "scene:changed":
-          if (msg.layoutId) activeLayoutId = msg.layoutId;
+          editor.setActive(msg.layoutId ?? null);
           if (msg.scene) $("sceneBadge").textContent = `scene: ${msg.scene}`;
-          renderLayouts();
           break;
         case "layouts:changed":
           await loadLayouts();
-          renderLayouts();
           break;
         case "sources:changed":
           await loadSources();
-          renderLayers();
-          renderProps();
           break;
         case "layout:updated":
           // Чужое изменение подтягиваем, только если у нас нет несохранённых правок.
           if (layout && msg.layoutId === layout.id && !dirty) {
-            layout = await api<Layout>(`/api/layouts/${encodeURIComponent(layout.id)}`);
-            if (selectedId && !selected()) selectedId = null;
-            adoptServerState();
-            refreshAll();
+            await editor.reloadCurrent();
           }
           break;
       }
@@ -1509,6 +1320,25 @@ function connectWs() {
   };
   ws.onclose = () => setTimeout(connectWs, 1500);
 }
+
+// ---------- представление: перерисовка по виду изменения модели ----------
+
+editor.subscribe((st) => {
+  $("undoBtn").toggleAttribute("disabled", !st.canUndo);
+  $("redoBtn").toggleAttribute("disabled", !st.canRedo);
+  switch (st.change) {
+    case "reset": refreshAll(); break;
+    case "structure":
+      refreshCanvas(); renderLayers(); renderProps(); updateBadges(); break;
+    case "layers":
+      renderOverlay(); renderLayers(); updateBadges(); break;
+    case "selection":
+      renderOverlay(); renderLayers(); renderProps(); break;
+    case "geometry": updateBadges(); break;
+    case "meta": renderLayouts(); renderSceneBox(); updateBadges(); break;
+    case "data": renderLayers(); renderProps(); break;
+  }
+});
 
 init().catch(fail);
 
