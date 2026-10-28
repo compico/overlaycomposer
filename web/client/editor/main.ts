@@ -3,9 +3,12 @@ import type { Layout, LayoutObject, ObsInfo, PluginManifest, PluginSetting, Serv
 import { contentCenter, defaultTransform, placeByContentCenter, uid, visibleBox } from "../../shared/types.ts";
 import { OverlayScene } from "../shared/scene.ts";
 import { History } from "../../shared/history.ts";
+import { $, el } from "./lib/dom.ts";
+import { type Api, httpApi } from "./lib/api.ts";
+import { createNotificationsModel } from "./features/notifications/model.ts";
+import { mountNotifications } from "./features/notifications/view.ts";
 import { boundsOf, snapMove, snapResize, type Guide, type Rect } from "../../shared/snap.ts";
 
-const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
 const MIN_SIZE = 20;
 
@@ -32,20 +35,7 @@ const scene = new OverlayScene($("stage"), { interactive: true, plugins: pluginH
 
 // ---------- helpers ----------
 
-async function api<T = unknown>(path: string, method = "GET", body?: unknown): Promise<T> {
-  const res = await fetch(path, {
-    method,
-    headers: body !== undefined
-      ? { "content-type": "application/json", "x-overlay-composer": "1" }
-      : { "x-overlay-composer": "1" },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
-  if (!res.ok) {
-    const e = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(e.error ?? res.statusText);
-  }
-  return res.json() as Promise<T>;
-}
+const api: Api = httpApi;
 
 let toastTimer = 0;
 function toast(msg: string) {
@@ -64,20 +54,6 @@ function toast(msg: string) {
 function fail(e: unknown) {
   console.error(e);
   toast(`Error: ${e instanceof Error ? e.message : String(e)}`);
-}
-
-function el<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  props: Partial<Omit<HTMLElementTagNameMap[K], "style">> & { class?: string; style?: string } = {},
-  ...children: (Node | string)[]
-): HTMLElementTagNameMap[K] {
-  const e = document.createElement(tag);
-  const { class: cls, style, ...rest } = props as Record<string, unknown>;
-  if (cls) e.className = cls as string;
-  if (style) e.style.cssText = style as string;
-  Object.assign(e, rest);
-  for (const c of children) e.append(c);
-  return e;
 }
 
 const sourceOf = (id: string) => sources.find((s) => s.id === id);
@@ -1983,126 +1959,8 @@ setTimeout(() => void loadAppInfo(), 15000);
 
 // ---------- notification center ----------
 
-interface NotifItem { key: string; kind: string; title: string; text?: string; at: number; read: boolean; data?: Record<string, unknown> }
-interface NotifView { items: NotifItem[]; unread: number; lastCheck: number }
-interface PluginChange { version: string; date?: string; changes?: string[]; migration?: string }
-
-let notifState: NotifView = { items: [], unread: 0, lastCheck: 0 };
-const notifPanel = $("notifPanel");
-const notifDialog = $<HTMLDialogElement>("notifDialog");
-
-function renderBell() {
-  const c = $("bellCount");
-  c.hidden = notifState.unread === 0;
-  c.textContent = String(notifState.unread);
-}
-
-async function notifCall(path: string, body?: unknown) {
-  notifState = await api<NotifView>(path, "POST", body ?? {});
-  renderBell();
-  renderNotifPanel();
-}
-
-async function loadNotifications() {
-  try {
-    notifState = await api<NotifView>("/api/notifications");
-    renderBell();
-    if (notifPanel.matches(":popover-open")) renderNotifPanel();
-  } catch { /* сервер старый или недоступен */ }
-}
-
-function ago(ts: number): string {
-  const d = Math.max(0, Date.now() / 1000 - ts);
-  if (d < 90) return "just now";
-  if (d < 5400) return `${Math.round(d / 60)} min ago`;
-  if (d < 129600) return `${Math.round(d / 3600)} h ago`;
-  return new Date(ts * 1000).toLocaleDateString();
-}
-
-function renderNotifPanel() {
-  const list = notifState.items;
-  const body = list.length
-    ? list.map((n) => {
-        const b = el("button", { type: "button", class: "notif" + (n.read ? "" : " unread") }, n.title);
-        if (n.text) b.append(el("small", {}, n.text));
-        b.append(el("small", {}, ago(n.at)));
-        b.addEventListener("click", () => openNotif(n));
-        return b;
-      })
-    : [el("div", { class: "hint", style: "padding:8px" }, "No notifications.")];
-  const check = el("button", { type: "button" }, "Check plugin updates");
-  check.addEventListener("click", async () => {
-    check.disabled = true;
-    try {
-      await notifCall("/api/notifications/check");
-      toast(notifState.items.length ? "Check finished" : "Everything is up to date");
-    } catch (e) { fail(e); } finally { check.disabled = false; }
-  });
-  const readAll = el("button", { type: "button" }, "Mark all read");
-  readAll.addEventListener("click", () => void notifCall("/api/notifications/read", { key: "" }).catch(fail));
-  const clear = el("button", { type: "button", class: "danger" }, "Clear");
-  clear.addEventListener("click", () => void notifCall("/api/notifications/dismiss", { key: "" }).catch(fail));
-  const last = notifState.lastCheck ? `Plugins checked ${ago(notifState.lastCheck)}` : "Plugins not checked yet";
-  notifPanel.replaceChildren(
-    ...body,
-    el("div", { class: "hint", style: "margin:6px 2px" }, last),
-    el("div", { class: "row" }, check, readAll, clear),
-  );
-}
-
-$("bellBtn").addEventListener("click", () => {
-  if (notifPanel.matches(":popover-open")) { notifPanel.hidePopover(); return; }
-  const r = $("bellBtn").getBoundingClientRect();
-  notifPanel.style.top = `${r.bottom + 6}px`;
-  notifPanel.style.left = `${Math.max(8, Math.min(r.right - 360, window.innerWidth - 368))}px`;
-  renderNotifPanel();
-  notifPanel.showPopover();
-  void loadNotifications();
-});
-
-function textList(items: string[]): HTMLElement {
-  return el("ul", {}, ...items.map((t) => el("li", {}, t)));
-}
-
-function openNotif(n: NotifItem) {
-  const detail = $("notifDetail");
-  const actions = $("notifActions");
-  const close = el("button", { value: "close" }, "Close");
-  const d = (n.data ?? {}) as Record<string, any>;
-  detail.replaceChildren(el("strong", {}, n.title));
-  actions.replaceChildren();
-  if (n.kind === "plugin-update") {
-    detail.append(el("div", { class: "hint" }, `${d.repo ?? ""} — ${d.from ?? "?"} → ${d.to ?? "?"}`));
-    if (Array.isArray(d.addedPermissions) && d.addedPermissions.length) {
-      detail.append(el("div", { class: "hint warn" }, `The new version asks for additional permissions: ${d.addedPermissions.join(", ")}. You will be asked to allow them.`));
-    }
-    const log = (Array.isArray(d.changelog) ? d.changelog : []) as PluginChange[];
-    if (!log.length) detail.append(el("div", { class: "hint" }, "The author did not describe this update."));
-    for (const c of log) {
-      detail.append(el("h4", {}, c.date ? `${c.version} — ${c.date}` : c.version));
-      if (c.changes?.length) detail.append(textList(c.changes));
-      if (c.migration) detail.append(el("div", { class: "hint" }, "What to do after updating:"), el("div", { class: "migration" }, c.migration));
-    }
-    const open = el("button", { type: "button", class: "primary" }, "Open plugin store");
-    open.addEventListener("click", () => { notifDialog.close(); storeDialog.showModal(); void loadStore(); });
-    actions.append(open);
-  } else if (n.kind === "app-update") {
-    detail.append(el("div", { class: "hint" }, `${d.current ?? "?"} → ${d.latest ?? "?"}`));
-    if (d.notes) detail.append(el("h4", {}, "Release notes"), el("div", { class: "migration", style: "border-left-color:var(--line)" }, String(d.notes)));
-    if (typeof d.url === "string" && /^https:\/\/github\.com\//.test(d.url)) {
-      const a = el("a", { href: d.url, target: "_blank", rel: "noopener noreferrer", textContent: "Open the release page" });
-      detail.append(el("div", { style: "margin-top:8px" }, a));
-    }
-  } else if (n.text) {
-    detail.append(el("div", { class: "hint" }, n.text));
-  }
-  const dismiss = el("button", { type: "button", class: "danger" }, "Dismiss");
-  dismiss.addEventListener("click", () => { notifDialog.close(); void notifCall("/api/notifications/dismiss", { key: n.key }).catch(fail); });
-  actions.append(dismiss, close);
-  if (notifPanel.matches(":popover-open")) notifPanel.hidePopover();
-  notifDialog.showModal();
-  if (!n.read) void notifCall("/api/notifications/read", { key: n.key }).catch(() => {});
-}
-
-void loadNotifications();
-setInterval(() => void loadNotifications(), 30000);
+mountNotifications(
+  { bell: $("bellBtn"), count: $("bellCount"), panel: $("notifPanel"), dialog: $<HTMLDialogElement>("notifDialog"), detail: $("notifDetail"), actions: $("notifActions") },
+  createNotificationsModel(api),
+  { ui: { toast, fail }, openStore: () => { storeDialog.showModal(); void loadStore(); } },
+);
