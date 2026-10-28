@@ -9,6 +9,8 @@ import { createLiveHandler } from "./features/live/model.ts";
 import { connectLive, type LiveConnection } from "./features/live/view.ts";
 import { createCopyModel } from "./features/copy/model.ts";
 import { mountCopy } from "./features/copy/view.ts";
+import { createAddSourceModel, maskUrl, MIN_SIZE } from "./features/add-source/model.ts";
+import { mountAddSource } from "./features/add-source/view.ts";
 import { createEditorModel } from "./features/editor/model.ts";
 import { $, el } from "./lib/dom.ts";
 import { type Api, httpApi } from "./lib/api.ts";
@@ -32,7 +34,6 @@ import { mountSceneBinding } from "./features/scene-binding/view.ts";
 import { boundsOf, snapMove, snapResize, type Guide, type Rect } from "../../shared/snap.ts";
 
 
-const MIN_SIZE = 20;
 
 // ---------- state ----------
 
@@ -498,76 +499,30 @@ mountCopy(
 const copySelected = () => copy.copySelected();
 const pasteClip = () => copy.paste();
 
-// ---------- add source ----------
+// ---------- add source (логика — features/add-source) ----------
 
-const addDialog = $<HTMLDialogElement>("addDialog");
-
-type AddTab = "iframe" | "existing" | "plugin";
-let selectedPluginId = "";
-let selectedExistingId = "";
-
-function setAddTab(tab: AddTab) {
-  if (tab === "existing" && sources.length === 0) tab = "iframe";
-  for (const b of document.querySelectorAll<HTMLButtonElement>("#addDialog .tab")) {
-    const on = b.dataset.tab === tab;
-    b.classList.toggle("sel", on);
-    b.setAttribute("aria-selected", String(on));
-  }
-  for (const t of ["iframe", "existing", "plugin"]) $(`pane-${t}`).hidden = t !== tab;
-  if (tab === "iframe") $("newName").focus();
-}
-for (const b of document.querySelectorAll<HTMLButtonElement>("#addDialog .tab")) {
-  b.addEventListener("click", () => setAddTab(b.dataset.tab as AddTab));
-}
-
-function pickItem(sel: boolean, title: string, meta: string, onPick: () => void, onDouble?: () => void): HTMLElement {
-  const it = el("div", { class: `item${sel ? " sel" : ""}`, tabIndex: 0 },
-    el("div", { style: "flex:1;min-width:0" }, el("div", { class: "name", textContent: title }), el("div", { class: "meta", textContent: meta })));
-  it.addEventListener("click", onPick);
-  it.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onPick(); } });
-  if (onDouble) it.addEventListener("dblclick", onDouble);
-  return it;
-}
-
-/** В списках не показываем всё после «?» (и «#»): в адресах виджетов часто лежат токены и секреты. */
-function maskUrl(u: string): string {
-  const i = u.search(/[?#]/);
-  return i < 0 ? u : `${u.slice(0, i + 1)}${"•".repeat(8)}`;
-}
-
-function renderExistingList() {
-  const list = $("existingList");
-  if (!sources.some((x) => x.id === selectedExistingId)) selectedExistingId = sources[0]?.id ?? "";
-  list.replaceChildren(...sources.map((x) => pickItem(
-    x.id === selectedExistingId, x.name, x.type === "plugin" ? `plugin · ${x.data.plugin}` : maskUrl(x.data.url ?? "iframe"),
-    () => { selectedExistingId = x.id; renderExistingList(); },
-    () => $("useExistingBtn").click(),
-  )));
-  if (sources.length === 0) list.replaceChildren(el("div", { class: "empty", textContent: "No sources yet — create one on the first tab." }));
-  $("useExistingBtn").toggleAttribute("disabled", sources.length === 0);
-  $("tabExisting").toggleAttribute("disabled", sources.length === 0);
-}
-
-function renderPluginPicker() {
-  const list = $("pluginList");
-  if (!plugins.some((x) => x.id === selectedPluginId)) selectedPluginId = plugins[0]?.id ?? "";
-  list.replaceChildren(...plugins.map((p) => pickItem(
-    p.id === selectedPluginId,
-    `${p.name}${p.version ? ` ${p.version}` : ""}${p.builtin ? "" : " (custom)"}`,
-    p.description ?? "",
-    () => { selectedPluginId = p.id; renderPluginPicker(); },
-    () => $("usePluginBtn").click(),
-  )));
-  if (plugins.length === 0) {
-    list.replaceChildren(el("div", { class: "empty", textContent: "No plugins installed yet. Open the Plugin store to install some, or put a plugin folder (with plugin.json) into the plugins folder." }));
-  }
-  const p = plugins.find((x) => x.id === selectedPluginId);
-  $("pluginHint").textContent = !p ? "" : p.permissions?.length
-    ? `Asks for: ${p.permissions.map((x) => PERM_TEXT[x] ?? x).join("; ")}. You confirm this when placing it.`
-    : "Asks for no permissions.";
-  $("usePluginBtn").toggleAttribute("disabled", !p);
-}
-
+const addSourceModel = createAddSourceModel({
+  api,
+  editor,
+  confirmPermissions: (p, list) => confirm(
+    `“${p.name}” asks for permissions:\n\n${list.map((x) => `• ${PERM_TEXT[x] ?? x}`).join("\n")}\n\nAllow? (You can change this later in the widget properties.)`),
+});
+const addSource = mountAddSource(
+  {
+    dialog: $<HTMLDialogElement>("addDialog"),
+    tabs: [...document.querySelectorAll<HTMLButtonElement>("#addDialog .tab")],
+    panes: { iframe: $("pane-iframe"), existing: $("pane-existing"), plugin: $("pane-plugin") },
+    tabExisting: $("tabExisting"),
+    newName: $<HTMLInputElement>("newName"), newUrl: $<HTMLInputElement>("newUrl"), newProxy: $<HTMLInputElement>("newProxy"),
+    newW: $<HTMLInputElement>("newW"), newH: $<HTMLInputElement>("newH"), createBtn: $("createBtn"),
+    existingList: $("existingList"), useExistingBtn: $("useExistingBtn"),
+    pluginList: $("pluginList"), pluginHint: $("pluginHint"), usePluginBtn: $("usePluginBtn"),
+    openBtn: $("addObjBtn"),
+  },
+  addSourceModel,
+  { sources: () => sources, plugins: () => plugins, refreshPlugins: () => loadPlugins().catch(fail), toast, fail },
+);
+const renderPluginPicker = addSource.renderPlugins;
 
 // ---------- plugin store ----------
 
@@ -596,64 +551,6 @@ const pluginStore = mountStore(
     openPluginsFolder: () => api("/api/app/open", "POST", { what: "plugins" }),
   },
 );
-
-$("usePluginBtn").addEventListener("click", async () => {
-  const p = plugins.find((x) => x.id === selectedPluginId);
-  if (!p) return;
-  // Разрешения выдаёт пользователь: плагин — чужой код, а чат и аккаунты Twitch — его данные.
-  let granted: string[] = [];
-  if (p.permissions?.length) {
-    const list = p.permissions.map((x) => `• ${PERM_TEXT[x] ?? x}`).join("\n");
-    if (confirm(`“${p.name}” asks for permissions:\n\n${list}\n\nAllow? (You can change this later in the widget properties.)`)) granted = p.permissions;
-  }
-  try {
-    let name = p.name, n = 2;
-    while (sources.some((x) => x.name === name)) name = `${p.name} ${n++}`;
-    const id = uid("src");
-    await api("/api/sources", "POST", { id, name, type: "plugin", data: { plugin: p.id, settings: {}, granted } });
-    await loadSources();
-    placeObject(id, p.defaultSize.width, p.defaultSize.height);
-    addDialog.close();
-  } catch (e) { fail(e); }
-});
-
-$("addObjBtn").addEventListener("click", async () => {
-  await loadPlugins().catch(fail);
-  renderPluginPicker();
-  renderExistingList();
-  addDialog.showModal();
-  setAddTab("iframe"); // по умолчанию — обычная страница по адресу
-});
-
-for (const id of ["newName", "newUrl"]) {
-  $(id).addEventListener("keydown", (e) => { if ((e as KeyboardEvent).key === "Enter") { e.preventDefault(); $("createBtn").click(); } });
-}
-
-function placeObject(sourceId: string, w = 400, h = 300) { editor.addObject(sourceId, w, h); }
-
-$("useExistingBtn").addEventListener("click", () => {
-  if (selectedExistingId) placeObject(selectedExistingId);
-  addDialog.close();
-});
-
-$("createBtn").addEventListener("click", async () => {
-  const name = $<HTMLInputElement>("newName").value.trim();
-  const url = $<HTMLInputElement>("newUrl").value.trim();
-  const proxy = $<HTMLInputElement>("newProxy").checked;
-  const w = Math.max(MIN_SIZE, Number($<HTMLInputElement>("newW").value) || 400);
-  const h = Math.max(MIN_SIZE, Number($<HTMLInputElement>("newH").value) || 300);
-  if (!name || !url) return toast("Name and URL are required");
-  try {
-    const id = uid("src");
-    await api("/api/sources", "POST", { id, name, type: "iframe", data: proxy ? { url, proxy: true } : { url } });
-    await loadSources();
-    placeObject(id, w, h);
-    addDialog.close();
-    $<HTMLInputElement>("newName").value = "";
-    $<HTMLInputElement>("newUrl").value = "";
-    $<HTMLInputElement>("newProxy").checked = false;
-  } catch (e) { fail(e); }
-});
 
 // ---------- properties panel ----------
 
