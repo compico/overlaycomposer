@@ -8,9 +8,9 @@ import { canvasFromInputs, type CropSide, resetCrop, ROUTER_MODES, setCrop, tran
 export interface PropertiesPorts {
   state(): Pick<EditorState, "layout" | "selectedId" | "sources" | "plugins" | "defaultLayoutId">;
   /** Слой правили из поля: пометить несохранённым и перерисовать канвас. */
-  fieldEdited(): void;
+  fieldEdited(label: string): void;
   /** Слой изменён кнопкой (сброс обрезки): записать и перерисовать. */
-  touched(o: LayoutObject): void;
+  touched(o: LayoutObject, label: string): void;
   /** Имя layout изменено. */
   layoutRenamed(name: string): void;
   /** Размер холста изменён (уже записан в layout). */
@@ -47,7 +47,7 @@ export function mountProperties(root: HTMLElement, model: PropertiesModel, ports
       const v = parseFloat(input.value);
       if (Number.isNaN(v)) return;
       set(v);
-      ports.fieldEdited();
+      ports.fieldEdited(`Set ${label}`);
       sync();
     });
     return el("label", {}, label, input);
@@ -143,7 +143,7 @@ export function mountProperties(root: HTMLElement, model: PropertiesModel, ports
     const reset = el("button", { textContent: "Reset crop" });
     reset.addEventListener("click", () => {
       resetCrop(t);
-      ports.touched(o);
+      ports.touched(o, "Reset crop");
       render();
     });
     root.append(cropGrid, el("div", { class: "row" }, reset), el("div", { class: "empty", textContent: "Alt+drag a handle crops, like in OBS." }));

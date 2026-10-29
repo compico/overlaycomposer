@@ -1,20 +1,45 @@
 // История правок для Ctrl+Z / Ctrl+Y: стек снимков (строк) без зависимостей от DOM — тестируется в Node.
 // Снимок — любое строковое представление состояния (в редакторе — JSON объектов layout).
 
+/** Шаг истории для списка: подпись, это текущее состояние, это «будущее» (после отмены), совпадает с сохранённым. */
+export interface HistoryEntry {
+  index: number;
+  label: string;
+  current: boolean;
+  future: boolean;
+  saved: boolean;
+}
+
 export class History {
-  #stack: string[];
+  #stack: { s: string; label: string }[];
   #i = 0;
   #saved: string;
+  #version = 0;
   readonly #limit: number;
 
-  constructor(initial: string, limit = 200) {
-    this.#stack = [initial];
+  constructor(initial: string, limit = 200, initialLabel = "Opened") {
+    this.#stack = [{ s: initial, label: initialLabel }];
     this.#saved = initial;
     this.#limit = Math.max(2, limit);
   }
 
+  /** Растёт при любом изменении списка или положения в нём — по нему представление понимает, что пора перерисовать. */
+  get version(): number {
+    return this.#version;
+  }
+
+  /** Положение в списке (0 — самое старое состояние). */
+  get index(): number {
+    return this.#i;
+  }
+
+  /** Все шаги от старого к новому; для панели «History». */
+  get entries(): HistoryEntry[] {
+    return this.#stack.map((e, index) => ({ index, label: e.label, current: index === this.#i, future: index > this.#i, saved: e.s === this.#saved }));
+  }
+
   get current(): string {
-    return this.#stack[this.#i];
+    return this.#stack[this.#i].s;
   }
 
   get canUndo(): boolean {
@@ -31,24 +56,35 @@ export class History {
   }
 
   /** Запомнить новое состояние. Совпадающее с текущим игнорируется; новая правка после отмены стирает «будущее». */
-  record(snapshot: string): boolean {
+  record(snapshot: string, label = "Edit"): boolean {
     if (snapshot === this.current) return false;
     this.#stack.length = this.#i + 1;
-    this.#stack.push(snapshot);
+    this.#stack.push({ s: snapshot, label });
     if (this.#stack.length > this.#limit) this.#stack.shift();
     this.#i = this.#stack.length - 1;
+    this.#version++;
     return true;
   }
 
   /** Вернуться на шаг назад; null, если некуда. */
   undo(): string | null {
     if (!this.canUndo) return null;
-    return this.#stack[--this.#i];
+    this.#version++;
+    return this.#stack[--this.#i].s;
   }
 
   redo(): string | null {
     if (!this.canRedo) return null;
-    return this.#stack[++this.#i];
+    this.#version++;
+    return this.#stack[++this.#i].s;
+  }
+
+  /** Перейти к шагу `index` (как в списке истории FL Studio); null, если такого шага нет или он уже текущий. */
+  jumpTo(index: number): string | null {
+    if (!Number.isInteger(index) || index < 0 || index >= this.#stack.length || index === this.#i) return null;
+    this.#i = index;
+    this.#version++;
+    return this.#stack[index].s;
   }
 
   /** Текущее состояние сохранено (кнопка Save). */

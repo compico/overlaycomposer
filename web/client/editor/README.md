@@ -38,6 +38,7 @@ editor/main.ts         «склейка»: общее состояние layout,
 - `add-source` — диалог Add Source (iframe, существующий источник, плагин).
 - `copy` — копирование слоя между layout'ами и буфер Ctrl+C/V.
 - `keyboard` — сопоставление клавиш и контекста с командами (`main.ts` исполняет команды); `live` — обработка сообщений WebSocket через порты, сокет с переподключением.
+- `history` — панель «History» (🕘 в шапке): шаги правок с подписями («Move Chat», «Hide Alerts»…), переход к любому шагу как в FL Studio; логика — `History` в `shared/history.ts` и `editor.jumpTo`.
 - `canvas` — рамки, ручки и pointer-события канваса (DOM); математика жестов — в `shared/gestures.ts`.
 - `obs-status` — бейджи «OBS: …» и «scene: …»; `lib/toast.ts` — всплывающие сообщения.
 - `view-prefs` — режим компоновки и прилипание (флаги в localStorage через порт).

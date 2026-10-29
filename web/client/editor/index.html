@@ -107,6 +107,12 @@
       color: #fff; font-size: 10px; line-height: 16px; text-align: center; }
     #notifPanel { position: fixed; inset: auto; margin: 0; width: 360px; max-width: 94vw; max-height: 70vh; overflow: auto; padding: 8px;
       background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px; }
+    #historyPanel { position: fixed; inset: auto; margin: 0; width: 300px; max-width: 94vw; max-height: 60vh; overflow: auto; padding: 8px;
+      background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px; }
+    .hist { display: flex; justify-content: space-between; gap: 8px; width: 100%; text-align: left; padding: 6px 8px; margin: 0 0 3px; border-radius: 6px; background: var(--panel2); }
+    .hist.cur { outline: 2px solid var(--accent, #6aa9ff); font-weight: 600; }
+    .hist.future { opacity: .55; }
+    .hist .mark { color: var(--ok); }
     .notif { display: block; width: 100%; text-align: left; padding: 8px; margin: 0 0 4px; border-radius: 8px; background: var(--panel2); }
     .notif.unread { border-left: 3px solid var(--accent, #6aa9ff); }
     .notif small { display: block; color: var(--muted); margin-top: 2px; }
@@ -130,6 +136,7 @@
       <span class="badge" id="dirtyBadge"></span>
       <button id="undoBtn" title="Undo (Ctrl+Z)" aria-label="Undo" disabled>↶</button>
       <button id="redoBtn" title="Redo (Ctrl+Shift+Z / Ctrl+Y)" aria-label="Redo" disabled>↷</button>
+      <button id="historyBtn" title="History" aria-label="History">🕘</button>
       <button id="composeBtn" title="Layout mode: outlines and names of all widgets (L)" aria-pressed="false">▦ Layout</button>
       <button id="snapBtn" title="Snap to other widgets and canvas edges (hold Ctrl to bypass)" aria-pressed="true">🧲 Snap</button>
       <button id="bellBtn" title="Notifications" aria-label="Notifications">🔔<span class="bellcount" id="bellCount" hidden></span></button>
@@ -235,6 +242,7 @@
     </form>
   </dialog>
   <div id="notifPanel" popover="auto"></div>
+  <div id="historyPanel" popover="auto"></div>
   <dialog id="notifDialog" style="width:520px;max-width:94vw">
     <form method="dialog">
       <div id="notifDetail" style="max-height:65vh;overflow:auto"></div>

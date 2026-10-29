@@ -22,7 +22,7 @@ export interface CanvasPorts {
   snap(e: PointerEvent): boolean;
   select(id: string | null): void;
   /** Слой правится жестом: пометить несохранённым, обновить предпросмотр и поля свойств. */
-  edited(o: LayoutObject): void;
+  edited(o: LayoutObject, label: string): void;
   /** Жест закончен — один шаг истории. */
   gestureEnd(): void;
   /** Показать layout в предпросмотре / подогнать масштаб. */
@@ -65,8 +65,8 @@ export function mountCanvas(refs: CanvasRefs, ports: CanvasPorts) {
   }
 
   /** Применить изменение объекта во время drag или из поля свойств: сцена, рамка, поля. */
-  function touch(o: LayoutObject) {
-    ports.edited(o);
+  function touch(o: LayoutObject, verb = "Edit") {
+    ports.edited(o, `${verb} ${ports.name(o)}`);
     const box = refs.overlay.querySelector<HTMLElement>(`[data-id="${o.id}"]`);
     if (box) positionBox(box, o);
   }
@@ -110,7 +110,7 @@ export function mountCanvas(refs: CanvasRefs, ports: CanvasPorts) {
       }
       t.x = nx;
       t.y = ny;
-      touch(o);
+      touch(o, "Move");
       drawGuides(guides);
     });
   }
@@ -125,14 +125,14 @@ export function mountCanvas(refs: CanvasRefs, ports: CanvasPorts) {
           ? (r, edges) => snapResize(r, edges, snapTargets(o), { threshold: SNAP_PX / k, canvas: layout.canvas })
           : undefined,
       }));
-      touch(o);
+      touch(o, "Resize");
     });
   }
 
   /** Alt+перетаскивание ручки — обрезка (как в OBS). */
   function startCrop(ev: PointerEvent, o: LayoutObject, dirx: number, diry: number) {
     const apply = beginCrop(o.transform, dirx, diry);
-    track(ev, (dx, dy) => { apply(dx, dy); touch(o); });
+    track(ev, (dx, dy) => { apply(dx, dy); touch(o, "Crop"); });
   }
 
   function startRotate(ev: PointerEvent, o: LayoutObject) {
@@ -141,7 +141,7 @@ export function mountCanvas(refs: CanvasRefs, ports: CanvasPorts) {
     const rect = refs.frame.getBoundingClientRect();
     track(ev, (_dx, _dy, e) => {
       t.rotationZ = rotationAngle(cx, cy, (e.clientX - rect.left) / k, (e.clientY - rect.top) / k, e.shiftKey);
-      touch(o);
+      touch(o, "Rotate");
     });
   }
 

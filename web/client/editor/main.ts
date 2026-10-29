@@ -19,6 +19,7 @@ import { createViewPrefsModel } from "./features/view-prefs/model.ts";
 import { mountViewPrefs } from "./features/view-prefs/view.ts";
 import { createToaster } from "./lib/toast.ts";
 import { mountObsStatus } from "./features/obs-status/view.ts";
+import { mountHistory } from "./features/history/view.ts";
 import { createEditorModel } from "./features/editor/model.ts";
 import { $, el } from "./lib/dom.ts";
 import { type Api, httpApi } from "./lib/api.ts";
@@ -96,6 +97,7 @@ mountViewPrefs(
 
 function undo() { if (!editor.undo()) toast("Nothing to undo"); }
 function redo() { if (!editor.redo()) toast("Nothing to redo"); }
+mountHistory({ btn: $("historyBtn"), panel: $("historyPanel") }, editor, { jumpTo: (i) => editor.jumpTo(i) });
 $("undoBtn").addEventListener("click", undo);
 $("redoBtn").addEventListener("click", redo);
 
@@ -134,8 +136,8 @@ const canvas = mountCanvas(
     compose: () => viewPrefs.get().compose,
     snap: (e) => viewPrefs.get().snap && !e.ctrlKey && !e.metaKey, // Ctrl на время жеста — без прилипания
     select: (id) => editor.select(id),
-    edited(_o) {
-      editor.touch();
+    edited(_o, label) {
+      editor.touch(label);
       scene.setLayout(layout!);
       props.sync();
     },
@@ -261,14 +263,14 @@ const pluginForm = mountPluginSettings(createPluginSettingsModel(api), {
 
 const props = mountProperties($("props"), createPropertiesModel(api), {
   state: () => editor.get(),
-  fieldEdited() {
-    markDirty();
+  fieldEdited(label) {
+    editor.markDirty("geometry", label);
     scene.setLayout(layout!);
     renderOverlay();
   },
-  touched: (o) => touch(o),
-  layoutRenamed(name) { layout!.name = name; markDirty(); },
-  canvasChanged() { markDirty(); refreshCanvas(); },
+  touched: (o, label) => touch(o, label),
+  layoutRenamed(name) { layout!.name = name; editor.markDirty("geometry", "Rename layout"); },
+  canvasChanged() { editor.markDirty("geometry", "Resize canvas"); refreshCanvas(); },
   removeObject: (id) => removeObject(id),
   async sourceDeleted(id) {
     // сервер вычистил объекты в сохранённых layout; убираем и из рабочей копии
@@ -404,7 +406,7 @@ mountKeyboard({
       case "deselect": select(null); break;
       case "delete": if (o) removeObject(o.id); break;
       case "nudge":
-        if (o) { o.transform.x += cmd.dx; o.transform.y += cmd.dy; touch(o); }
+        if (o) { o.transform.x += cmd.dx; o.transform.y += cmd.dy; touch(o, "Nudge"); }
         break;
     }
   },

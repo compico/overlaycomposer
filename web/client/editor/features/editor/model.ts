@@ -5,9 +5,10 @@
 // по которому представление решает, что перерисовать (см. ChangeKind).
 import type { Layout, LayoutObject, ObsInfo, PluginManifest, Source } from "../../../../shared/types.ts";
 import { defaultTransform, uid } from "../../../../shared/types.ts";
-import { History } from "../../../../shared/history.ts";
+import { History, type HistoryEntry } from "../../../../shared/history.ts";
 import type { Api } from "../../lib/api.ts";
 import { createStore, type Readable } from "../../lib/store.ts";
+import { layerName } from "../layers/model.ts";
 
 /**
  * Что изменилось (чтобы представление не перерисовывало всё подряд):
@@ -33,6 +34,8 @@ export interface EditorState {
   obsScenes: string[];
   canUndo: boolean;
   canRedo: boolean;
+  /** Шаги истории правок (от старого к новому) для панели «History». Новый массив только при изменении истории. */
+  history: HistoryEntry[];
   change: ChangeKind;
   /** Растёт при каждом изменении — удобно для `useSyncExternalStore`/memo во фреймворке. */
   rev: number;
@@ -89,9 +92,9 @@ export interface EditorModel extends Readable<EditorState> {
   // выбор и правки
   select(id: string | null): void;
   /** Вызвать после правки на месте (жест, поле свойств): «несохранённое» + запись в историю с задержкой. */
-  touch(): void;
+  touch(label?: string): void;
   /** Правка, не требующая перерисовки (привязки сцен и т. п.). */
-  markDirty(change?: ChangeKind): void;
+  markDirty(change?: ChangeKind, label?: string): void;
   addObject(sourceId: string, w?: number, h?: number): LayoutObject | null;
   /** Добавить готовый объект (вставка из буфера) и выбрать его. */
   insertObject(o: LayoutObject): void;
@@ -103,6 +106,8 @@ export interface EditorModel extends Readable<EditorState> {
   setLocked(id: string, v: boolean): void;
   rename(id: string, name: string): void;
   // история
+  /** Перейти к любому шагу истории (как в панели History FL Studio); false — нет такого шага или он уже текущий. */
+  jumpTo(index: number): boolean;
   undo(): boolean;
   redo(): boolean;
   /** Сразу записать шаг истории (конец жеста, перед сохранением). */
@@ -123,17 +128,27 @@ export function createEditorModel(deps: EditorDeps): EditorModel {
   const delay = deps.recordDelayMs ?? 500;
   const store = createStore<EditorState>({
     layouts: [], sources: [], plugins: [], layout: null, selectedId: null, dirty: false, defaultLayoutId: null,
-    activeLayoutId: null, obsScenes: [], canUndo: false, canRedo: false, change: "reset", rev: 0,
+    activeLayoutId: null, obsScenes: [], canUndo: false, canRedo: false, history: [], change: "reset", rev: 0,
   });
   let log: History | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  /** Подпись для шага, который запишется по таймеру (последняя из объединённых правок). */
+  let pendingLabel = "";
+  let histCache: { log: History | null; version: number; list: HistoryEntry[] } = { log: null, version: -1, list: [] };
+
+  /** Список шагов для состояния: пересчитывается только при изменении истории. */
+  function historyList(): HistoryEntry[] {
+    if (!log) return [];
+    if (histCache.log !== log || histCache.version !== log.version) histCache = { log, version: log.version, list: log.entries };
+    return histCache.list;
+  }
 
   const snapshot = (l: Layout | null = store.get().layout) => JSON.stringify(l ? { canvas: l.canvas, objects: l.objects } : null);
 
   /** Опубликовать новое состояние: всегда новый объект, чтобы подписчики сработали (рабочая копия меняется на месте). */
   function emit(change: ChangeKind, patch: Partial<EditorState> = {}) {
     const s = store.get();
-    store.set({ ...s, ...patch, canUndo: !!log?.canUndo, canRedo: !!log?.canRedo, change, rev: s.rev + 1 });
+    store.set({ ...s, ...patch, canUndo: !!log?.canUndo, canRedo: !!log?.canRedo, history: historyList(), change, rev: s.rev + 1 });
   }
 
   function resetHistory(l: Layout | null) {
@@ -149,14 +164,30 @@ export function createEditorModel(deps: EditorDeps): EditorModel {
   function flush() {
     clearTimeout(timer);
     if (!log || !store.get().layout) return;
-    log.record(snapshot());
-    emit("geometry", { dirty: log.dirty });
+    const label = pendingLabel || "Edit";
+    pendingLabel = "";
+    const added = log.record(snapshot(), label);
+    // Без записи и без смены «несохранённого» ничего не изменилось — подписчиков не тревожим.
+    if (added || store.get().dirty !== log.dirty) emit("geometry", { dirty: log.dirty });
   }
 
-  function dirtyChange(change: ChangeKind, patch: Partial<EditorState> = {}) {
+  /** Правка, которая объединяется с соседними (жесты, ввод в полях): шаг истории запишется через `delay` мс. */
+  function dirtyChange(change: ChangeKind, patch: Partial<EditorState> = {}, label = "") {
+    if (label) pendingLabel = label;
     scheduleRecord();
     emit(change, { ...patch, dirty: true });
   }
+
+  /** Отдельное действие (добавить, удалить, порядок…): предыдущие правки закрываются своим шагом, у этого — своя подпись. */
+  function commit(label: string, change: ChangeKind, patch: Partial<EditorState> = {}) {
+    clearTimeout(timer);
+    if (!log) return emit(change, { ...patch, dirty: true });
+    log.record(snapshot(), label);
+    pendingLabel = "";
+    emit(change, { ...patch, dirty: log.dirty });
+  }
+
+  const nameOf = (o: LayoutObject) => layerName(o, store.get().sources);
 
   const layoutOrNull = () => store.get().layout;
   const find = (id: string) => layoutOrNull()?.objects.find((o) => o.id === id);
@@ -216,28 +247,33 @@ export function createEditorModel(deps: EditorDeps): EditorModel {
     },
 
     select(id) { emit("selection", { selectedId: id }); },
-    touch() { dirtyChange("geometry"); },
-    markDirty(change = "geometry") { dirtyChange(change); },
+    touch(label) { dirtyChange("geometry", {}, label); },
+    markDirty(change = "geometry", label) { dirtyChange(change, {}, label); },
 
     addObject(sourceId, w, h) {
       const l = layoutOrNull();
       if (!l) return null;
+      flush();
       const o = newObject(l, sourceId, store.get().sources.find((s) => s.id === sourceId)?.name, w, h);
       l.objects.push(o);
-      dirtyChange("structure", { selectedId: o.id });
+      commit(`Add ${nameOf(o)}`, "structure", { selectedId: o.id });
       return o;
     },
     insertObject(o) {
       const l = layoutOrNull();
       if (!l) return;
+      flush();
       l.objects.push(o);
-      dirtyChange("structure", { selectedId: o.id });
+      commit(`Paste ${nameOf(o)}`, "structure", { selectedId: o.id });
     },
     removeObject(id) {
       const l = layoutOrNull();
-      if (!l) return;
+      const gone = find(id);
+      if (!l || !gone) return;
+      flush();
+      const label = `Remove ${nameOf(gone)}`;
       l.objects = l.objects.filter((o) => o.id !== id);
-      dirtyChange("structure", { selectedId: store.get().selectedId === id ? null : store.get().selectedId });
+      commit(label, "structure", { selectedId: store.get().selectedId === id ? null : store.get().selectedId });
     },
     dropSource(sourceId) {
       const l = layoutOrNull();
@@ -251,11 +287,14 @@ export function createEditorModel(deps: EditorDeps): EditorModel {
     },
     reorder(movedId, beforeId) {
       const l = layoutOrNull();
-      if (l && reorderObjects(l, movedId, beforeId)) dirtyChange("structure");
+      const moved = find(movedId);
+      if (!l || !moved) return;
+      flush();
+      if (reorderObjects(l, movedId, beforeId)) commit(`Reorder ${nameOf(moved)}`, "structure");
     },
-    setVisible(id, v) { const o = find(id); if (o) { o.visible = v; dirtyChange("structure"); } },
-    setLocked(id, v) { const o = find(id); if (o) { o.locked = v; dirtyChange("layers"); } },
-    rename(id, name) { const o = find(id); if (o) { o.name = name; dirtyChange("layers"); } },
+    setVisible(id, v) { const o = find(id); if (o) { flush(); o.visible = v; commit(`${v ? "Show" : "Hide"} ${nameOf(o)}`, "structure"); } },
+    setLocked(id, v) { const o = find(id); if (o) { flush(); o.locked = v; commit(`${v ? "Lock" : "Unlock"} ${nameOf(o)}`, "layers"); } },
+    rename(id, name) { const o = find(id); if (o) { flush(); const was = nameOf(o); o.name = name; commit(`Rename ${was}`, "layers"); } },
 
     undo() {
       flush();
@@ -267,6 +306,14 @@ export function createEditorModel(deps: EditorDeps): EditorModel {
       flush();
       if (!log?.canRedo) return false;
       apply(log.redo());
+      return true;
+    },
+    jumpTo(index) {
+      flush();
+      if (!log) return false;
+      const s = log.jumpTo(index);
+      if (s === null) return false;
+      apply(s);
       return true;
     },
     flush,
@@ -298,7 +345,7 @@ export function createEditorModel(deps: EditorDeps): EditorModel {
       emit("meta", { obsScenes: scenes });
       return true;
     },
-    metaChanged() { dirtyChange("meta"); },
+    metaChanged() { dirtyChange("meta", {}, "Edit layout"); },
   };
 
   function apply(s: string | null) {
