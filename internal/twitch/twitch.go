@@ -43,16 +43,19 @@ var (
 
 // Account — аккаунт, привязанный к роли. Токены внутри хранятся, но в JSON не попадают.
 type Account struct {
-	Role         string    `json:"role"`
-	UserID       string    `json:"userId"`
-	Login        string    `json:"login"`
-	DisplayName  string    `json:"displayName"`
-	Scopes       []string  `json:"scopes"`
-	ConnectedAt  time.Time `json:"connectedAt"`
-	LastError    string    `json:"error,omitempty"`
-	AccessToken  string    `json:"-"`
-	RefreshToken string    `json:"-"`
-	ExpiresAt    time.Time `json:"-"`
+	Role        string    `json:"role"`
+	UserID      string    `json:"userId"`
+	Login       string    `json:"login"`
+	DisplayName string    `json:"displayName"`
+	Scopes      []string  `json:"scopes"`
+	ConnectedAt time.Time `json:"connectedAt"`
+	LastError   string    `json:"error,omitempty"`
+	// Вычисляются в Accounts() и не хранятся: нужно ли пользователю подключить аккаунт заново и каких прав не хватает.
+	NeedsReconnect bool      `json:"needsReconnect"`
+	MissingScopes  []string  `json:"missingScopes,omitempty"`
+	AccessToken    string    `json:"-"`
+	RefreshToken   string    `json:"-"`
+	ExpiresAt      time.Time `json:"-"`
 }
 
 // Storage — то, что нужно от базы.
@@ -145,7 +148,36 @@ func (m *Manager) SetApp(clientID, clientSecret string) error {
 }
 
 // Accounts — подключённые аккаунты (без токенов в JSON).
-func (m *Manager) Accounts() ([]Account, error) { return m.st.ListAccounts() }
+//
+// Для каждого аккаунта вычисляется NeedsReconnect: токен не обновляется (LastError) либо аккаунту выданы не все права,
+// которые роль просит сейчас (например, после обновления приложения с новой функцией, см. Scopes): MissingScopes.
+func (m *Manager) Accounts() ([]Account, error) {
+	list, err := m.st.ListAccounts()
+	for i := range list {
+		annotate(&list[i])
+	}
+	return list, err
+}
+
+// MissingScopes — права из Scopes[role], которых нет среди выданных.
+func MissingScopes(role string, granted []string) []string {
+	have := make(map[string]bool, len(granted))
+	for _, s := range granted {
+		have[s] = true
+	}
+	var miss []string
+	for _, s := range Scopes[role] {
+		if !have[s] {
+			miss = append(miss, s)
+		}
+	}
+	return miss
+}
+
+func annotate(a *Account) {
+	a.MissingScopes = MissingScopes(a.Role, a.Scopes)
+	a.NeedsReconnect = a.LastError != "" || len(a.MissingScopes) > 0
+}
 
 // ---- подключение ----
 

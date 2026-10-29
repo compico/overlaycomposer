@@ -216,3 +216,51 @@ func TestDisconnectAndAppChange(t *testing.T) {
 		t.Fatal("empty id accepted")
 	}
 }
+
+func TestAccountsNeedsReconnect(t *testing.T) {
+	m, st, _ := setup(t)
+	connect(t, m, RoleStreamer)
+	connect(t, m, RoleBot)
+
+	byRole := func() map[string]Account {
+		list, err := m.Accounts()
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]Account{}
+		for _, a := range list {
+			out[a.Role] = a
+		}
+		return out
+	}
+
+	// Всё выдано, ошибок нет — переподключать не нужно.
+	for role, a := range byRole() {
+		if a.NeedsReconnect || len(a.MissingScopes) != 0 {
+			t.Fatalf("%s: unexpected reconnect: %+v", role, a)
+		}
+	}
+
+	// Токен не обновился — нужно переподключить.
+	bot := st.accs[RoleBot]
+	bot.LastError = "reconnect required: Invalid refresh token"
+	st.accs[RoleBot] = bot
+	if a := byRole()[RoleBot]; !a.NeedsReconnect || len(a.MissingScopes) != 0 {
+		t.Fatalf("expired token: %+v", a)
+	}
+
+	// Приложение стало просить больше прав, чем выдано аккаунту стримера — нужно переподключить.
+	old := Scopes[RoleStreamer]
+	Scopes[RoleStreamer] = append(append([]string{}, old...), "channel:read:redemptions")
+	defer func() { Scopes[RoleStreamer] = old }()
+	a := byRole()[RoleStreamer]
+	if !a.NeedsReconnect || len(a.MissingScopes) != 1 || a.MissingScopes[0] != "channel:read:redemptions" {
+		t.Fatalf("missing scope: %+v", a)
+	}
+
+	// Лишние выданные права (приложение стало просить меньше) — не повод для переподключения.
+	Scopes[RoleStreamer] = []string{"chat:read"}
+	if a := byRole()[RoleStreamer]; a.NeedsReconnect {
+		t.Fatalf("extra scopes should be fine: %+v", a)
+	}
+}
