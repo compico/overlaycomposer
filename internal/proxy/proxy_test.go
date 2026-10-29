@@ -133,7 +133,7 @@ func TestRewriteHTML(t *testing.T) {
 }
 
 func TestInjectionJSON(t *testing.T) {
-	s := injection("chat", "https://www.example.com")
+	s := injection("chat", "https://www.example.com", "")
 	for _, want := range []string{`"id":"chat"`, `"site":"example.com"`, `"wsScheme":"wss"`, `"host":"www.example.com"`, `name="referrer"`} {
 		if !strings.Contains(s, want) {
 			t.Errorf("missing %s in %s", want, s)
@@ -339,7 +339,7 @@ func TestRemountHTMLAndCSS(t *testing.T) {
 }
 
 func TestInjectionBlocklist(t *testing.T) {
-	if inj := injection("s", "https://example.com"); !strings.Contains(inj, `"block":["mytopf.com"`) {
+	if inj := injection("s", "https://example.com", ""); !strings.Contains(inj, `"block":["mytopf.com"`) {
 		t.Errorf("нет block: %s", inj)
 	}
 }
@@ -367,10 +367,24 @@ func TestDoCSS(t *testing.T) {
 }
 
 func TestInjectionSPAFlag(t *testing.T) {
-	if s := injection("memealerts", "https://memealerts.com"); !strings.Contains(s, `"spa":true`) {
-		t.Errorf("router site must hide the /proxy/<id> prefix: %s", s)
+	cases := []struct {
+		name, id, origin, mode string
+		want                   bool
+	}{
+		{"known site, auto", "memealerts", "https://memealerts.com", model.RouterAuto, true},
+		{"other site, auto", "e", "https://www.example.com", model.RouterAuto, false},
+		{"other site, forced on", "e", "https://www.example.com", model.RouterOn, true},
+		{"known site, forced off", "memealerts", "https://memealerts.com", model.RouterOff, false},
+		{"garbage mode behaves as auto", "e", "https://www.example.com", "weird", false},
 	}
-	if s := injection("e", "https://www.example.com"); !strings.Contains(s, `"spa":false`) {
-		t.Errorf("other sites keep their address: %s", s)
+	for _, c := range cases {
+		s := injection(c.id, c.origin, c.mode)
+		want := `"spa":false`
+		if c.want {
+			want = `"spa":true`
+		}
+		if !strings.Contains(s, want) {
+			t.Errorf("%s: want %s in %s", c.name, want, s)
+		}
 	}
 }

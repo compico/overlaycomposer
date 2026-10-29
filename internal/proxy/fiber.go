@@ -38,11 +38,12 @@ func (p *Proxy) refererFallback(c fiber.Ctx) error {
 	if id == "" {
 		return c.Next()
 	}
-	origin := UpstreamOrigin(p.lookup(id))
+	src := p.lookup(id)
+	origin := UpstreamOrigin(src)
 	if origin == "" {
 		return c.Next()
 	}
-	err := p.forward(c, id, origin, c.OriginalURL(), nil)
+	err := p.forward(c, id, origin, src.Data.Router, c.OriginalURL(), nil)
 	if err == nil && c.Response().StatusCode() < 400 {
 		if u, perr := url.ParseRequestURI(c.OriginalURL()); perr == nil {
 			p.served.set(u.Path, id) // зависимости этого ресурса придут с Referer = его URL
@@ -57,11 +58,12 @@ func (p *Proxy) handleHTTP(c fiber.Ctx) error {
 	if !ok {
 		return text(c, 400, "bad request")
 	}
-	origin := UpstreamOrigin(p.lookup(id))
+	src := p.lookup(id)
+	origin := UpstreamOrigin(src)
 	if origin == "" {
 		return text(c, 404, "not found")
 	}
-	return p.forward(c, id, origin, tail, nil)
+	return p.forward(c, id, origin, src.Data.Router, tail, nil)
 }
 
 var hostTailRe = regexp.MustCompile(`^/(https?|wss?)/([^/?#]+)(/[^?#]*)?(\?.*)?$`)
@@ -72,7 +74,8 @@ func (p *Proxy) handleHost(c fiber.Ctx) error {
 	if !ok {
 		return text(c, 400, "bad request")
 	}
-	origin := UpstreamOrigin(p.lookup(id))
+	src := p.lookup(id)
+	origin := UpstreamOrigin(src)
 	if origin == "" {
 		return text(c, 404, "not found")
 	}
@@ -89,7 +92,7 @@ func (p *Proxy) handleHost(c fiber.Ctx) error {
 		path = "/"
 	}
 	via := &Via{Origin: sibling, Mount: strings.TrimRight(HostPrefix, "/") + "/" + id + "/" + m[1] + "/" + m[2]}
-	return p.forward(c, id, origin, path+m[4], via)
+	return p.forward(c, id, origin, src.Data.Router, path+m[4], via)
 }
 
 // splitID разбирает "<prefix><id><tail>" из OriginalURL (путь и query сохраняются в исходной кодировке).
@@ -111,13 +114,13 @@ func splitID(original, prefix string) (id, tail string, ok bool) {
 }
 
 // forward выполняет запрос через Do и отдаёт ответ браузеру (потоком, со сбросом буфера — для SSE и long-poll).
-func (p *Proxy) forward(c fiber.Ctx, id, origin, pathQuery string, via *Via) error {
+func (p *Proxy) forward(c fiber.Ctx, id, origin, router, pathQuery string, via *Via) error {
 	hdr := http.Header{}
 	for k, v := range c.Request().Header.All() {
 		hdr.Add(string(k), string(v))
 	}
 	resp, err := p.Do(Request{
-		Method: c.Method(), ID: id, Origin: origin, PathQuery: pathQuery, Header: hdr,
+		Method: c.Method(), ID: id, Origin: origin, Router: router, PathQuery: pathQuery, Header: hdr,
 		Body: append([]byte(nil), c.Body()...), Via: via,
 	})
 	if err != nil {

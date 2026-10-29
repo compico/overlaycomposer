@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { LayoutObject, Source, Transform } from "../../../../shared/types.ts";
 import { fakeApi } from "../../lib/fakeapi.test-helper.ts";
-import { canvasFromInputs, createPropertiesModel, MIN_SIZE, resetCrop, setCrop, transformFields } from "./model.ts";
+import { canvasFromInputs, createPropertiesModel, MIN_SIZE, resetCrop, ROUTER_MODES, setCrop, transformFields } from "./model.ts";
 
 const tr = (extra: Partial<Transform> = {}): Transform =>
   ({ x: 100, y: 100, z: 0, width: 400, height: 300, rotationX: 0, rotationY: 0, rotationZ: 0, scaleX: 1, scaleY: 1, scaleZ: 1, ...extra }) as Transform;
@@ -72,4 +72,21 @@ test("операции над источником и default layout", async () 
 test("sad path: ошибка сервера пробрасывается вызывающему", async () => {
   const f = fakeApi({ "PUT /api/sources/s1": () => { throw new Error("relative url"); } });
   await assert.rejects(createPropertiesModel(f.api).setSourceProxy({ id: "s1" } as Source, true), /relative url/);
+});
+
+test("режим SPA-роутера: PUT с data.router и обновление источника; ошибка не меняет источник", async () => {
+  const f = fakeApi({ "PUT /api/sources/s1": () => ({}) });
+  const m = createPropertiesModel(f.api);
+  const src = { id: "s1", data: { url: "https://x", proxy: true } } as Source;
+  await m.setSourceRouter(src, "on");
+  assert.deepEqual(f.bodies[0], { data: { router: "on" } });
+  assert.equal(src.data.router, "on");
+  await m.setSourceRouter(src, "");
+  assert.equal(src.data.router, "");
+  assert.deepEqual(ROUTER_MODES.map((x) => x.value), ["", "on", "off"]);
+
+  const bad = fakeApi({ "PUT /api/sources/s1": () => { throw new Error("invalid router"); } });
+  const s2 = { id: "s1", data: { router: "off" } } as Source;
+  await assert.rejects(createPropertiesModel(bad.api).setSourceRouter(s2, "on"), /invalid router/);
+  assert.equal(s2.data.router, "off");
 });

@@ -96,3 +96,36 @@ func TestFiberEndToEnd(t *testing.T) {
 		t.Errorf("без Referer должен быть наш 404, got %d", resp.StatusCode)
 	}
 }
+
+// Режим «SPA-роутер» источника доходит до страницы: явный выбор важнее списка известных сайтов.
+func TestRouterModeReachesPage(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		io.WriteString(w, `<html><head><title>t</title></head><body></body></html>`)
+	}))
+	defer up.Close()
+
+	for _, c := range []struct{ mode, want string }{
+		{model.RouterAuto, `"spa":false`}, // httptest-хост не в списке известных сайтов
+		{model.RouterOn, `"spa":true`},
+		{model.RouterOff, `"spa":false`},
+	} {
+		src := &model.Source{ID: "s", Type: "iframe", Data: model.SourceData{URL: up.URL + "/", Proxy: true, Router: c.mode}}
+		p := New(func(id string) *model.Source {
+			if id == "s" {
+				return src
+			}
+			return nil
+		})
+		app := fiber.New()
+		p.Register(app)
+		resp, err := app.Test(httptest.NewRequest("GET", "/proxy/s/", nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		if !strings.Contains(string(b), c.want) {
+			t.Errorf("router=%q: want %s in %s", c.mode, c.want, b)
+		}
+	}
+}

@@ -88,6 +88,7 @@ type Request struct {
 	Method    string
 	ID        string
 	Origin    string // origin источника: от него Origin/Referer, по нему определяется «сайт»
+	Router    string // режим «SPA-роутер» источника: "" (авто) | "on" | "off"
 	PathQuery string // путь и query на стороне сайта, начинается с "/"
 	Header    http.Header
 	Body      []byte
@@ -221,7 +222,7 @@ func (p *Proxy) Do(r Request) (*Response, error) {
 	neutralized := 0
 	if isHTML {
 		var st Stats
-		buf, st = RewriteHTML(buf, injection(r.ID, r.Origin), mount)
+		buf, st = RewriteHTML(buf, injection(r.ID, r.Origin, r.Router), mount)
 		neutralized = st.Neutralized
 		if st.CSPRemoved > 0 {
 			slog.Info("proxy: удалён meta Content-Security-Policy", "n", st.CSPRemoved, "path", target.Path, "source", r.ID)
