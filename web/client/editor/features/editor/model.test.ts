@@ -173,3 +173,68 @@ test("каждое изменение публикуется с типом (дл
   m.touch();
   assert.deepEqual(kinds.slice(0, 4), ["selection", "structure", "layers", "geometry"]);
 });
+
+test("история: подписи шагов, отдельные действия — отдельные шаги, переход к любому шагу", async () => {
+  const { m } = setup();
+  await m.bootstrap();
+  assert.deepEqual(m.get().history.map((e) => e.label), ["Opened"]);
+
+  m.setVisible("a", false);
+  m.setLocked("b", true);
+  m.rename("a", "Alpha");
+  m.removeObject("b");
+  assert.deepEqual(m.get().history.map((e) => e.label), ["Opened", "Hide a", "Lock b", "Rename a", "Remove b"]);
+
+  // жест: правки подряд склеиваются в один шаг с подписью последней
+  m.get().layout!.objects[0].transform.x = 10;
+  m.touch("Move Alpha");
+  m.get().layout!.objects[0].transform.x = 20;
+  m.touch("Move Alpha");
+  await wait();
+  assert.equal(m.get().history.length, 6);
+  assert.equal(m.get().history[5].label, "Move Alpha");
+
+  // прыжок на 2-й шаг («Hide a»): b ещё есть, у a нет нового имени
+  assert.equal(m.jumpTo(1), true);
+  const l = m.get().layout!;
+  assert.deepEqual(l.objects.map((o) => o.id), ["a", "b"]);
+  assert.equal(l.objects[0].visible, false);
+  assert.equal(l.objects[0].name, "a");
+  assert.equal(l.objects[1].locked, false);
+  assert.equal(m.get().history.find((e) => e.current)?.index, 1);
+  assert.equal(m.get().canRedo, true);
+
+  // и вперёд, к последнему
+  assert.equal(m.jumpTo(5), true);
+  assert.equal(m.get().layout!.objects[0].transform.x, 20);
+
+  // новая правка после отката стирает «будущее»
+  m.jumpTo(2);
+  m.setVisible("a", true);
+  assert.equal(m.get().history.length, 4);
+  assert.equal(m.get().history[3].label, "Show a");
+});
+
+test("история, sad path: прыжок за границы или на текущий шаг ничего не меняет; без layout — false", async () => {
+  const { m } = setup();
+  assert.equal(m.jumpTo(0), false); // layout ещё не открыт
+  await m.bootstrap();
+  m.setVisible("a", false);
+  const before = m.get();
+  assert.equal(m.jumpTo(1), false); // текущий
+  assert.equal(m.jumpTo(7), false);
+  assert.equal(m.jumpTo(-1), false);
+  assert.equal(m.get(), before); // состояние не публиковалось заново
+});
+
+test("история и несохранённое: прыжок к сохранённому шагу снимает dirty, список помечает его", async () => {
+  const { m } = setup();
+  await m.bootstrap();
+  m.setVisible("a", false);
+  await m.save();
+  m.setVisible("a", true);
+  assert.equal(m.get().dirty, true);
+  assert.deepEqual(m.get().history.map((e) => e.saved), [false, true, false]);
+  m.jumpTo(1);
+  assert.equal(m.get().dirty, false);
+});
