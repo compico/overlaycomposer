@@ -36,14 +36,6 @@ func TestStorageOverWebSocket(t *testing.T) {
 	defer s.app.Shutdown()
 	addr := ln.Addr().String()
 
-	dial := func() *websocket.Conn {
-		c, _, err := websocket.DefaultDialer.Dial("ws://"+addr+"/ws", nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { c.Close() })
-		return c
-	}
 	recv := func(c *websocket.Conn, typ string) map[string]any {
 		t.Helper()
 		_ = c.SetReadDeadline(time.Now().Add(3 * time.Second))
@@ -58,6 +50,18 @@ func TestStorageOverWebSocket(t *testing.T) {
 				return m
 			}
 		}
+	}
+	dial := func() *websocket.Conn {
+		c, _, err := websocket.DefaultDialer.Dial("ws://"+addr+"/ws", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { c.Close() })
+		// Рукопожатие завершается раньше, чем сервер регистрирует соединение в хабе: если сразу отправить запись с другой
+		// страницы, рассылка storage:changed не дойдёт до ещё не зарегистрированной (тест был нестабильным). hello шлётся
+		// из AddPeer сразу после регистрации — ждём его.
+		recv(c, "hello")
+		return c
 	}
 	a, b := dial(), dial()
 	rpc := func(c *websocket.Conn, m map[string]any) map[string]any {
