@@ -9,6 +9,7 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 
+	"github.com/compico/overlaycomposer/internal/notify"
 	"github.com/compico/overlaycomposer/internal/twitch"
 )
 
@@ -28,6 +29,20 @@ func (s *Server) twitchRedirectURI() string {
 	return "http://localhost:" + strconv.Itoa(s.d.Running.Port) + "/auth/twitch/callback"
 }
 
+// SyncTwitchNotifications приводит уведомления «переподключите аккаунт» в соответствие с текущим состоянием аккаунтов.
+// Вызывается при запуске, периодически и после любых изменений аккаунтов.
+func (s *Server) SyncTwitchNotifications() {
+	if s.d.Notify == nil || s.d.Twitch == nil {
+		return
+	}
+	accs, err := s.d.Twitch.Accounts()
+	if err != nil {
+		slog.Warn("twitch: не удалось прочитать аккаунты для уведомлений", "err", err)
+		return
+	}
+	s.d.Notify.Sync(notify.KindTwitchReconnect, twitch.ReconnectItems(accs))
+}
+
 func (s *Server) twitchStatus(c fiber.Ctx) error {
 	id, hasSecret, err := s.d.Twitch.AppInfo()
 	if err != nil {
@@ -37,6 +52,7 @@ func (s *Server) twitchStatus(c fiber.Ctx) error {
 	if err != nil {
 		return serverErr(c, err)
 	}
+	s.SyncTwitchNotifications()
 	if accs == nil {
 		accs = []twitch.Account{}
 	}
@@ -78,6 +94,7 @@ func (s *Server) twitchDisconnect(c fiber.Ctx) error {
 	switch {
 	case err == nil:
 		s.d.Chat.Reload()
+		s.SyncTwitchNotifications()
 		return c.JSON(fiber.Map{"ok": true})
 	case errors.Is(err, twitch.ErrBadRole):
 		return bad(c, err.Error())
@@ -99,6 +116,7 @@ func (s *Server) twitchCallback(c fiber.Ctx) error {
 	}
 	slog.Info("twitch: аккаунт подключён", "role", acc.Role, "login", acc.Login)
 	s.d.Chat.Reload() // соединения для отправки пересоздадутся уже с новым аккаунтом
+	s.SyncTwitchNotifications()
 	return s.twitchResult(c, fiber.StatusOK, "Connected as "+acc.Login, "Role: "+acc.Role+". You can close this tab and return to Overlay Composer.")
 }
 

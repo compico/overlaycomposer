@@ -4,11 +4,22 @@ import { createStore, type Readable } from "../../lib/store.ts";
 
 export type TwitchRole = "streamer" | "bot";
 
+export interface TwitchAccount {
+  role: string;
+  login: string;
+  scopes: string[];
+  error?: string;
+  /** Сервер: токен не обновляется или выданы не все права, которые нужны сейчас. */
+  needsReconnect?: boolean;
+  /** Каких прав не хватает (после обновления приложения с новыми функциями). */
+  missingScopes?: string[];
+}
+
 export interface TwitchInfo {
   clientId: string;
   hasSecret: boolean;
   redirectUri: string;
-  accounts: { role: string; login: string; scopes: string[]; error?: string }[];
+  accounts: TwitchAccount[];
 }
 
 export interface TwitchModel extends Readable<TwitchInfo | null> {
@@ -42,4 +53,36 @@ export function createTwitchModel(api: Api): TwitchModel {
     },
   };
   return model;
+}
+
+const ROLE_TITLE: Record<string, string> = { streamer: "Streamer", bot: "Bot" };
+
+/** Что не так с аккаунтом, по-человечески; пусто — всё хорошо. */
+export function accountProblem(a: TwitchAccount): string {
+  if (a.error) return a.error;
+  if (a.missingScopes?.length) return `new features need extra permissions (${a.missingScopes.join(", ")}) — reconnect the account`;
+  return a.needsReconnect ? "reconnect the account" : "";
+}
+
+export interface ReconnectIssue {
+  role: string;
+  login: string;
+  problem: string;
+}
+
+/** Аккаунты, которые нужно подключить заново (не подключённая роль — не проблема). null — раздел недоступен. */
+export function reconnectIssues(info: TwitchInfo | null): ReconnectIssue[] {
+  if (!info) return [];
+  return info.accounts
+    .filter((a) => a.needsReconnect || !!a.error || !!a.missingScopes?.length)
+    .map((a) => ({ role: a.role, login: a.login, problem: accountProblem(a) }));
+}
+
+/** Бейдж в шапке: null — показывать нечего. */
+export function reconnectBadge(issues: ReconnectIssue[]): { text: string; title: string } | null {
+  if (issues.length === 0) return null;
+  return {
+    text: issues.length === 1 ? `Twitch: reconnect ${ROLE_TITLE[issues[0].role] ?? issues[0].role}` : "Twitch: reconnect",
+    title: `${issues.map((i) => `${ROLE_TITLE[i.role] ?? i.role} (${i.login}): ${i.problem}`).join("\n")}\n\nClick to open Settings`,
+  };
 }

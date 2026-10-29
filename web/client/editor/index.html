@@ -18,7 +18,7 @@
     header .title { font-weight: 700; }
     header .spacer { flex: 1; }
     .badge { padding: 2px 8px; border-radius: 99px; background: var(--panel2); color: var(--muted); font-size: 12px; }
-    #obsBadge { cursor: pointer; }
+    #obsBadge, #twitchBadge { cursor: pointer; }
     .badge.ok { color: var(--ok); }
     .badge.bad { color: var(--danger); }
     main { display: grid; grid-template-columns: 260px 1fr 280px; min-height: 0; }
@@ -125,6 +125,7 @@
       <span class="badge" id="canvasSize"></span>
       <span class="spacer"></span>
       <span class="badge" id="obsBadge">OBS: …</span>
+      <span class="badge bad" id="twitchBadge" hidden></span>
       <span class="badge" id="sceneBadge"></span>
       <span class="badge" id="dirtyBadge"></span>
       <button id="undoBtn" title="Undo (Ctrl+Z)" aria-label="Undo" disabled>↶</button>

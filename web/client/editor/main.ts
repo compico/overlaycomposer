@@ -33,7 +33,7 @@ import { mountApp } from "./features/app/view.ts";
 import { createConfigModel } from "./features/config/model.ts";
 import { mountConfig } from "./features/config/view.ts";
 import { createTwitchModel } from "./features/twitch/model.ts";
-import { mountTwitch } from "./features/twitch/view.ts";
+import { mountTwitch, mountTwitchBadge } from "./features/twitch/view.ts";
 import { createDevicesModel } from "./features/devices/model.ts";
 import { mountDevices } from "./features/devices/view.ts";
 import { createObsImportModel } from "./features/obs-import/model.ts";
@@ -319,6 +319,11 @@ const twitchView = mountTwitch(
   { toast, fail },
 );
 
+mountTwitchBadge($("twitchBadge"), twitchModel, () => $("settingsBtn").click());
+// Проверяем при старте и раз в 5 минут: токен может «протухнуть» уже во время работы.
+void twitchModel.load();
+setInterval(() => void twitchModel.load(), 5 * 60_000);
+
 const devicesModel = createDevicesModel(api);
 const devicesView = mountDevices(
   {
@@ -468,5 +473,5 @@ setTimeout(() => void appModel.load(), 15000);
 mountNotifications(
   { bell: $("bellBtn"), count: $("bellCount"), panel: $("notifPanel"), dialog: $<HTMLDialogElement>("notifDialog"), detail: $("notifDetail"), actions: $("notifActions") },
   createNotificationsModel(api),
-  { ui: { toast, fail }, openStore: pluginStore.open },
+  { ui: { toast, fail }, openStore: pluginStore.open, openSettings: () => $("settingsBtn").click() },
 );

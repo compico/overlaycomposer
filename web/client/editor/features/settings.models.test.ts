@@ -6,7 +6,7 @@ import { fakeApi } from "../lib/fakeapi.test-helper.ts";
 import { createAppModel } from "./app/model.ts";
 import { createConfigModel } from "./config/model.ts";
 import { createDevicesModel } from "./devices/model.ts";
-import { createTwitchModel } from "./twitch/model.ts";
+import { accountProblem, createTwitchModel, reconnectBadge, reconnectIssues, type TwitchInfo } from "./twitch/model.ts";
 
 const app = { compiled: true, os: "linux", configFile: "c", dataDir: "d", logFile: "l", autostart: false, tray: true, trayAvailable: true, version: "v1" };
 
@@ -95,4 +95,31 @@ test("devices: load, revoke кодирует id и перечитывает, о�
   ok = false;
   await m.load();
   assert.equal(m.get(), null);
+});
+
+const twInfo = (accounts: TwitchInfo["accounts"]): TwitchInfo => ({ clientId: "c", hasSecret: true, redirectUri: "r", accounts });
+
+test("twitch: бейдж — при ошибке токена и при нехватке прав; не подключённая роль и лишние права — не проблема", () => {
+  assert.deepEqual(reconnectIssues(null), []);
+  assert.deepEqual(reconnectIssues(twInfo([])), []);
+  assert.deepEqual(reconnectIssues(twInfo([{ role: "streamer", login: "me", scopes: ["chat:read", "chat:edit", "extra"] }])), []);
+
+  const expired = { role: "bot", login: "bot1", scopes: [], error: "reconnect required: Invalid refresh token", needsReconnect: true };
+  const scopes = { role: "streamer", login: "me", scopes: ["chat:read"], missingScopes: ["chat:edit"], needsReconnect: true };
+  const issues = reconnectIssues(twInfo([expired, scopes]));
+  assert.deepEqual(issues.map((i) => i.role), ["bot", "streamer"]);
+  assert.match(issues[1].problem, /extra permissions \(chat:edit\)/);
+
+  assert.equal(reconnectBadge([]), null);
+  assert.equal(reconnectBadge(issues.slice(0, 1))?.text, "Twitch: reconnect Bot");
+  const both = reconnectBadge(issues);
+  assert.equal(both?.text, "Twitch: reconnect");
+  assert.match(both!.title, /Streamer \(me\): .*chat:edit/);
+  assert.match(both!.title, /Bot \(bot1\): reconnect required/);
+});
+
+test("twitch: accountProblem — ошибка важнее прав; пусто, когда всё хорошо", () => {
+  assert.equal(accountProblem({ role: "bot", login: "b", scopes: [] }), "");
+  assert.equal(accountProblem({ role: "bot", login: "b", scopes: [], error: "boom", missingScopes: ["x"] }), "boom");
+  assert.equal(accountProblem({ role: "bot", login: "b", scopes: [], needsReconnect: true }), "reconnect the account");
 });

@@ -16,6 +16,8 @@ import (
 const (
 	KindPluginUpdate = "plugin-update"
 	KindAppUpdate    = "app-update"
+	// KindTwitchReconnect — аккаунт Twitch нужно подключить заново (токен не обновляется или не хватает прав).
+	KindTwitchReconnect = "twitch-reconnect"
 
 	maxItems = 100
 
@@ -50,6 +52,9 @@ type Center struct {
 
 	mu sync.Mutex
 	f  file
+	// announced — о каких условиях (kind → ключи) уже сообщили за этот запуск: Sync не возвращает уведомление,
+	// которое пользователь убрал, пока условие не исчезло и не появилось снова.
+	announced map[string]map[string]bool
 
 	checkMu sync.Mutex // одна проверка за раз
 }
@@ -80,6 +85,10 @@ func (c *Center) saveLocked() {
 func (c *Center) Upsert(it Item) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.upsertLocked(it)
+}
+
+func (c *Center) upsertLocked(it Item) {
 	for i := range c.f.Items {
 		if c.f.Items[i].Key == it.Key {
 			old := c.f.Items[i]
@@ -104,6 +113,10 @@ func (c *Center) Upsert(it Item) {
 func (c *Center) Resolve(kind string, keep map[string]bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.resolveLocked(kind, keep)
+}
+
+func (c *Center) resolveLocked(kind string, keep map[string]bool) {
 	out := c.f.Items[:0]
 	changed := false
 	for _, it := range c.f.Items {
@@ -117,6 +130,38 @@ func (c *Center) Resolve(kind string, keep map[string]bool) {
 	if changed {
 		c.saveLocked()
 	}
+}
+
+// Sync приводит уведомления вида kind в соответствие с текущими условиями items (для условий, которые проверяются
+// часто, а не раз в несколько часов: токен Twitch). Новое условие становится уведомлением один раз за запуск: убранное
+// пользователем не возвращается, пока условие не пропадёт и не появится снова. Пропавшие условия снимаются.
+func (c *Center) Sync(kind string, items []Item) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.announced == nil {
+		c.announced = map[string]map[string]bool{}
+	}
+	seen := c.announced[kind]
+	if seen == nil {
+		seen = map[string]bool{}
+		c.announced[kind] = seen
+	}
+	keep := make(map[string]bool, len(items))
+	for _, it := range items {
+		keep[it.Key] = true
+		if seen[it.Key] {
+			continue
+		}
+		seen[it.Key] = true
+		it.Kind = kind
+		c.upsertLocked(it)
+	}
+	for k := range seen {
+		if !keep[k] {
+			delete(seen, k)
+		}
+	}
+	c.resolveLocked(kind, keep)
 }
 
 // List — уведомления, новые первыми.

@@ -1,7 +1,7 @@
 import { copyText, COPY_ICON } from "../../lib/clipboard.ts";
 import { el } from "../../lib/dom.ts";
 import type { Ui } from "../../lib/ui.ts";
-import type { TwitchModel, TwitchRole } from "./model.ts";
+import { accountProblem, reconnectBadge, reconnectIssues, type TwitchModel, type TwitchRole } from "./model.ts";
 
 export interface TwitchRefs {
   box: HTMLElement;
@@ -31,9 +31,10 @@ export function mountTwitch(refs: TwitchRefs, model: TwitchModel, ui: Ui) {
     const ready = !!v.clientId && v.hasSecret;
     refs.accounts.replaceChildren(...ROLES.map(([role, title]) => {
       const acc = v.accounts.find((a) => a.role === role);
+      const problem = acc ? accountProblem(acc) : "";
       const info = el("span", {
-        class: acc?.error ? "hint warn" : "hint",
-        textContent: acc ? `${title}: ${acc.login}${acc.error ? ` — ${acc.error}` : ""}` : `${title}: not connected`,
+        class: problem ? "hint warn" : "hint",
+        textContent: acc ? `${title}: ${acc.login}${problem ? ` — ${problem}` : ""}` : `${title}: not connected`,
       });
       // Два аккаунта в одном браузере не подключить (Twitch помнит вход), поэтому вместо перехода — ссылка в буфер обмена:
       // её можно открыть в другом браузере/профиле/приватном окне, где выполнен вход нужным аккаунтом.
@@ -78,4 +79,16 @@ export function mountTwitch(refs: TwitchRefs, model: TwitchModel, ui: Ui) {
 
   /** Настройки открыты заново: поля формы снова заполняются с сервера. */
   return { resetForm() { formFilled = false; } };
+}
+
+/** Бейдж «Twitch: reconnect» в шапке: виден, пока какому-то аккаунту нужно переподключение; клик открывает настройки. */
+export function mountTwitchBadge(badge: HTMLElement, model: TwitchModel, openSettings: () => void) {
+  model.subscribe((v) => {
+    const b = reconnectBadge(reconnectIssues(v));
+    badge.hidden = !b;
+    if (!b) return;
+    badge.textContent = b.text;
+    badge.title = b.title;
+  });
+  badge.addEventListener("click", openSettings);
 }
