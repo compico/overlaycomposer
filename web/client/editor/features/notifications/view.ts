@@ -17,6 +17,8 @@ export interface NotificationsPorts {
   ui: Ui;
   /** Открыть магазин плагинов (кнопка в окне обновления плагина). */
   openStore(): void;
+  /** Открыть настройки (кнопка в уведомлении «переподключите аккаунт Twitch»). */
+  openSettings(): void;
 }
 
 function ago(ts: number): string {
@@ -96,6 +98,12 @@ export function mountNotifications(refs: NotificationsRefs, model: Notifications
         const a = el("a", { href: d.url, target: "_blank", rel: "noopener noreferrer", textContent: "Open the release page" });
         refs.detail.append(el("div", { style: "margin-top:8px" }, a));
       }
+    } else if (n.kind === "twitch-reconnect") {
+      if (n.text) refs.detail.append(el("div", { class: "hint warn" }, n.text));
+      refs.detail.append(el("div", { class: "hint" }, "Settings → Twitch accounts: copy the link next to the account and open it in a browser where that Twitch account is signed in."));
+      const open = el("button", { type: "button", class: "primary" }, "Open Settings");
+      open.addEventListener("click", () => { refs.dialog.close(); ports.openSettings(); });
+      refs.actions.append(open);
     } else if (n.text) {
       refs.detail.append(el("div", { class: "hint" }, n.text));
     }

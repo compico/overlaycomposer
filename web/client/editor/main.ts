@@ -473,5 +473,5 @@ setTimeout(() => void appModel.load(), 15000);
 mountNotifications(
   { bell: $("bellBtn"), count: $("bellCount"), panel: $("notifPanel"), dialog: $<HTMLDialogElement>("notifDialog"), detail: $("notifDetail"), actions: $("notifActions") },
   createNotificationsModel(api),
-  { ui: { toast, fail }, openStore: pluginStore.open },
+  { ui: { toast, fail }, openStore: pluginStore.open, openSettings: () => $("settingsBtn").click() },
 );

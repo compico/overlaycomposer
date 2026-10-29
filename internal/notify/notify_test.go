@@ -128,3 +128,36 @@ func TestFailedCheckKeepsItemsAndRetriesSooner(t *testing.T) {
 		t.Fatalf("через FailedInterval: %v", err)
 	}
 }
+
+func TestSyncAnnouncesOnceAndResolves(t *testing.T) {
+	c := Open("")
+	a := Item{Key: "twitch:bot:token", Title: "Reconnect"}
+	c.Sync(KindTwitchReconnect, []Item{a})
+	if l := c.List(); len(l) != 1 || l[0].Kind != KindTwitchReconnect || c.Unread() != 1 {
+		t.Fatalf("first sync: %+v", l)
+	}
+	// повторная синхронизация не плодит дубли и не сбрасывает «прочитано»
+	c.MarkRead(a.Key)
+	c.Sync(KindTwitchReconnect, []Item{a})
+	if len(c.List()) != 1 || c.Unread() != 0 {
+		t.Fatalf("second sync: %+v", c.List())
+	}
+	// пользователь убрал — пока условие держится, уведомление не возвращается
+	c.Dismiss(a.Key)
+	c.Sync(KindTwitchReconnect, []Item{a})
+	if len(c.List()) != 0 {
+		t.Fatalf("dismissed must stay dismissed: %+v", c.List())
+	}
+	// условие пропало (аккаунт переподключён) и появилось снова — это новое уведомление
+	c.Sync(KindTwitchReconnect, nil)
+	c.Sync(KindTwitchReconnect, []Item{a})
+	if len(c.List()) != 1 {
+		t.Fatalf("recurrence must notify again: %+v", c.List())
+	}
+	// пропавшее условие снимает уведомление, чужие виды не трогает
+	c.Upsert(Item{Key: "app:1", Kind: KindAppUpdate})
+	c.Sync(KindTwitchReconnect, nil)
+	if l := c.List(); len(l) != 1 || l[0].Kind != KindAppUpdate {
+		t.Fatalf("resolve: %+v", l)
+	}
+}

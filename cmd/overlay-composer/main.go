@@ -284,6 +284,25 @@ func run() int {
 			}
 		}()
 	}
+	// Токен Twitch может «протухнуть» (смена пароля, отзыв доступа), а новые функции — потребовать больше прав:
+	// сообщаем об этом в центре уведомлений, даже если редактор закрыт.
+	go func() {
+		t := time.NewTicker(5 * time.Minute)
+		defer t.Stop()
+		select {
+		case <-time.After(20 * time.Second):
+		case <-quit:
+			return
+		}
+		for {
+			srv.SyncTwitchNotifications()
+			select {
+			case <-t.C:
+			case <-quit:
+				return
+			}
+		}
+	}()
 	if upd != nil {
 		go func() {
 			select {
