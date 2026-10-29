@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/url"
 	"strings"
+
+	"github.com/compico/overlaycomposer/internal/model"
 )
 
 // Скрипт выполняется внутри проксируемой страницы: перенаправляет fetch/XHR/EventSource/WebSocket на наши точки
@@ -99,12 +101,20 @@ const clientPatchJS = `(function(cfg){
 // а у mytopf.com ещё и просрочен сертификат — в консоли сплошные ошибки).
 var BlockedHosts = []string{"mytopf.com", "top-fwz1.mail.ru"}
 
-// RouterSites — сайты-SPA, чей клиентский роутер ждёт маршруты от корня (без basename): им скрываем префикс /proxy/<id>
-// из location.pathname. Для остальных не трогаем: относительные URL в статической вёрстке разрешаются от адреса страницы.
-var RouterSites = []string{"memealerts.com"}
+// KnownRouterSites — сайты-SPA, чей клиентский роутер ждёт маршруты от корня (без basename); для них режим «SPA-роутер»
+// источника в положении «Auto» включён сам. Остальным по умолчанию адрес не трогаем: относительные URL в статической вёрстке
+// разрешаются от адреса страницы. Для сайта вне списка режим включается в свойствах источника (SourceData.Router).
+var KnownRouterSites = []string{"memealerts.com"}
 
-func isRouterSite(site string) bool {
-	for _, s := range RouterSites {
+// routerEnabled — скрывать ли от страницы префикс /proxy/<id> в location.pathname: явный выбор источника важнее списка.
+func routerEnabled(site, mode string) bool {
+	switch mode {
+	case model.RouterOn:
+		return true
+	case model.RouterOff:
+		return false
+	}
+	for _, s := range KnownRouterSites {
 		if s == site {
 			return true
 		}
@@ -114,7 +124,7 @@ func isRouterSite(site string) bool {
 
 // injection — тег, вставляемый в начало <head> проксируемой страницы.
 // meta referrer=same-origin: браузер шлёт Referer на наш сервер, по нему определяется upstream для root-relative запросов.
-func injection(id, origin string) string {
+func injection(id, origin, router string) string {
 	u, _ := url.Parse(origin)
 	host := ""
 	if u != nil {
@@ -131,7 +141,7 @@ func injection(id, origin string) string {
 	site := SiteOf(strings.ToLower(hostname))
 	cfg, _ := json.Marshal(map[string]any{
 		"id": id, "origin": origin, "host": host, "site": site, "wsScheme": wsScheme,
-		"block": BlockedHosts, "spa": isRouterSite(site),
+		"block": BlockedHosts, "spa": routerEnabled(site, router),
 	})
 	// "<" в JSON экранируем, чтобы строка не могла закрыть тег script
 	safe := strings.ReplaceAll(string(cfg), "<", `<`)

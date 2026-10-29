@@ -1,9 +1,9 @@
-import type { LayoutObject, PluginManifest, Source, Transform } from "../../../../shared/types.ts";
+import type { LayoutObject, PluginManifest, RouterMode, Source, Transform } from "../../../../shared/types.ts";
 import { COPY_ICON, copyText } from "../../lib/clipboard.ts";
 import { el } from "../../lib/dom.ts";
 import { maskUrl } from "../add-source/model.ts";
 import type { EditorState } from "../editor/model.ts";
-import { canvasFromInputs, type CropSide, resetCrop, setCrop, transformFields, type PropertiesModel } from "./model.ts";
+import { canvasFromInputs, type CropSide, resetCrop, ROUTER_MODES, setCrop, transformFields, type PropertiesModel } from "./model.ts";
 
 export interface PropertiesPorts {
   state(): Pick<EditorState, "layout" | "selectedId" | "sources" | "plugins" | "defaultLayoutId">;
@@ -110,10 +110,22 @@ export function mountProperties(root: HTMLElement, model: PropertiesModel, ports
         proxyChk.checked = !proxyChk.checked; // сервер отказал (например, относительный URL)
         ports.fail(e);
       }));
+    // Для сайтов-SPA, у которых после загрузки белая страница: их роутер не знает про префикс /proxy/<id>.
+    const router = el("select", {}, ...ROUTER_MODES.map((m) => el("option", { value: m.value, textContent: m.label, selected: m.value === (src.data.router ?? "") })));
+    router.addEventListener("change", () =>
+      model.setSourceRouter(src, router.value as RouterMode).catch((e) => {
+        router.value = src.data.router ?? "";
+        ports.fail(e);
+      }));
+    const routerRow = el("label", { title: "Hides the /proxy/<id> prefix from the site's own router. Turn On if the proxied page stays blank after loading; Auto does it only for known sites." }, "SPA router fix ", router);
+    const syncRouter = () => { routerRow.hidden = !proxyChk.checked; };
+    proxyChk.addEventListener("change", syncRouter);
+    syncRouter();
     root.append(
       nameRow(src),
       el("div", { class: "row" }, url, copyUrl),
       el("label", { class: "chk", title: "For sites that refuse to be embedded (X-Frame-Options)" }, proxyChk, "Load via server proxy"),
+      routerRow,
     );
   }
 

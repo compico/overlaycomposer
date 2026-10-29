@@ -1,5 +1,5 @@
 // Панель свойств: поля трансформации и обрезки (чистая логика), операции над источником и layout. Без DOM.
-import type { LayoutObject, Source, Transform } from "../../../../shared/types.ts";
+import type { LayoutObject, RouterMode, Source, Transform } from "../../../../shared/types.ts";
 import type { Api } from "../../lib/api.ts";
 
 export { MIN_SIZE, resetCrop, setCrop, type CropSide } from "../../../../shared/gestures.ts";
@@ -32,10 +32,18 @@ export function canvasFromInputs(w: string, h: string): { width: number; height:
   return { width: Math.max(16, Number(w) || 1920), height: Math.max(16, Number(h) || 1080) };
 }
 
+export const ROUTER_MODES: { value: RouterMode; label: string }[] = [
+  { value: "", label: "Auto (known sites)" },
+  { value: "on", label: "On" },
+  { value: "off", label: "Off" },
+];
+
 export interface PropertiesModel {
   renameSource(src: Source, name: string): Promise<void>;
   setSourceUrl(src: Source, url: string): Promise<void>;
   setSourceProxy(src: Source, proxy: boolean): Promise<void>;
+  /** Режим «SPA-роутер»: "" — авто, "on", "off". Источник обновляется ответом сервера. */
+  setSourceRouter(src: Source, mode: RouterMode): Promise<void>;
   deleteSource(src: Source): Promise<void>;
   setDefaultLayout(layoutId: string | null): Promise<void>;
 }
@@ -46,6 +54,10 @@ export function createPropertiesModel(api: Api): PropertiesModel {
     async renameSource(src, name) { await put(src, { name }); },
     async setSourceUrl(src, url) { await put(src, { data: { url } }); },
     async setSourceProxy(src, proxy) { await put(src, { data: { proxy } }); },
+    async setSourceRouter(src, mode) {
+      await put(src, { data: { router: mode } });
+      src.data.router = mode;
+    },
     async deleteSource(src) { await api(`/api/sources/${src.id}`, "DELETE"); },
     async setDefaultLayout(layoutId) { await api("/api/default-layout", "PUT", { layoutId }); },
   };

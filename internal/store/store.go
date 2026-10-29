@@ -24,6 +24,8 @@ type sourceRow struct {
 	Type  string
 	URL   string
 	Proxy bool
+	// Router — режим «SPA-роутер» (см. model.SourceData.Router); пусто — авто
+	Router string
 	// плагин-виджет (type "plugin")
 	Plugin   string
 	Settings map[string]any `gorm:"serializer:json"`
@@ -90,7 +92,7 @@ func (s *Store) Close() error {
 // ---- sources ----
 
 func (r sourceRow) model() model.Source {
-	return model.Source{ID: r.ID, Name: r.Name, Type: r.Type, Data: model.SourceData{URL: r.URL, Proxy: r.Proxy, Plugin: r.Plugin, Settings: r.Settings, Granted: r.Granted}}
+	return model.Source{ID: r.ID, Name: r.Name, Type: r.Type, Data: model.SourceData{URL: r.URL, Proxy: r.Proxy, Router: r.Router, Plugin: r.Plugin, Settings: r.Settings, Granted: r.Granted}}
 }
 
 func (s *Store) ListSources() ([]model.Source, error) {
@@ -124,7 +126,7 @@ func (s *Store) SaveSource(src model.Source) error {
 	if err := s.db.Model(&sourceRow{}).Count(&count).Error; err != nil {
 		return err
 	}
-	row := sourceRow{ID: src.ID, Name: src.Name, Type: src.Type, URL: src.Data.URL, Proxy: src.Data.Proxy, Plugin: src.Data.Plugin, Settings: src.Data.Settings, Granted: src.Data.Granted, Pos: int(count)}
+	row := sourceRow{ID: src.ID, Name: src.Name, Type: src.Type, URL: src.Data.URL, Proxy: src.Data.Proxy, Router: src.Data.Router, Plugin: src.Data.Plugin, Settings: src.Data.Settings, Granted: src.Data.Granted, Pos: int(count)}
 	var old sourceRow
 	if err := s.db.First(&old, "id = ?", src.ID).Error; err == nil {
 		row.Pos = old.Pos // порядок не меняем при обновлении

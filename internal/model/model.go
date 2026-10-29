@@ -68,9 +68,21 @@ type Layout struct {
 	Objects []Object `json:"objects"`
 }
 
+// Режимы «SPA-роутер» для проксируемого источника (SourceData.Router).
+const (
+	RouterAuto = ""    // решает список известных сайтов (proxy.KnownRouterSites)
+	RouterOn   = "on"  // всегда скрывать префикс /proxy/<id> от клиентского роутера страницы
+	RouterOff  = "off" // никогда не скрывать
+)
+
+// ValidRouter — допустимое значение SourceData.Router.
+func ValidRouter(v string) bool { return v == RouterAuto || v == RouterOn || v == RouterOff }
+
 type SourceData struct {
 	URL   string `json:"url,omitempty"`
 	Proxy bool   `json:"proxy,omitempty"`
+	// Router — для проксируемых страниц-SPA, чей клиентский роутер ждёт маршруты от корня: "" (авто), "on", "off".
+	Router string `json:"router,omitempty"`
 	// Для type "plugin": id плагина-виджета и его настройки (значения по схеме из plugin.json; передаются виджету в query).
 	Plugin   string         `json:"plugin,omitempty"`
 	Settings map[string]any `json:"settings,omitempty"`

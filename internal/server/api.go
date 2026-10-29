@@ -321,13 +321,16 @@ func (s *Server) createSource(c fiber.Ctx) error {
 		if err != nil {
 			return bad(c, err.Error())
 		}
-		b.Data = model.SourceData{Plugin: p.ID, Settings: settings, Granted: granted} // URL и proxy у плагина не бывает
+		b.Data = model.SourceData{Plugin: p.ID, Settings: settings, Granted: granted} // URL, proxy и router у плагина не бывает
 	} else {
 		if !model.SafeURL(b.Data.URL) {
 			return bad(c, "invalid url (only http/https or /path)")
 		}
 		if b.Data.Proxy && !model.IsAbsHTTP(b.Data.URL) {
 			return bad(c, "proxy needs an absolute http(s) URL")
+		}
+		if !model.ValidRouter(b.Data.Router) {
+			return bad(c, `invalid router (use "", "on" or "off")`)
 		}
 		b.Data.Plugin, b.Data.Settings, b.Data.Granted = "", nil, nil
 	}
@@ -353,6 +356,7 @@ func (s *Server) putSource(c fiber.Ctx) error {
 		Data *struct {
 			URL      *string        `json:"url"`
 			Proxy    *bool          `json:"proxy"`
+			Router   *string        `json:"router"`   // "" (авто) | "on" | "off"
 			Settings map[string]any `json:"settings"` // только для плагин-виджетов: заменяет все настройки
 			Granted  *[]string      `json:"granted"`  // только для плагин-виджетов: заменяет список выданных разрешений
 		} `json:"data"`
@@ -372,6 +376,12 @@ func (s *Server) putSource(c fiber.Ctx) error {
 		}
 		if b.Data.Proxy != nil {
 			cur.Data.Proxy = *b.Data.Proxy
+		}
+		if b.Data.Router != nil {
+			if !model.ValidRouter(*b.Data.Router) {
+				return bad(c, `invalid router (use "", "on" or "off")`)
+			}
+			cur.Data.Router = *b.Data.Router
 		}
 		if b.Data.Settings != nil {
 			p, ok := s.d.Plugins.Get(cur.Data.Plugin)
