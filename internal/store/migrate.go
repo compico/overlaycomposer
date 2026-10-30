@@ -33,6 +33,12 @@ var migrations = []migration{
 		// считается уже находящейся в состоянии версии 1; AutoMigrate безопасно довозит недостающее.
 		return tx.AutoMigrate(&sourceRow{}, &layoutRow{}, &sceneRow{}, &settingRow{}, &DeviceRow{}, &TwitchAccountRow{}, &kvRow{})
 	}},
+	{2, "layouts.rev — версия layout для оптимистичной блокировки", func(tx *gorm.DB) error {
+		if tx.Migrator().HasColumn(&layoutRow{}, "Rev") { // чистая база: колонку уже создала миграция 1
+			return nil
+		}
+		return tx.Migrator().AddColumn(&layoutRow{}, "Rev")
+	}},
 }
 
 // NewerSchemaError — база создана более новой версией приложения.

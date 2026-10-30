@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"runtime"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/compico/overlaycomposer/internal/config"
 	"github.com/compico/overlaycomposer/internal/model"
+	"github.com/compico/overlaycomposer/internal/store"
 )
 
 func bad(c fiber.Ctx, msg string) error {
@@ -240,9 +242,11 @@ func (s *Server) createLayout(c fiber.Ctx) error {
 	if msg := layout.Validate(); msg != "" {
 		return bad(c, msg)
 	}
-	if _, err := s.d.Store.SaveLayout(layout); err != nil {
+	rev, _, err := s.d.Store.SaveLayoutRev(layout, nil)
+	if err != nil {
 		return serverErr(c, err)
 	}
+	layout.Rev = rev
 	s.d.Hub.LayoutsChanged()
 	s.d.Hub.Reresolve()
 	return c.Status(fiber.StatusCreated).JSON(layout)
@@ -265,10 +269,24 @@ func (s *Server) putLayout(c fiber.Ctx) error {
 	if cur == nil {
 		return notFound(c)
 	}
-	stolen, err := s.d.Store.SaveLayout(l) // привязки к сценам других layout переносятся внутри транзакции
+	// rev в теле — «правил версию N»: если за это время layout изменили, отвечаем 409 и ничего не пишем.
+	// Без rev (сторонний клиент) сохраняем безусловно, как раньше.
+	var expect struct {
+		Rev *int64 `json:"rev"`
+	}
+	_ = body(c, &expect)
+	rev, stolen, err := s.d.Store.SaveLayoutRev(l, expect.Rev) // привязки к сценам других layout переносятся внутри транзакции
+	if errors.Is(err, store.ErrRevConflict) {
+		now, gerr := s.d.Store.GetLayout(id)
+		if gerr != nil || now == nil {
+			return serverErr(c, errors.Join(err, gerr))
+		}
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "layout was changed elsewhere", "rev": now.Rev})
+	}
 	if err != nil {
 		return serverErr(c, err)
 	}
+	l.Rev = rev
 	s.d.Hub.LayoutUpdated(id)
 	s.d.Hub.LayoutsChanged() // привязки (и имя) видны в списке layout
 	if stolen {

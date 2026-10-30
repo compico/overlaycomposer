@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/glebarez/sqlite"
@@ -22,6 +23,8 @@ func rawDB(t *testing.T, path string) *gorm.DB {
 	t.Cleanup(func() { _ = sqlDB.Close() })
 	return db
 }
+
+func latestVersion() int { return migrations[len(migrations)-1].version }
 
 func exists(path string) bool { _, err := os.Stat(path); return err == nil }
 
@@ -66,7 +69,7 @@ func TestLegacyDatabaseIsAdoptedAndBackedUp(t *testing.T) {
 	if err != nil || got == nil || got.Name != "Legacy widget" {
 		t.Fatalf("данные потерялись: %+v %v", got, err)
 	}
-	if v, _ := userVersion(s.db); v != 1 {
+	if v, _ := userVersion(s.db); v != latestVersion() {
 		t.Fatalf("user_version = %d", v)
 	}
 	bak := rawDB(t, path+".bak-v0")
@@ -131,7 +134,8 @@ func TestFailedMigrationRollsBack(t *testing.T) {
 
 	db := rawDB(t, path)
 	boom := errors.New("boom")
-	list := append(append([]migration{}, migrations...), migration{2, "ломается", func(tx *gorm.DB) error {
+	last := latestVersion()
+	list := append(append([]migration{}, migrations...), migration{last + 1, "ломается", func(tx *gorm.DB) error {
 		if err := tx.Exec("CREATE TABLE half_done (id INTEGER)").Error; err != nil {
 			return err
 		}
@@ -141,13 +145,13 @@ func TestFailedMigrationRollsBack(t *testing.T) {
 	if !errors.Is(err, boom) {
 		t.Fatalf("err = %v", err)
 	}
-	if v, _ := userVersion(db); v != 1 {
+	if v, _ := userVersion(db); v != last {
 		t.Fatalf("версия после отката = %d", v)
 	}
 	if db.Migrator().HasTable("half_done") {
 		t.Fatal("изменения неудавшейся миграции не откатились")
 	}
-	if !exists(path + ".bak-v1") {
+	if !exists(path + ".bak-v" + strconv.Itoa(last)) {
 		t.Fatal("копия перед миграцией должна остаться")
 	}
 }
