@@ -40,6 +40,22 @@ func isLocal(c fiber.Ctx) bool {
 	return true
 }
 
+// loopbackHost — Host запроса годится для «локального» доступа: localhost или IP-адрес. Страница чужого сайта может
+// получить доступ к 127.0.0.1 под своим доменом (DNS rebinding: домен резолвится в 127.0.0.1), и Origin у неё
+// совпадёт с Host, то есть originGuard такое не остановит. Имя домена в Host у локального запроса — признак такой атаки.
+func loopbackHost(host string) bool {
+	h := host
+	if hh, _, err := net.SplitHostPort(host); err == nil {
+		h = hh
+	}
+	h = strings.TrimSuffix(strings.TrimPrefix(h, "["), "]")
+	h = strings.TrimSuffix(strings.ToLower(h), ".")
+	if h == "localhost" || strings.HasSuffix(h, ".localhost") {
+		return true
+	}
+	return net.ParseIP(h) != nil
+}
+
 func tokenFrom(c fiber.Ctx) string {
 	if h := c.Get("Authorization"); len(h) > 7 && strings.EqualFold(h[:7], "bearer ") {
 		return strings.TrimSpace(h[7:])
@@ -47,10 +63,13 @@ func tokenFrom(c fiber.Ctx) string {
 	return c.Cookies(tokenCookie)
 }
 
-// authGuard пропускает локальные запросы и запросы с действующим токеном устройства. Файлы плагинов открыты:
+// authGuard пропускает локальные запросы (с Host = localhost/IP) и запросы с действующим токеном устройства. Файлы плагинов открыты:
 // их iframe в sandbox имеет «непрозрачный» origin, и cookie к его подзапросам не прикладывается (файлы публичны).
 func (s *Server) authGuard(c fiber.Ctx) error {
 	if isLocal(c) {
+		if !loopbackHost(c.Get("Host")) {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "unexpected host name; open the app via localhost or an IP address"})
+		}
 		return c.Next()
 	}
 	p := c.Path()
