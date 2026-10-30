@@ -388,3 +388,34 @@ func TestInjectionSPAFlag(t *testing.T) {
 		}
 	}
 }
+
+// Cookie авторизации самого приложения не должна уходить стороннему сайту; остальные cookie источника — уходят.
+func TestAppCookieIsNotForwardedUpstream(t *testing.T) {
+	h := http.Header{"Cookie": {"sid=1; " + AppCookie + "=SECRET; theme=dark"}}
+	withoutAppCookie(h)
+	if got := h.Get("Cookie"); got != "sid=1; theme=dark" {
+		t.Fatalf("Cookie = %q", got)
+	}
+	only := http.Header{"Cookie": {AppCookie + "=SECRET"}}
+	withoutAppCookie(only)
+	if _, ok := only["Cookie"]; ok {
+		t.Fatalf("пустой Cookie должен исчезнуть: %v", only)
+	}
+	// похожее имя не затрагиваем
+	other := http.Header{"Cookie": {AppCookie + "x=1"}}
+	withoutAppCookie(other)
+	if other.Get("Cookie") != AppCookie+"x=1" {
+		t.Fatalf("чужая cookie с похожим именем изменена: %q", other.Get("Cookie"))
+	}
+
+	srv, seen := newUpstream(t)
+	hdr := http.Header{"Cookie": {"sid=1; " + AppCookie + "=SECRET"}}
+	resp, err := New(nil).Do(Request{Method: "GET", ID: "w", Origin: srv.URL, PathQuery: "/", Header: hdr})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = readAll(t, resp)
+	if got := seen.Get("Cookie"); got != "sid=1" {
+		t.Fatalf("на сайт ушла Cookie %q", got)
+	}
+}

@@ -9,9 +9,10 @@ import (
 	"github.com/gofiber/fiber/v3"
 
 	"github.com/compico/overlaycomposer/internal/auth"
+	"github.com/compico/overlaycomposer/internal/proxy"
 )
 
-const tokenCookie = "oc_token"
+const tokenCookie = proxy.AppCookie
 
 // remoteIP — адрес, с которого пришло TCP-соединение.
 func remoteIP(c fiber.Ctx) string {
