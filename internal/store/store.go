@@ -65,7 +65,7 @@ const keyDefaultLayout = "default_layout"
 
 type Store struct{ db *gorm.DB }
 
-// Open открывает (создаёт) базу и мигрирует схему.
+// Open открывает (создаёт) базу и приводит схему к актуальной версии (см. migrate.go).
 func Open(path string) (*Store, error) {
 	dsn := path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
@@ -75,7 +75,10 @@ func Open(path string) (*Store, error) {
 	if sqlDB, err := db.DB(); err == nil {
 		sqlDB.SetMaxOpenConns(1) // один писатель: без «database is locked»
 	}
-	if err := db.AutoMigrate(&sourceRow{}, &layoutRow{}, &sceneRow{}, &settingRow{}, &DeviceRow{}, &TwitchAccountRow{}, &kvRow{}); err != nil {
+	if err := migrate(db, path, migrations); err != nil {
+		if sqlDB, e := db.DB(); e == nil {
+			_ = sqlDB.Close()
+		}
 		return nil, err
 	}
 	return &Store{db: db}, nil
