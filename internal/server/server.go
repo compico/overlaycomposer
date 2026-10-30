@@ -74,10 +74,12 @@ type Server struct {
 	logMu     sync.Mutex // ограничение частоты /api/client-log
 	logWindow time.Time
 	logCount  int
+
+	deny *denyLimiter // отказы без токена по адресам (nil — без ограничения, как в тестах)
 }
 
 func New(d Deps) *Server {
-	s := &Server{d: d}
+	s := &Server{d: d, deny: newDenyLimiter(120, time.Minute)}
 	s.app = fiber.New(fiber.Config{
 		AppName:   "Overlay Composer",
 		BodyLimit: 8 << 20,
