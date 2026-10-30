@@ -213,7 +213,7 @@ export class PluginHost {
         const target = str(p.target, "target", 100);
         const path = str(p.path, "path", 512);
         if (!target || !path) throw new Error("invalid target or path");
-        const r = await this.#request({ type: "net:get", target, path });
+        const r = await this.#request({ type: "net:get", plugin: e.info.pluginId, source: e.info.sourceId, target, path });
         if (r.ok !== true) throw new Error(String(r.error ?? "request failed"));
         return { status: r.status, body: r.body ?? "" };
       }
