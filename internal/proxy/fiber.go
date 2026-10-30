@@ -43,6 +43,16 @@ func (p *Proxy) refererFallback(c fiber.Ctx) error {
 	if origin == "" {
 		return c.Next()
 	}
+	// Тот же путь (/assets/index.js) уже закреплён за другим источником: у зависимостей этого файла Referer — просто
+	// «/assets/index.js», и по нему источник не определить. Уводим запрос под /proxy/<id>/…: адрес файла тогда несёт
+	// id источника, и его зависимости находятся прямо по Referer.
+	if m := c.Method(); m == fiber.MethodGet || m == fiber.MethodHead {
+		if u, perr := url.ParseRequestURI(c.OriginalURL()); perr == nil {
+			if owner := p.served.get(u.Path); owner != "" && owner != id {
+				return c.Redirect().Status(fiber.StatusTemporaryRedirect).To(Prefix + id + c.OriginalURL())
+			}
+		}
+	}
 	err := p.forward(c, id, origin, src.Data.Router, c.OriginalURL(), nil)
 	if err == nil && c.Response().StatusCode() < 400 {
 		if u, perr := url.ParseRequestURI(c.OriginalURL()); perr == nil {
