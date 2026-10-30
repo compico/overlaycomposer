@@ -26,6 +26,8 @@ func (s *servedPaths) get(path string) string {
 	return s.m[path]
 }
 
+// set запоминает путь за источником; путь, уже закреплённый за другим источником, не переписывается
+// (иначе цепочка зависимостей первого источника начала бы уходить ко второму).
 func (s *servedPaths) set(path, id string) {
 	if path == "" || strings.HasPrefix(path, "/proxy") {
 		return
@@ -37,7 +39,9 @@ func (s *servedPaths) set(path, id string) {
 	if s.m == nil || len(s.m) >= maxServed {
 		s.m = make(map[string]string)
 	}
-	s.m[path] = id
+	if _, taken := s.m[path]; !taken {
+		s.m[path] = id
+	}
 }
 
 // refererID определяет источник по Referer запроса к нашему хосту: прямой /proxy/<id>/… либо путь,
