@@ -81,16 +81,30 @@ func run() int {
 		platform.ErrorBox(paths.AppTitle, "Не удалось прочитать/создать config.json: "+err.Error())
 		return 1
 	}
-	cfg := cfgStore.Get()
 
 	// Быстрая проверка «уже запущено»: если порт занят нашим приложением — просто открываем редактор.
-	if ours(cfg.Host, cfg.Port) {
+	if ours(cfgStore.Get().Host, cfgStore.Get().Port) {
 		slog.Info("приложение уже запущено — открываю редактор")
 		if !*autostart {
-			_ = platform.OpenTarget(editorURL(cfg))
+			_ = platform.OpenTarget(editorURL(cfgStore.Get()))
 		}
 		return 0
 	}
+
+	// Секреты (токены Twitch, Client Secret, секрет подписи токенов устройств, токен GitHub) лежат зашифрованными;
+	// ключ — отдельный файл рядом с config.json (а не в папке данных с базой).
+	box, err := secret.OpenOrCreate(filepath.Join(filepath.Dir(p.ConfigFile), "secret.key"))
+	if err != nil {
+		slog.Error("ключ шифрования", "err", err)
+		platform.ErrorBox(paths.AppTitle, "Не удалось подготовить ключ шифрования секретов:\n"+err.Error())
+		return 1
+	}
+	if err := cfgStore.UseBox(box); err != nil { // пароль OBS: открытый текст → зашифрованный
+		slog.Error("шифрование пароля OBS", "err", err)
+		platform.ErrorBox(paths.AppTitle, "Не удалось зашифровать пароль OBS в config.json: "+err.Error())
+		return 1
+	}
+	cfg := cfgStore.Get()
 
 	st, err := openStore(p)
 	if err != nil {
@@ -134,14 +148,6 @@ func run() int {
 		})
 	}
 
-	// Секреты (токены Twitch, Client Secret, секрет подписи токенов устройств, токен GitHub) лежат зашифрованными;
-	// ключ — отдельный файл рядом с config.json (а не в папке данных с базой).
-	box, err := secret.OpenOrCreate(filepath.Join(filepath.Dir(p.ConfigFile), "secret.key"))
-	if err != nil {
-		slog.Error("ключ шифрования", "err", err)
-		platform.ErrorBox(paths.AppTitle, "Не удалось подготовить ключ шифрования секретов:\n"+err.Error())
-		return 1
-	}
 	rawAuth, rawTw := auth.FromStore(st), twitch.FromStore(st)
 	if err := auth.SealLegacy(rawAuth, box); err != nil { // значения, сохранённые открытым текстом до включения шифрования
 		slog.Error("шифрование секрета авторизации", "err", err)

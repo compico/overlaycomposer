@@ -280,7 +280,12 @@ func (w *wsConn) Send(b []byte) bool {
 	}
 }
 
+// maxWSMessage — предел размера входящего WebSocket-сообщения (как BodyLimit у HTTP): без него один клиент мог бы
+// заставить сервер прочитать в память сообщение любого размера.
+const maxWSMessage = 8 << 20
+
 func (s *Server) serveWS(c *websocket.Conn) {
+	c.SetReadLimit(maxWSMessage)
 	wc := &wsConn{ch: make(chan []byte, 64)}
 	done := make(chan struct{})
 	go func() {
