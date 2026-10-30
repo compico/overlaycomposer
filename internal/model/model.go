@@ -61,7 +61,10 @@ type Canvas struct {
 
 // Layout — «как и где» показаны источники. Scenes — OBS-сцены, к которым он привязан (сцена принадлежит одному layout).
 type Layout struct {
-	ID      string   `json:"id"`
+	ID string `json:"id"`
+	// Rev — номер версии на сервере: растёт при каждом сохранении. Клиент присылает тот Rev, на основе которого правил;
+	// не совпал — layout успели изменить в другой вкладке/на другом устройстве (409), и перезаписывать вслепую нельзя.
+	Rev     int64    `json:"rev"`
 	Name    string   `json:"name"`
 	Scenes  []string `json:"scenes"`
 	Canvas  Canvas   `json:"canvas"`

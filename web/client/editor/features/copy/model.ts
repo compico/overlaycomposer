@@ -28,7 +28,7 @@ export function cloneObject(o: LayoutObject, target: Pick<Layout, "objects">, op
 export interface CopyEditorPort {
   get(): { layout: Layout | null; layouts: Layout[]; sources: Source[]; selectedId: string | null; dirty: boolean };
   markDirty(): void;
-  save(): Promise<void>;
+  save(): Promise<boolean>;
   insertObject(o: LayoutObject): void;
   loadLayouts(): Promise<void>;
 }
@@ -72,7 +72,7 @@ export function createCopyModel(deps: CopyDeps): CopyModel {
     o.instanceId = uid("inst");
     editor.markDirty();
     if (wasDirty) toast("Save this layout (Ctrl+S) so the copy stays linked");
-    else await editor.save();
+    else if (!(await editor.save())) toast("Save this layout (Ctrl+S) so the copy stays linked");
   }
 
   return {

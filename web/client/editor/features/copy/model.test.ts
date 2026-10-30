@@ -38,7 +38,7 @@ function setup(dirty = false) {
   const editor: CopyEditorPort = {
     get: () => state as ReturnType<CopyEditorPort["get"]>,
     markDirty: () => { calls.dirty++; },
-    save: async () => { calls.save++; },
+    save: async () => { calls.save++; return true; },
     insertObject: (o) => { calls.inserted.push(o); },
     loadLayouts: async () => { calls.loads++; },
   };

@@ -4,12 +4,13 @@ import { test } from "node:test";
 import type { Layout } from "../../../../shared/types.ts";
 import { defaultTransform } from "../../../../shared/types.ts";
 import { fakeApi } from "../../lib/fakeapi.test-helper.ts";
+import { ApiError } from "../../lib/api.ts";
 import { createEditorModel, reorderObjects, type ChangeKind } from "./model.ts";
 
 const obj = (id: string, z: number, x = 0) => ({ id, name: id, sourceId: "s1", transform: { ...defaultTransform(), x }, opacity: 1, visible: true, locked: false, zIndex: z });
 const mkLayout = (id = "L1"): Layout => ({ id, name: "Main", scenes: [], canvas: { width: 1920, height: 1080 }, objects: [obj("a", 1), obj("b", 2)] });
 
-function setup(opts: { confirm?: boolean } = {}) {
+function setup(opts: { confirm?: boolean; overwrite?: boolean } = {}) {
   const server: Record<string, Layout> = { L1: mkLayout("L1"), L2: { ...mkLayout("L2"), name: "Other", objects: [] } };
   let saved: Layout | null = null;
   const { api, calls } = fakeApi({
@@ -25,7 +26,7 @@ function setup(opts: { confirm?: boolean } = {}) {
     "GET /api/layouts/L3": () => structuredClone(server.L3),
     "DELETE /api/layouts/L1": () => { delete server.L1; return {}; },
   });
-  const m = createEditorModel({ api, confirmDiscard: () => opts.confirm ?? true, recordDelayMs: 5 });
+  const m = createEditorModel({ api, confirmDiscard: () => opts.confirm ?? true, confirmOverwrite: () => opts.overwrite ?? false, recordDelayMs: 5 });
   const kinds: ChangeKind[] = [];
   m.subscribe((s) => kinds.push(s.change));
   return { m, calls, kinds, server, saved: () => saved };
@@ -237,4 +238,85 @@ test("история и несохранённое: прыжок к сохран
   assert.deepEqual(m.get().history.map((e) => e.saved), [false, true, false]);
   m.jumpTo(1);
   assert.equal(m.get().dirty, false);
+});
+
+// ---- оптимистичная блокировка: rev layout'а ----
+
+function revSetup(opts: { overwrite?: boolean; putError?: Error } = {}) {
+  const srv = { rev: 1 };
+  const puts: Array<number | undefined> = [];
+  const { api, calls } = fakeApi({
+    "GET /api/sources": () => [{ id: "s1", name: "Src", type: "iframe", data: {} }],
+    "GET /api/plugins": () => [],
+    "GET /api/layouts": () => [{ ...mkLayout("L1"), rev: srv.rev }],
+    "GET /api/default-layout": () => ({ layoutId: "L1" }),
+    "GET /api/state": () => ({ activeLayoutId: "L1", scene: null, obs: { connected: false, scenes: [] } }),
+    "GET /api/layouts/L1": () => ({ ...mkLayout("L1"), rev: srv.rev }),
+    "PUT /api/layouts/L1": (b) => {
+      const l = b as Layout;
+      puts.push(l.rev);
+      if (opts.putError) throw opts.putError;
+      if (l.rev !== srv.rev) throw new ApiError("layout was changed elsewhere", 409, { rev: srv.rev });
+      srv.rev += 1;
+      return { ...l, rev: srv.rev };
+    },
+  });
+  let asked = 0;
+  const m = createEditorModel({ api, confirmDiscard: () => true, confirmOverwrite: () => { asked++; return opts.overwrite ?? false; }, recordDelayMs: 5 });
+  return { m, srv, puts, calls, asked: () => asked };
+}
+
+test("rev: сохранение отправляет текущую версию и запоминает новую (второе сохранение не конфликтует)", async () => {
+  const { m, puts } = revSetup();
+  await m.bootstrap();
+  m.get().layout!.objects[0].transform.x = 1; m.touch();
+  assert.equal(await m.save(), true);
+  m.get().layout!.objects[0].transform.x = 2; m.touch();
+  assert.equal(await m.save(), true);
+  assert.deepEqual(puts, [1, 2]);
+});
+
+test("rev, sad path: другую вкладку сохранили раньше — отказ от перезаписи оставляет правки несохранёнными", async () => {
+  const { m, srv, puts, asked } = revSetup({ overwrite: false });
+  await m.bootstrap();
+  m.get().layout!.objects[0].transform.x = 77; m.touch();
+  srv.rev = 5; // «вторая вкладка» уже сохранила
+  assert.equal(await m.save(), false);
+  assert.equal(asked(), 1);
+  assert.deepEqual(puts, [1]); // повторной отправки нет
+  assert.equal(m.get().dirty, true);
+  assert.equal(m.get().layout!.objects[0].transform.x, 77, "правки не потеряны");
+  assert.equal(srv.rev, 5, "чужая версия не затёрта");
+});
+
+test("rev: согласие перезаписать — берём актуальную версию и сохраняем поверх", async () => {
+  const { m, srv, puts } = revSetup({ overwrite: true });
+  await m.bootstrap();
+  m.get().layout!.objects[0].transform.x = 77; m.touch();
+  srv.rev = 5;
+  assert.equal(await m.save(), true);
+  assert.deepEqual(puts, [1, 5]);
+  assert.equal(srv.rev, 6);
+  assert.equal(m.get().dirty, false);
+  assert.equal(m.get().layout!.rev, 6);
+});
+
+test("rev, sad path: обычная ошибка сохранения не считается конфликтом и не задаёт вопросов", async () => {
+  const { m, asked } = revSetup({ putError: new Error("internal error") });
+  await m.bootstrap();
+  m.get().layout!.objects[0].transform.x = 1; m.touch();
+  await assert.rejects(m.save(), /internal error/);
+  assert.equal(asked(), 0);
+  assert.equal(m.get().dirty, true);
+});
+
+test("rev: отмена/повтор не трогают версию (история хранит только canvas и объекты)", async () => {
+  const { m } = revSetup();
+  await m.bootstrap();
+  m.get().layout!.objects[0].transform.x = 1; m.touch();
+  await m.save();
+  const rev = m.get().layout!.rev;
+  m.get().layout!.objects[0].transform.x = 2; m.touch(); m.flush();
+  m.undo(); m.undo();
+  assert.equal(m.get().layout!.rev, rev);
 });

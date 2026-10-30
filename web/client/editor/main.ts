@@ -49,7 +49,14 @@ const api: Api = httpApi;
 
 // Состояние живёт в модели редактора (features/editor). Эти переменные — только для чтения: «зеркало» модели,
 // обновляется синхронно при каждом её изменении. Менять состояние — только через `editor.*`.
-const editor = createEditorModel({ api, confirmDiscard: () => confirm("Discard unsaved changes?") });
+const editor = createEditorModel({
+  api,
+  confirmDiscard: () => confirm("Discard unsaved changes?"),
+  confirmOverwrite: () => confirm(
+    "This layout was changed in another tab or on another device after you opened it.\n\n" +
+    "OK — overwrite it with your version.\nCancel — keep editing without saving (reopen the layout to see the other version).",
+  ),
+});
 let layouts: Layout[] = [];
 let sources: Source[] = [];
 let plugins: PluginManifest[] = [];
@@ -383,8 +390,8 @@ const loadImportScenes = obsImport.load;
 async function save() {
   if (!layout) return;
   try {
-    await editor.save();
-    toast("Saved");
+    if (await editor.save()) toast("Saved");
+    else toast("Not saved — the layout was changed elsewhere");
   } catch (e) { fail(e); }
 }
 

@@ -114,6 +114,8 @@ export interface LayoutObject {
 export interface Layout {
   id: string;
   name: string;
+  /** Версия на сервере (растёт при каждом сохранении): по ней сервер замечает, что layout успели изменить в другой вкладке. */
+  rev?: number;
   /**
    * Имена OBS-сцен, к которым привязан layout. Сцена принадлежит не более чем одному layout.
    * Сцены без своего layout показывают layout по умолчанию (Project.defaultLayoutId).

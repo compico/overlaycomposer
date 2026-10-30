@@ -6,7 +6,7 @@
 import type { Layout, LayoutObject, ObsInfo, PluginManifest, Source } from "../../../../shared/types.ts";
 import { defaultTransform, uid } from "../../../../shared/types.ts";
 import { History, type HistoryEntry } from "../../../../shared/history.ts";
-import type { Api } from "../../lib/api.ts";
+import { isConflict, type Api } from "../../lib/api.ts";
 import { createStore, type Readable } from "../../lib/store.ts";
 import { layerName } from "../layers/model.ts";
 
@@ -45,6 +45,8 @@ export interface EditorDeps {
   api: Api;
   /** Спросить, можно ли выбросить несохранённые правки (в UI — confirm). */
   confirmDiscard(): boolean;
+  /** Layout изменили в другой вкладке/на другом устройстве: true — перезаписать своей версией, false — продолжить правку. */
+  confirmOverwrite(): boolean;
   /** Пауза склейки быстрых правок в один шаг истории. */
   recordDelayMs?: number;
 }
@@ -88,7 +90,8 @@ export interface EditorModel extends Readable<EditorState> {
   openLayout(id: string, force?: boolean): Promise<boolean>;
   /** Подтянуть чужое обновление текущего layout (только если нет несохранённых правок). */
   reloadCurrent(): Promise<void>;
-  save(): Promise<void>;
+  /** true — сохранено; false — layout изменили в другом месте, и пользователь не стал перезаписывать (правки остались). */
+  save(): Promise<boolean>;
   // выбор и правки
   select(id: string | null): void;
   /** Вызвать после правки на месте (жест, поле свойств): «несохранённое» + запись в историю с задержкой. */
@@ -238,12 +241,26 @@ export function createEditorModel(deps: EditorDeps): EditorModel {
 
     async save() {
       const cur = layoutOrNull();
-      if (!cur) return;
+      if (!cur) return false;
       flush(); // отправляем и запоминаем ровно то же состояние
-      await api(`/api/layouts/${encodeURIComponent(cur.id)}`, "PUT", cur);
+      const url = `/api/layouts/${encodeURIComponent(cur.id)}`;
+      const put = async () => {
+        const saved = await api<Layout | undefined>(url, "PUT", cur);
+        if (typeof saved?.rev === "number") cur.rev = saved.rev; // следующее сохранение опирается на новую версию
+      };
+      try {
+        await put();
+      } catch (e) {
+        if (!isConflict(e)) throw e;
+        if (!deps.confirmOverwrite()) return false; // правки остаются несохранёнными
+        // «перезаписать»: берём актуальную версию с сервера и кладём свои правки поверх неё
+        cur.rev = (await api<Layout>(url)).rev;
+        await put();
+      }
       log?.markSaved();
       emit("meta", { dirty: false });
       await loadLayouts();
+      return true;
     },
 
     select(id) { emit("selection", { selectedId: id }); },
