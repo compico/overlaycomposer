@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/compico/overlaycomposer/internal/localnet"
 	"github.com/compico/overlaycomposer/internal/model"
 )
 
@@ -74,7 +75,10 @@ type Manifest struct {
 	// Permissions — что плагину нужно от OC (см. docs/PLUGINS.md). Включаются пользователем при добавлении виджета
 	// (source.data.granted); без разрешения мост OC отвечает плагину ошибкой.
 	Permissions []string `json:"permissions,omitempty"`
-	Builtin     bool     `json:"builtin"` // заполняется загрузчиком
+	// NetLocal — к каким программам на этом компьютере и каким путям плагин может обращаться через oc.net.localGet
+	// (нужно разрешение net.local). Без правил запросы отклоняются.
+	NetLocal []localnet.Rule `json:"netLocal,omitempty"`
+	Builtin  bool            `json:"builtin"` // заполняется загрузчиком
 }
 
 // Известные разрешения плагинов.
@@ -117,6 +121,22 @@ func (m *Manifest) Validate() error {
 		}
 		if slices.Contains(m.Permissions[:i], p) {
 			return fmt.Errorf("duplicate permission %q", p)
+		}
+	}
+	if len(m.NetLocal) > localnet.MaxRules {
+		return fmt.Errorf("netLocal: at most %d rules", localnet.MaxRules)
+	}
+	if len(m.NetLocal) > 0 && !slices.Contains(m.Permissions, PermNetLocal) {
+		return errors.New("netLocal needs the net.local permission")
+	}
+	for _, r := range m.NetLocal {
+		if err := r.Validate(); err != nil {
+			return err
+		}
+		if r.Setting != "" {
+			if st := m.setting(r.Setting); st == nil || st.Type != TString {
+				return fmt.Errorf("netLocal: setting %q must be a string setting of this plugin", r.Setting)
+			}
 		}
 	}
 	if m.Entry == "" {
