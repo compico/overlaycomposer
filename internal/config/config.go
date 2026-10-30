@@ -11,7 +11,12 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+
+	"github.com/compico/overlaycomposer/internal/secret"
 )
+
+// obsPasswordAAD привязывает зашифрованный пароль к своему полю.
+const obsPasswordAAD = "config:obs:password"
 
 type Obs struct {
 	// Enabled — подключаться к OBS по obs-websocket 5.x (список сцен и текущая сцена).
@@ -37,7 +42,28 @@ func Default() Config {
 type Store struct {
 	mu   sync.RWMutex
 	path string
-	cfg  Config
+	cfg  Config // в памяти пароль OBS — открытый текст; на диск он попадает только зашифрованным (если задан box)
+	box  *secret.Box
+}
+
+// UseBox включает шифрование пароля OBS в config.json. Пароль, записанный раньше открытым текстом, сразу перезаписывается
+// зашифрованным. Если зашифрованный пароль не расшифровался (ключ потерян/заменён) — это не авария: пароль считается
+// не заданным, и его нужно ввести заново в настройках.
+func (s *Store) UseBox(b *secret.Box) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.box = b
+	plain, legacy, err := b.Open(s.cfg.Obs.Password, obsPasswordAAD)
+	if err != nil {
+		slog.Warn("пароль OBS в config.json не расшифровался — введите его заново в настройках", "err", err)
+		s.cfg.Obs.Password = ""
+		return nil
+	}
+	s.cfg.Obs.Password = plain
+	if legacy && plain != "" {
+		return s.save()
+	}
+	return nil
 }
 
 // Load читает файл; недостающее/битое → значения по умолчанию. Если файла нет — создаёт.
@@ -86,12 +112,16 @@ func (s *Store) Get() Config {
 }
 
 func (s *Store) save() error {
-	b, err := json.MarshalIndent(s.cfg, "", "  ")
+	out := s.cfg
+	if s.box != nil {
+		out.Obs.Password = s.box.Seal(out.Obs.Password, obsPasswordAAD)
+	}
+	b, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
 		return err
 	}
 	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, append(b, '\n'), 0o600); err != nil { // в файле может быть пароль OBS
+	if err := os.WriteFile(tmp, append(b, '\n'), 0o600); err != nil { // в файле может быть (зашифрованный) пароль OBS
 		return err
 	}
 	return os.Rename(tmp, s.path)
