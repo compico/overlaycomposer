@@ -29,7 +29,10 @@ type Config struct {
 	Host       string `json:"host"`
 	Port       int    `json:"port"`
 	DebugProxy bool   `json:"debugProxy"`
-	Obs        Obs    `json:"obs"`
+	// ProxyPort — порт, на котором проксируются сайты источников. Другой порт = другой origin: JS чужого сайта, открытого
+	// через прокси, не может ходить в API приложения. 0 — port+1; -1 — не изолировать (прокси на основном порту, как раньше).
+	ProxyPort int `json:"proxyPort"`
+	Obs       Obs `json:"obs"`
 	// NoUpdateCheck — не проверять новые версии на GitHub (только вручную в config.json).
 	NoUpdateCheck bool `json:"noUpdateCheck"`
 }
@@ -98,6 +101,9 @@ func sanitize(c Config) Config {
 	}
 	if c.Port < 1 || c.Port > 65535 {
 		c.Port = d.Port
+	}
+	if c.ProxyPort < -1 || c.ProxyPort > 65535 {
+		c.ProxyPort = 0
 	}
 	if strings.TrimSpace(c.Obs.URL) == "" {
 		c.Obs.URL = d.Obs.URL

@@ -72,6 +72,33 @@ var dropRequest = setOf("host", "connection", "keep-alive", "transfer-encoding",
 	"proxy-authorization", "proxy-connection", "content-length", "accept-encoding", "origin", "referer",
 	"upgrade-insecure-requests", "forwarded", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto")
 
+// AppCookie — cookie авторизации самого приложения (устройства с других компьютеров). Сайтам источников она не принадлежит:
+// браузер шлёт её на любой путь этого хоста, в том числе /proxy/…, и без фильтра она ушла бы стороннему сайту.
+const AppCookie = "oc_token"
+
+// withoutAppCookie убирает AppCookie из заголовков Cookie запроса.
+func withoutAppCookie(h http.Header) {
+	vals := h.Values("Cookie")
+	if len(vals) == 0 {
+		return
+	}
+	var keep []string
+	for _, v := range vals {
+		for _, c := range strings.Split(v, ";") {
+			c = strings.TrimSpace(c)
+			if c == "" || strings.HasPrefix(c, AppCookie+"=") {
+				continue
+			}
+			keep = append(keep, c)
+		}
+	}
+	if len(keep) == 0 {
+		h.Del("Cookie")
+		return
+	}
+	h.Set("Cookie", strings.Join(keep, "; "))
+}
+
 func setOf(items ...string) map[string]bool {
 	m := make(map[string]bool, len(items))
 	for _, s := range items {
@@ -153,6 +180,7 @@ func (p *Proxy) Do(r Request) (*Response, error) {
 		}
 		req.Header[k] = append([]string(nil), vs...)
 	}
+	withoutAppCookie(req.Header)
 	req.Header.Set("Referer", r.Origin+"/")
 	// Запрос на соседний хост — «кросс-доменный» для настоящего браузера, он бы прислал Origin страницы.
 	if r.Via != nil || hasBody || r.Header.Get("Origin") != "" {
