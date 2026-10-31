@@ -6,10 +6,33 @@ import { PERM_TEXT } from "../../lib/permissions.ts";
 import { MIN_SIZE } from "../properties/model.ts";
 
 
-/** Всё после «?» (и «#») скрываем: в адресах виджетов часто лежат токены и секреты. */
+const MASK = "•".repeat(8);
+
+/**
+ * Сегмент пути, похожий на секрет (ключ виджета, токен, UUID): в адресах вроде `/overlay/<id>/<apiKey>` токен лежит в пути,
+ * а не в query. Эвристика только для показа: обычные слова и slug'и (`my-alerts`) не трогаем.
+ */
+function looksSecret(seg: string): boolean {
+  if (/^[0-9a-f-]{32,}$/i.test(seg) && /[0-9a-f]{8}/i.test(seg)) return true; // UUID / hex-хэш
+  return seg.length >= 20 && /^[A-Za-z0-9_]+$/.test(seg) && /[A-Za-z]/.test(seg) && /\d/.test(seg); // случайная строка букв и цифр
+}
+
+/** Скрывает в адресе всё, что может быть секретом: сегменты пути, похожие на токен, и всё после «?» и «#». */
 export function maskUrl(u: string): string {
-  const i = u.search(/[?#]/);
-  return i < 0 ? u : `${u.slice(0, i + 1)}${"•".repeat(8)}`;
+  const cut = u.search(/[?#]/);
+  const head = cut < 0 ? u : u.slice(0, cut);
+  const m = /^([a-z][a-z0-9+.-]*:\/\/[^/]*)(.*)$/i.exec(head);
+  const origin = m ? m[1] : "";
+  const path = (m ? m[2] : head).split("/").map((seg) => (looksSecret(seg) ? MASK : seg)).join("/");
+  return cut < 0 ? origin + path : `${origin}${path}${u[cut]}${MASK}`;
+}
+
+/** Как показать адрес в поле: скрытый (только чтение) или целиком; и нужна ли кнопка «показать/скрыть». */
+export function urlView(url: string, revealed: boolean): { text: string; readOnly: boolean; canToggle: boolean } {
+  const masked = maskUrl(url);
+  const canToggle = masked !== url;
+  const hide = canToggle && !revealed;
+  return { text: hide ? masked : url, readOnly: hide, canToggle };
 }
 
 /** Свободное имя: «Name», «Name 2», «Name 3» … */

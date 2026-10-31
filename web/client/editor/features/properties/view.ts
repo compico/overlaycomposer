@@ -1,7 +1,7 @@
 import type { LayoutObject, PluginManifest, RouterMode, Source, Transform } from "../../../../shared/types.ts";
-import { COPY_ICON, copyText } from "../../lib/clipboard.ts";
+import { COPY_ICON, EYE_ICON, EYE_OFF_ICON, copyText } from "../../lib/clipboard.ts";
 import { el } from "../../lib/dom.ts";
-import { maskUrl } from "../add-source/model.ts";
+import { urlView } from "../add-source/model.ts";
 import type { EditorState } from "../editor/model.ts";
 import { canvasFromInputs, type CropSide, resetCrop, ROUTER_MODES, setCrop, transformFields, type PropertiesModel } from "./model.ts";
 
@@ -76,21 +76,35 @@ export function mountProperties(root: HTMLElement, model: PropertiesModel, ports
       }
       return;
     }
-    // В адресе виджета часто лежит токен: всё после «?»/«#» скрыто, поле открывается на редактирование двойным кликом,
-    // а скопировать адрес целиком можно кнопкой рядом.
+    // В адресе виджета часто лежит токен (в query или в пути): такие части скрыты. Открыть поле можно кнопкой-«глазом» или двойным
+    // кликом; скопировать адрес целиком — кнопкой рядом. Поле снова прячется, когда теряет фокус или нажат «глаз».
     let curUrl = src.data.url ?? "";
+    let revealed = false;
     const url = el("input", { type: "text" });
+    const eye = el("button", { type: "button", class: "iconbtn" });
     const paintUrl = () => {
-      const masked = maskUrl(curUrl) !== curUrl;
-      url.value = masked ? maskUrl(curUrl) : curUrl;
-      url.readOnly = masked;
-      url.title = masked ? "Part of the address is hidden. Double-click to edit; the button copies the full address." : "";
+      const v = urlView(curUrl, revealed);
+      url.value = v.text;
+      url.readOnly = v.readOnly;
+      url.title = v.readOnly ? "Part of the address is hidden. Press the eye (or double-click) to show it and edit." : "";
+      eye.hidden = !v.canToggle;
+      eye.innerHTML = revealed ? EYE_OFF_ICON : EYE_ICON; // статическая разметка без пользовательских данных
+      const label = revealed ? "Hide the address" : "Show the full address";
+      eye.title = label;
+      eye.setAttribute("aria-label", label);
+      eye.setAttribute("aria-pressed", String(revealed));
     };
     paintUrl();
+    eye.addEventListener("mousedown", (e) => e.preventDefault()); // клик по «глазу» не должен снимать фокус с поля (blur скрыл бы адрес раньше клика)
+    eye.addEventListener("click", () => {
+      revealed = !revealed;
+      paintUrl();
+      if (revealed) url.focus();
+    });
     url.addEventListener("dblclick", () => {
       if (!url.readOnly) return;
-      url.readOnly = false;
-      url.value = curUrl;
+      revealed = true;
+      paintUrl();
       url.focus();
     });
     url.addEventListener("change", () => {
@@ -98,7 +112,10 @@ export function mountProperties(root: HTMLElement, model: PropertiesModel, ports
       curUrl = url.value;
       model.setSourceUrl(src, curUrl).catch(ports.fail);
     });
-    url.addEventListener("blur", paintUrl);
+    url.addEventListener("blur", () => {
+      revealed = false;
+      paintUrl();
+    });
     const copyUrl = el("button", { type: "button", class: "iconbtn", title: "Copy the full address", ariaLabel: "Copy the full address" });
     copyUrl.innerHTML = COPY_ICON; // статическая разметка без пользовательских данных
     copyUrl.addEventListener("click", async () => {
@@ -123,7 +140,7 @@ export function mountProperties(root: HTMLElement, model: PropertiesModel, ports
     syncRouter();
     root.append(
       nameRow(src),
-      el("div", { class: "row" }, url, copyUrl),
+      el("div", { class: "row" }, url, eye, copyUrl),
       el("label", { class: "chk", title: "For sites that refuse to be embedded (X-Frame-Options)" }, proxyChk, "Load via server proxy"),
       routerRow,
     );
