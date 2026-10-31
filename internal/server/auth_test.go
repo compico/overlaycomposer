@@ -133,3 +133,57 @@ func TestRemoteNeedsToken(t *testing.T) {
 		t.Fatalf("revoked: %d", code)
 	}
 }
+
+// sad path: сканер без токена после лимита получает 429, а устройство с токеном не страдает.
+func TestUnauthorizedFloodIsLimited(t *testing.T) {
+	app, m := newAuthApp(t)
+	s := &Server{d: Deps{Auth: m}, deny: newDenyLimiter(5, time.Minute)}
+	app = fiber.New()
+	app.Use(s.authGuard)
+	s.app = app
+	s.authRoutes()
+	app.Get("/api/state", func(c fiber.Ctx) error { return c.SendString("secret") })
+
+	var codes []int
+	for i := 0; i < 8; i++ {
+		code, _, resp := do(t, app, httptest.NewRequest("GET", "/api/state", nil))
+		codes = append(codes, code)
+		if code == 429 && resp.Header.Get("Retry-After") == "" {
+			t.Error("429 без Retry-After")
+		}
+	}
+	want := []int{401, 401, 401, 401, 401, 429, 429, 429}
+	for i := range want {
+		if codes[i] != want[i] {
+			t.Fatalf("codes = %v, want %v", codes, want)
+		}
+	}
+	// устройство с токеном проходит, даже когда адрес уже в лимите
+	good, _ := m.Pairing()
+	r := httptest.NewRequest("POST", "/api/pair", strings.NewReader(`{"code":"`+good+`"}`))
+	r.Header.Set("Content-Type", "application/json")
+	_, body, _ := do(t, app, r)
+	tok := body[strings.Index(body, `"token":"`)+9:]
+	tok = tok[:strings.Index(tok, `"`)]
+	req := httptest.NewRequest("GET", "/api/state", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	if code, b, _ := do(t, app, req); code != 200 || b != "secret" {
+		t.Fatalf("с токеном: %d %q", code, b)
+	}
+}
+
+func TestDenyLimiterWindowResets(t *testing.T) {
+	l := newDenyLimiter(2, time.Minute)
+	now := time.Now()
+	l.now = func() time.Time { return now }
+	if !l.allow("a") || !l.allow("a") || l.allow("a") {
+		t.Fatal("третий отказ в окне должен быть остановлен")
+	}
+	if !l.allow("b") {
+		t.Fatal("другой адрес не должен страдать")
+	}
+	now = now.Add(61 * time.Second)
+	if !l.allow("a") {
+		t.Fatal("после окна счётчик сбрасывается")
+	}
+}

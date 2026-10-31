@@ -61,16 +61,31 @@ type Canvas struct {
 
 // Layout — «как и где» показаны источники. Scenes — OBS-сцены, к которым он привязан (сцена принадлежит одному layout).
 type Layout struct {
-	ID      string   `json:"id"`
+	ID string `json:"id"`
+	// Rev — номер версии на сервере: растёт при каждом сохранении. Клиент присылает тот Rev, на основе которого правил;
+	// не совпал — layout успели изменить в другой вкладке/на другом устройстве (409), и перезаписывать вслепую нельзя.
+	Rev     int64    `json:"rev"`
 	Name    string   `json:"name"`
 	Scenes  []string `json:"scenes"`
 	Canvas  Canvas   `json:"canvas"`
 	Objects []Object `json:"objects"`
 }
 
+// Режимы «SPA-роутер» для проксируемого источника (SourceData.Router).
+const (
+	RouterAuto = ""    // решает список известных сайтов (proxy.KnownRouterSites)
+	RouterOn   = "on"  // всегда скрывать префикс /proxy/<id> от клиентского роутера страницы
+	RouterOff  = "off" // никогда не скрывать
+)
+
+// ValidRouter — допустимое значение SourceData.Router.
+func ValidRouter(v string) bool { return v == RouterAuto || v == RouterOn || v == RouterOff }
+
 type SourceData struct {
 	URL   string `json:"url,omitempty"`
 	Proxy bool   `json:"proxy,omitempty"`
+	// Router — для проксируемых страниц-SPA, чей клиентский роутер ждёт маршруты от корня: "" (авто), "on", "off".
+	Router string `json:"router,omitempty"`
 	// Для type "plugin": id плагина-виджета и его настройки (значения по схеме из plugin.json; передаются виджету в query).
 	Plugin   string         `json:"plugin,omitempty"`
 	Settings map[string]any `json:"settings,omitempty"`

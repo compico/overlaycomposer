@@ -40,12 +40,21 @@ jobs:
       - name: go vet
         run: go vet ./...
       - name: go test -race
-        run: go test -race -count=1 ./...
+        run: |
+          set +e
+          go test -race -count=1 ./... > test.log 2>&1
+          code=$?
+          cat test.log
+          if [ $code -ne 0 ]; then
+            # упавшие тесты — отдельными аннотациями (видны в сводке запуска и через API)
+            grep -E '^(--- FAIL|FAIL|panic:|WARNING: DATA RACE)|_test\.go:[0-9]+:|\.go:[0-9]+ \+0x' test.log | head -40 | while IFS= read -r l; do echo "::error::$l"; done
+          fi
+          exit $code
       - name: tsc (клиент и SDK)
         run: npm run check
         working-directory: web
-      - name: Тесты геометрии (TS)
-        run: node --experimental-strip-types web/shared/geometry.test.ts
+      - name: Тесты клиентской логики (TS)
+        run: node --experimental-strip-types --test web/shared/geometry.test.ts web/shared/history.test.ts web/shared/snap.test.ts web/shared/gestures.test.ts web/client/editor/lib/store.test.ts web/client/editor/features/notifications/model.test.ts web/client/editor/features/store/model.test.ts web/client/editor/features/scene-binding/model.test.ts web/client/editor/features/obs-import/model.test.ts web/client/editor/features/settings.models.test.ts web/client/editor/features/editor/model.test.ts web/client/editor/features/panels.models.test.ts web/client/editor/features/keyboard/model.test.ts web/client/editor/features/live/model.test.ts web/client/editor/features/copy/model.test.ts web/client/editor/features/add-source/model.test.ts web/client/editor/features/plugin-settings/model.test.ts web/client/editor/features/properties/model.test.ts web/client/editor/features/view-prefs/model.test.ts web/client/editor/features/obs-status/model.test.ts web/client/editor/features/history/model.test.ts web/client/shared/proxybase.test.ts
       - name: Кросс-сборка (без cgo, как в релизе)
         run: |
           CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -o /dev/null ./cmd/overlay-composer

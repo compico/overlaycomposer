@@ -3,14 +3,16 @@ package server
 import (
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v3"
 
 	"github.com/compico/overlaycomposer/internal/auth"
+	"github.com/compico/overlaycomposer/internal/proxy"
 )
 
-const tokenCookie = "oc_token"
+const tokenCookie = proxy.AppCookie
 
 // remoteIP — адрес, с которого пришло TCP-соединение.
 func remoteIP(c fiber.Ctx) string {
@@ -40,6 +42,58 @@ func isLocal(c fiber.Ctx) bool {
 	return true
 }
 
+// loopbackHost — Host запроса годится для «локального» доступа: localhost или IP-адрес. Страница чужого сайта может
+// получить доступ к 127.0.0.1 под своим доменом (DNS rebinding: домен резолвится в 127.0.0.1), и Origin у неё
+// совпадёт с Host, то есть originGuard такое не остановит. Имя домена в Host у локального запроса — признак такой атаки.
+func loopbackHost(host string) bool {
+	h := host
+	if hh, _, err := net.SplitHostPort(host); err == nil {
+		h = hh
+	}
+	h = strings.TrimSuffix(strings.TrimPrefix(h, "["), "]")
+	h = strings.TrimSuffix(strings.ToLower(h), ".")
+	if h == "localhost" || strings.HasSuffix(h, ".localhost") {
+		return true
+	}
+	return net.ParseIP(h) != nil
+}
+
+// denyLimiter ограничивает число отказанных (без токена) запросов с одного адреса: окно в минуту стартует с первого отказа.
+// Отказ дешёвый, но каждый такой запрос попадает в журнал, а сканер из локальной сети мог бы слать их тысячами.
+type denyLimiter struct {
+	mu      sync.Mutex
+	max     int
+	window  time.Duration
+	now     func() time.Time
+	entries map[string]*denyEntry
+}
+
+type denyEntry struct {
+	start time.Time
+	n     int
+}
+
+func newDenyLimiter(max int, window time.Duration) *denyLimiter {
+	return &denyLimiter{max: max, window: window, now: time.Now, entries: map[string]*denyEntry{}}
+}
+
+// allow учитывает отказ и сообщает, можно ли ещё отвечать на запросы этого адреса обычным 401.
+func (l *denyLimiter) allow(ip string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := l.now()
+	e := l.entries[ip]
+	if e == nil || now.Sub(e.start) >= l.window {
+		if len(l.entries) > 1000 { // таблица не должна расти бесконечно
+			l.entries = map[string]*denyEntry{}
+		}
+		e = &denyEntry{start: now}
+		l.entries[ip] = e
+	}
+	e.n++
+	return e.n <= l.max
+}
+
 func tokenFrom(c fiber.Ctx) string {
 	if h := c.Get("Authorization"); len(h) > 7 && strings.EqualFold(h[:7], "bearer ") {
 		return strings.TrimSpace(h[7:])
@@ -47,10 +101,13 @@ func tokenFrom(c fiber.Ctx) string {
 	return c.Cookies(tokenCookie)
 }
 
-// authGuard пропускает локальные запросы и запросы с действующим токеном устройства. Файлы плагинов открыты:
+// authGuard пропускает локальные запросы (с Host = localhost/IP) и запросы с действующим токеном устройства. Файлы плагинов открыты:
 // их iframe в sandbox имеет «непрозрачный» origin, и cookie к его подзапросам не прикладывается (файлы публичны).
 func (s *Server) authGuard(c fiber.Ctx) error {
 	if isLocal(c) {
+		if !loopbackHost(c.Get("Host")) {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "unexpected host name; open the app via localhost or an IP address"})
+		}
 		return c.Next()
 	}
 	p := c.Path()
@@ -61,6 +118,10 @@ func (s *Server) authGuard(c fiber.Ctx) error {
 		if _, err := s.d.Auth.Verify(t, remoteIP(c)); err == nil {
 			return c.Next()
 		}
+	}
+	if s.deny != nil && !s.deny.allow(remoteIP(c)) {
+		c.Set("Retry-After", "60")
+		return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{"error": "too many requests"})
 	}
 	if c.Method() == fiber.MethodGet && !strings.HasPrefix(p, "/api/") && p != "/ws" && strings.Contains(c.Get("Accept"), "text/html") {
 		return c.Redirect().To("/pair")

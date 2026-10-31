@@ -276,9 +276,12 @@ func TestStopWaitsForAllPages(t *testing.T) {
 	h, _, _, c1 := newHub()
 	c2 := &fakeConn{}
 	p2 := h.AddPeer(c2)
-	p1 := h.Peers()[0]
-	if p1 == p2 {
-		p1 = h.Peers()[1]
+	// Peers() отдаёт срез в случайном порядке (обход map) — выбираем «не p2» из одного снимка, а не вызываем Peers() дважды.
+	var p1 *Peer
+	for _, p := range h.Peers() {
+		if p != p2 {
+			p1 = p
+		}
 	}
 	res := make(chan StopResult, 1)
 	go func() { res <- h.NotifyStopping(2 * time.Second) }()

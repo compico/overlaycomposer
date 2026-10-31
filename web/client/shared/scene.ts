@@ -3,6 +3,7 @@ import { CSS3DObject, CSS3DRenderer } from "three/addons/renderers/CSS3DRenderer
 import type { Layout, LayoutObject, Source } from "../../shared/types.ts";
 import { visibleBox } from "../../shared/types.ts";
 import type { PluginHost } from "./pluginhost.ts";
+import { proxyBase } from "./proxybase.ts";
 
 const FOV = 50;
 
@@ -38,7 +39,7 @@ function frameUrl(src: Source): string | null {
   if (src.data.proxy) {
     try {
       const u = new URL(url);
-      if (u.protocol === "http:" || u.protocol === "https:") return `/proxy/${src.id}${u.pathname}${u.search}${u.hash}`;
+      if (u.protocol === "http:" || u.protocol === "https:") return `${proxyBase()}/proxy/${src.id}${u.pathname}${u.search}${u.hash}`;
     } catch { /* некорректный URL — отдаём как есть */ }
   }
   return url;

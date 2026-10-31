@@ -1,6 +1,7 @@
 package plugins
 
 import (
+	"encoding/json"
 	"io"
 	"strings"
 	"testing"
@@ -155,5 +156,38 @@ func TestPermissions(t *testing.T) {
 	only := Manifest{ID: "q", Name: "Q", Permissions: []string{PermChatRead}}
 	if _, err := only.CleanGranted([]string{"chat.send"}); err == nil {
 		t.Fatal("granted a permission the plugin did not request")
+	}
+}
+
+func TestNetLocalManifest(t *testing.T) {
+	base := func(rules string) *Manifest {
+		var m Manifest
+		src := `{"id":"p","name":"P","permissions":["net.local"],"settings":[{"key":"host","type":"string"},{"key":"n","type":"number"}],"netLocal":` + rules + `}`
+		if err := json.Unmarshal([]byte(src), &m); err != nil {
+			t.Fatal(err)
+		}
+		return &m
+	}
+	if err := base(`[{"setting":"host","paths":["/json/"]},{"target":"127.0.0.1:9000","paths":["/s"]}]`).Validate(); err != nil {
+		t.Fatalf("валидный манифест: %v", err)
+	}
+	for name, rules := range map[string]string{
+		"настройка не найдена": `[{"setting":"nope","paths":["/"]}]`,
+		"настройка не строка":  `[{"setting":"n","paths":["/"]}]`,
+		"не loopback":          `[{"target":"192.168.1.5:80","paths":["/"]}]`,
+		"нет путей":            `[{"target":"127.0.0.1:80"}]`,
+		"и target, и setting":  `[{"target":"127.0.0.1:80","setting":"host","paths":["/"]}]`,
+		"выход вверх":          `[{"target":"127.0.0.1:80","paths":["/a/../b"]}]`,
+		"слишком много правил": `[` + strings.Repeat(`{"target":"127.0.0.1:80","paths":["/"]},`, 8) + `{"target":"127.0.0.1:80","paths":["/"]}]`,
+	} {
+		if err := base(rules).Validate(); err == nil {
+			t.Errorf("%s: манифест должен быть отвергнут", name)
+		}
+	}
+	// netLocal без разрешения net.local бессмыслен
+	m := base(`[{"target":"127.0.0.1:80","paths":["/"]}]`)
+	m.Permissions = nil
+	if m.Validate() == nil {
+		t.Error("netLocal без разрешения net.local")
 	}
 }

@@ -2,6 +2,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -24,6 +25,7 @@ import (
 	"github.com/compico/overlaycomposer/internal/hub"
 	"github.com/compico/overlaycomposer/internal/kv"
 	"github.com/compico/overlaycomposer/internal/market"
+	"github.com/compico/overlaycomposer/internal/notify"
 	"github.com/compico/overlaycomposer/internal/obs"
 	"github.com/compico/overlaycomposer/internal/paths"
 	"github.com/compico/overlaycomposer/internal/plugins"
@@ -42,6 +44,8 @@ type App struct {
 	Quit          func()
 	TrayRunning   func() bool
 	TrayAvailable bool
+	Version       string
+	Update        func() any // последний известный результат проверки обновлений (nil — проверки нет)
 }
 
 type Deps struct {
@@ -58,7 +62,10 @@ type Deps struct {
 	Chat    *chat.Service
 	KV      *kv.Service
 	Market  *market.Market
-	App     App
+	Notify  *notify.Center
+	// CheckPlugins запускает проверку обновлений плагинов (force — по кнопке); nil — недоступно.
+	CheckPlugins func(ctx context.Context, force bool) error
+	App          App
 }
 
 type Server struct {
@@ -68,11 +75,18 @@ type Server struct {
 	logMu     sync.Mutex // ограничение частоты /api/client-log
 	logWindow time.Time
 	logCount  int
+
+	deny *denyLimiter // отказы без токена по адресам (nil — без ограничения, как в тестах)
+
+	// Сайты источников проксируются на отдельном порту: другой origin, и JS чужого сайта не достаёт до API приложения.
+	// proxyLn == nil — изоляции нет (отключена в config.json или порт занят), прокси работает на основном порту.
+	proxyLn   net.Listener
+	proxyApp  *fiber.App
+	proxyPort int
 }
 
-func New(d Deps) *Server {
-	s := &Server{d: d}
-	s.app = fiber.New(fiber.Config{
+func appConfig() fiber.Config {
+	return fiber.Config{
 		AppName:   "Overlay Composer",
 		BodyLimit: 8 << 20,
 		ErrorHandler: func(c fiber.Ctx, err error) error {
@@ -84,7 +98,13 @@ func New(d Deps) *Server {
 			}
 			return c.Status(code).JSON(fiber.Map{"error": strings.ToLower(httpText(code))})
 		},
-	})
+	}
+}
+
+func New(d Deps) *Server {
+	s := &Server{d: d, deny: newDenyLimiter(120, time.Minute)}
+	s.app = fiber.New(appConfig())
+	s.openProxyListener()
 	s.routes()
 	s.chatWS()
 	s.storageWS()
@@ -122,9 +142,13 @@ func (s *Server) routes() {
 	s.twitchRoutes()
 	s.storageRoutes()
 	s.marketRoutes()
+	s.notifyRoutes()
 
-	// 1. прокси (маршруты /proxy*, затем запросы со страниц, открытых через прокси)
-	s.d.Proxy.Register(app)
+	// 1. прокси (маршруты /proxy*, затем запросы со страниц, открытых через прокси). При изоляции он живёт на своём порту
+	// (newProxyApp): на основном origin сайты источников не отдаются вообще.
+	if s.proxyLn == nil {
+		s.d.Proxy.Register(app)
+	}
 
 	// 2. WebSocket
 	app.Get("/ws", websocket.New(s.serveWS))
@@ -172,8 +196,24 @@ func (s *Server) page(load func() ([]byte, error)) fiber.Handler {
 		}
 		c.Set("Content-Type", "text/html; charset=utf-8")
 		c.Set("Cache-Control", "no-store")
-		return c.Send(b)
+		return c.Send(s.withProxyPort(b))
 	}
+}
+
+// withProxyPort сообщает странице порт прокси (<meta name="oc-proxy-port">), если прокси изолирован на своём порту.
+func (s *Server) withProxyPort(html []byte) []byte {
+	if s.proxyPort == 0 {
+		return html
+	}
+	tag := []byte(`<meta name="oc-proxy-port" content="` + strconv.Itoa(s.proxyPort) + `">`)
+	i := bytes.Index(html, []byte("</head>"))
+	if i < 0 {
+		return html
+	}
+	out := make([]byte, 0, len(html)+len(tag))
+	out = append(out, html[:i]...)
+	out = append(out, tag...)
+	return append(out, html[i:]...)
 }
 
 func (s *Server) htmlString(c fiber.Ctx, body string) error {
@@ -273,7 +313,12 @@ func (w *wsConn) Send(b []byte) bool {
 	}
 }
 
+// maxWSMessage — предел размера входящего WebSocket-сообщения (как BodyLimit у HTTP): без него один клиент мог бы
+// заставить сервер прочитать в память сообщение любого размера.
+const maxWSMessage = 8 << 20
+
 func (s *Server) serveWS(c *websocket.Conn) {
+	c.SetReadLimit(maxWSMessage)
 	wc := &wsConn{ch: make(chan []byte, 64)}
 	done := make(chan struct{})
 	go func() {
@@ -307,22 +352,77 @@ func (s *Server) serveWS(c *websocket.Conn) {
 
 // ---- запуск ----
 
+// proxyPortFor — порт изолированного прокси по настройке (0 — изоляции нет).
+func proxyPortFor(r config.Config) int {
+	if r.Port <= 0 || r.ProxyPort < 0 {
+		return 0
+	}
+	p := r.ProxyPort
+	if p == 0 {
+		p = r.Port + 1
+	}
+	if p > 65535 || p == r.Port {
+		return 0
+	}
+	return p
+}
+
+// openProxyListener занимает порт прокси. Не вышло (порт занят) — не ошибка: прокси работает на основном порту, как раньше,
+// но без изоляции; причина пишется в лог.
+func (s *Server) openProxyListener() {
+	p := proxyPortFor(s.d.Running)
+	if p == 0 {
+		return
+	}
+	ln, err := net.Listen("tcp", net.JoinHostPort(s.d.Running.Host, strconv.Itoa(p)))
+	if err != nil {
+		slog.Warn("прокси: порт занят — сайты источников открываются на основном порту без изоляции (задайте proxyPort в config.json)", "port", p, "err", err)
+		return
+	}
+	s.proxyLn, s.proxyPort = ln, p
+	s.proxyApp = s.newProxyApp()
+}
+
+// newProxyApp — сервер прокси: только /proxy*, запросы со страниц, открытых через прокси, и защита (Origin, токен устройства).
+// API, WebSocket и страницы приложения тут не существуют — любой другой путь отвечает 404.
+func (s *Server) newProxyApp() *fiber.App {
+	app := fiber.New(appConfig())
+	app.Use(s.accessLog, s.originGuard, s.authGuard)
+	s.d.Proxy.Register(app)
+	app.Use(func(c fiber.Ctx) error { return notFound(c) })
+	return app
+}
+
 // Listen занимает адрес сразу (чтобы вызывающий мог отличить «порт занят» от других ошибок) и обслуживает его в фоне.
 // Ошибка работы сервера после старта приходит в канал.
 func (s *Server) Listen() (<-chan error, error) {
 	ln, err := net.Listen("tcp", net.JoinHostPort(s.d.Running.Host, strconv.Itoa(s.d.Running.Port)))
 	if err != nil {
+		if s.proxyLn != nil {
+			_ = s.proxyLn.Close()
+		}
 		return nil, err
 	}
-	errc := make(chan error, 1)
+	errc := make(chan error, 2)
 	go func() {
 		errc <- s.app.Listener(ln, fiber.ListenConfig{DisableStartupMessage: true})
 	}()
+	if s.proxyLn != nil {
+		go func() {
+			if err := s.proxyApp.Listener(s.proxyLn, fiber.ListenConfig{DisableStartupMessage: true}); err != nil {
+				slog.Error("прокси: сервер остановлен", "err", err)
+			}
+		}()
+		slog.Info("прокси изолирован на отдельном порту", "port", s.proxyPort)
+	}
 	return errc, nil
 }
 
 func (s *Server) Shutdown() {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
+	if s.proxyApp != nil {
+		_ = s.proxyApp.ShutdownWithContext(ctx)
+	}
 	_ = s.app.ShutdownWithContext(ctx)
 }

@@ -18,7 +18,7 @@
     header .title { font-weight: 700; }
     header .spacer { flex: 1; }
     .badge { padding: 2px 8px; border-radius: 99px; background: var(--panel2); color: var(--muted); font-size: 12px; }
-    #obsBadge { cursor: pointer; }
+    #obsBadge, #twitchBadge { cursor: pointer; }
     .badge.ok { color: var(--ok); }
     .badge.bad { color: var(--danger); }
     main { display: grid; grid-template-columns: 260px 1fr 280px; min-height: 0; }
@@ -56,6 +56,14 @@
     #canvasFrame { position: absolute; outline: 1px solid #4a4f60; background: rgba(0,0,0,.35); }
     #stage { position: absolute; inset: 0; }
     #overlayLayer { position: absolute; inset: 0; }
+    #guideLayer { position: absolute; inset: 0; pointer-events: none; z-index: 2000000; }
+    .guide { position: absolute; background: #ff5cc8; opacity: .9; }
+    #canvasFrame.compose #stage { opacity: .35; }
+    #canvasFrame.compose .box { border: 1px dashed rgba(255,255,255,.55); background: rgba(255,255,255,.04); }
+    #canvasFrame.compose .box.sel { border: 1px solid var(--accent); background: rgba(124,92,255,.08); }
+    .box .tag { position: absolute; left: 2px; top: 2px; max-width: calc(100% - 4px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      padding: 0 4px; font-size: 10px; line-height: 14px; border-radius: 3px; background: rgba(0,0,0,.65); color: #fff; pointer-events: none; }
+    button[aria-pressed="true"].toggle, #snapBtn[aria-pressed="true"], #composeBtn[aria-pressed="true"] { border-color: var(--accent); color: #fff; }
     .box { position: absolute; border: 1px solid transparent; cursor: move; }
     .box:hover { border-color: rgba(124,92,255,.6); }
     .box.sel { border-color: var(--accent); }
@@ -87,6 +95,7 @@
     .pick .item { align-items: flex-start; }
     .pick .item .meta { color: var(--muted); font-size: 11px; }
     .iconbtn { padding: 2px 7px; line-height: 1.2; }
+    .iconbtn[hidden] { display: none; }
     .hint { color: var(--muted); font-size: 11px; margin: 4px 0; }
     .hint.warn { color: #ffb454; }
     code { background: var(--bg); padding: 0 4px; border-radius: 4px; }
@@ -94,6 +103,23 @@
       color: var(--text, inherit); transform: translateX(-50%); background: var(--panel2);
       border: 1px solid var(--line); padding: 8px 14px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none; }
     .toast.show { opacity: 1; }
+    #bellBtn { position: relative; }
+    .bellcount { position: absolute; top: -6px; right: -6px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 99px; background: var(--danger);
+      color: #fff; font-size: 10px; line-height: 16px; text-align: center; }
+    #notifPanel { position: fixed; inset: auto; margin: 0; width: 360px; max-width: 94vw; max-height: 70vh; overflow: auto; padding: 8px;
+      background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px; }
+    #historyPanel { position: fixed; inset: auto; margin: 0; width: 300px; max-width: 94vw; max-height: 60vh; overflow: auto; padding: 8px;
+      background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px; }
+    .hist { display: flex; justify-content: space-between; gap: 8px; width: 100%; text-align: left; padding: 6px 8px; margin: 0 0 3px; border-radius: 6px; background: var(--panel2); }
+    .hist.cur { outline: 2px solid var(--accent, #6aa9ff); font-weight: 600; }
+    .hist.future { opacity: .55; }
+    .hist .mark { color: var(--ok); }
+    .notif { display: block; width: 100%; text-align: left; padding: 8px; margin: 0 0 4px; border-radius: 8px; background: var(--panel2); }
+    .notif.unread { border-left: 3px solid var(--accent, #6aa9ff); }
+    .notif small { display: block; color: var(--muted); margin-top: 2px; }
+    .migration { border: 1px solid var(--line); border-left: 3px solid #e0a030; border-radius: 6px; padding: 8px; margin: 6px 0; white-space: pre-wrap; }
+    #notifDetail h4 { margin: 12px 0 4px; }
+    #notifDetail ul { margin: 4px 0; padding-left: 20px; }
   </style>
 </head>
 <body>
@@ -106,8 +132,15 @@
       <span class="badge" id="canvasSize"></span>
       <span class="spacer"></span>
       <span class="badge" id="obsBadge">OBS: …</span>
+      <span class="badge bad" id="twitchBadge" hidden></span>
       <span class="badge" id="sceneBadge"></span>
       <span class="badge" id="dirtyBadge"></span>
+      <button id="undoBtn" title="Undo (Ctrl+Z)" aria-label="Undo" disabled>↶</button>
+      <button id="redoBtn" title="Redo (Ctrl+Shift+Z / Ctrl+Y)" aria-label="Redo" disabled>↷</button>
+      <button id="historyBtn" title="History" aria-label="History">🕘</button>
+      <button id="composeBtn" title="Layout mode: outlines and names of all widgets (L)" aria-pressed="false">▦ Layout</button>
+      <button id="snapBtn" title="Snap to other widgets and canvas edges (hold Ctrl to bypass)" aria-pressed="true">🧲 Snap</button>
+      <button id="bellBtn" title="Notifications" aria-label="Notifications">🔔<span class="bellcount" id="bellCount" hidden></span></button>
       <button id="settingsBtn" title="Settings">⚙ Settings</button>
       <button class="primary" id="saveBtn">Save (Ctrl+S)</button>
     </header>
@@ -128,6 +161,7 @@
         <div id="canvasFrame">
           <div id="stage"></div>
           <div id="overlayLayer"></div>
+          <div id="guideLayer"></div>
         </div>
       </div>
       <aside class="right" id="props"></aside>
@@ -206,6 +240,14 @@
       </details>
       <div id="storeBody" style="max-height:60vh;overflow:auto"></div>
       <div class="row" style="justify-content:flex-end;margin-top:12px"><button value="close">Close</button></div>
+    </form>
+  </dialog>
+  <div id="notifPanel" popover="auto"></div>
+  <div id="historyPanel" popover="auto"></div>
+  <dialog id="notifDialog" style="width:520px;max-width:94vw">
+    <form method="dialog">
+      <div id="notifDetail" style="max-height:65vh;overflow:auto"></div>
+      <div class="row" style="justify-content:flex-end;margin-top:12px" id="notifActions"></div>
     </form>
   </dialog>
   <dialog id="copyDialog">
@@ -303,6 +345,7 @@
 
       <hr style="border-color:var(--line)">
       <strong style="font-size:12px">Application</strong>
+      <div class="hint" id="cfgVersion"></div>
       <div class="hint" id="cfgPaths" style="white-space:pre-wrap;word-break:break-all"></div>
       <div class="row">
         <button type="button" id="cfgOpenData">Open data folder</button>

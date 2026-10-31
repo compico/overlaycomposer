@@ -3,6 +3,9 @@
 
 export type SourceType = "iframe" | "plugin" | "image" | "video" | "text" | "html";
 
+/** Режим «SPA-роутер» источника: скрывать ли от страницы префикс /proxy/<id> (для сайтов-SPA с роутером без basename). */
+export type RouterMode = "" | "on" | "off";
+
 export interface Source {
   id: string;
   name: string;
@@ -15,6 +18,8 @@ export interface Source {
   data: {
     url?: string;
     proxy?: boolean;
+    /** SPA-роутер для проксируемой страницы: "" / нет — авто (известные сайты), "on", "off" */
+    router?: RouterMode;
     /** type "plugin": id плагина-виджета и его настройки (передаются виджету в query-параметрах) */
     plugin?: string;
     settings?: Record<string, string | number | boolean>;
@@ -109,6 +114,8 @@ export interface LayoutObject {
 export interface Layout {
   id: string;
   name: string;
+  /** Версия на сервере (растёт при каждом сохранении): по ней сервер замечает, что layout успели изменить в другой вкладке. */
+  rev?: number;
   /**
    * Имена OBS-сцен, к которым привязан layout. Сцена принадлежит не более чем одному layout.
    * Сцены без своего layout показывают layout по умолчанию (Project.defaultLayoutId).

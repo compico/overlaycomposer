@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"runtime"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/compico/overlaycomposer/internal/config"
 	"github.com/compico/overlaycomposer/internal/model"
+	"github.com/compico/overlaycomposer/internal/store"
 )
 
 func bad(c fiber.Ctx, msg string) error {
@@ -240,9 +242,11 @@ func (s *Server) createLayout(c fiber.Ctx) error {
 	if msg := layout.Validate(); msg != "" {
 		return bad(c, msg)
 	}
-	if _, err := s.d.Store.SaveLayout(layout); err != nil {
+	rev, _, err := s.d.Store.SaveLayoutRev(layout, nil)
+	if err != nil {
 		return serverErr(c, err)
 	}
+	layout.Rev = rev
 	s.d.Hub.LayoutsChanged()
 	s.d.Hub.Reresolve()
 	return c.Status(fiber.StatusCreated).JSON(layout)
@@ -265,10 +269,24 @@ func (s *Server) putLayout(c fiber.Ctx) error {
 	if cur == nil {
 		return notFound(c)
 	}
-	stolen, err := s.d.Store.SaveLayout(l) // привязки к сценам других layout переносятся внутри транзакции
+	// rev в теле — «правил версию N»: если за это время layout изменили, отвечаем 409 и ничего не пишем.
+	// Без rev (сторонний клиент) сохраняем безусловно, как раньше.
+	var expect struct {
+		Rev *int64 `json:"rev"`
+	}
+	_ = body(c, &expect)
+	rev, stolen, err := s.d.Store.SaveLayoutRev(l, expect.Rev) // привязки к сценам других layout переносятся внутри транзакции
+	if errors.Is(err, store.ErrRevConflict) {
+		now, gerr := s.d.Store.GetLayout(id)
+		if gerr != nil || now == nil {
+			return serverErr(c, errors.Join(err, gerr))
+		}
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "layout was changed elsewhere", "rev": now.Rev})
+	}
 	if err != nil {
 		return serverErr(c, err)
 	}
+	l.Rev = rev
 	s.d.Hub.LayoutUpdated(id)
 	s.d.Hub.LayoutsChanged() // привязки (и имя) видны в списке layout
 	if stolen {
@@ -321,13 +339,16 @@ func (s *Server) createSource(c fiber.Ctx) error {
 		if err != nil {
 			return bad(c, err.Error())
 		}
-		b.Data = model.SourceData{Plugin: p.ID, Settings: settings, Granted: granted} // URL и proxy у плагина не бывает
+		b.Data = model.SourceData{Plugin: p.ID, Settings: settings, Granted: granted} // URL, proxy и router у плагина не бывает
 	} else {
 		if !model.SafeURL(b.Data.URL) {
 			return bad(c, "invalid url (only http/https or /path)")
 		}
 		if b.Data.Proxy && !model.IsAbsHTTP(b.Data.URL) {
 			return bad(c, "proxy needs an absolute http(s) URL")
+		}
+		if !model.ValidRouter(b.Data.Router) {
+			return bad(c, `invalid router (use "", "on" or "off")`)
 		}
 		b.Data.Plugin, b.Data.Settings, b.Data.Granted = "", nil, nil
 	}
@@ -353,6 +374,7 @@ func (s *Server) putSource(c fiber.Ctx) error {
 		Data *struct {
 			URL      *string        `json:"url"`
 			Proxy    *bool          `json:"proxy"`
+			Router   *string        `json:"router"`   // "" (авто) | "on" | "off"
 			Settings map[string]any `json:"settings"` // только для плагин-виджетов: заменяет все настройки
 			Granted  *[]string      `json:"granted"`  // только для плагин-виджетов: заменяет список выданных разрешений
 		} `json:"data"`
@@ -372,6 +394,12 @@ func (s *Server) putSource(c fiber.Ctx) error {
 		}
 		if b.Data.Proxy != nil {
 			cur.Data.Proxy = *b.Data.Proxy
+		}
+		if b.Data.Router != nil {
+			if !model.ValidRouter(*b.Data.Router) {
+				return bad(c, `invalid router (use "", "on" or "off")`)
+			}
+			cur.Data.Router = *b.Data.Router
 		}
 		if b.Data.Settings != nil {
 			p, ok := s.d.Plugins.Get(cur.Data.Plugin)
@@ -435,6 +463,10 @@ func (s *Server) appInfo(c fiber.Ctx) error {
 	if a.Autostart != nil {
 		autostart = a.Autostart()
 	}
+	var upd any
+	if a.Update != nil {
+		upd = a.Update()
+	}
 	osName := a.OS
 	if osName == "" {
 		osName = runtime.GOOS
@@ -449,6 +481,8 @@ func (s *Server) appInfo(c fiber.Ctx) error {
 		"autostart":     autostart, // null — не поддерживается
 		"tray":          a.TrayRunning != nil && a.TrayRunning(),
 		"trayAvailable": a.TrayAvailable,
+		"version":       a.Version,
+		"update":        upd,
 	})
 }
 

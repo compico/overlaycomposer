@@ -24,6 +24,8 @@ type sourceRow struct {
 	Type  string
 	URL   string
 	Proxy bool
+	// Router — режим «SPA-роутер» (см. model.SourceData.Router); пусто — авто
+	Router string
 	// плагин-виджет (type "plugin")
 	Plugin   string
 	Settings map[string]any `gorm:"serializer:json"`
@@ -40,6 +42,7 @@ type layoutRow struct {
 	CanvasH   int
 	Objects   []model.Object `gorm:"serializer:json"`
 	UpdatedAt time.Time
+	Rev       int64 `gorm:"not null;default:0"` // растёт при каждом сохранении (оптимистичная блокировка)
 }
 
 func (layoutRow) TableName() string { return "layouts" }
@@ -63,7 +66,7 @@ const keyDefaultLayout = "default_layout"
 
 type Store struct{ db *gorm.DB }
 
-// Open открывает (создаёт) базу и мигрирует схему.
+// Open открывает (создаёт) базу и приводит схему к актуальной версии (см. migrate.go).
 func Open(path string) (*Store, error) {
 	dsn := path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
@@ -73,7 +76,10 @@ func Open(path string) (*Store, error) {
 	if sqlDB, err := db.DB(); err == nil {
 		sqlDB.SetMaxOpenConns(1) // один писатель: без «database is locked»
 	}
-	if err := db.AutoMigrate(&sourceRow{}, &layoutRow{}, &sceneRow{}, &settingRow{}, &DeviceRow{}, &TwitchAccountRow{}, &kvRow{}); err != nil {
+	if err := migrate(db, path, migrations); err != nil {
+		if sqlDB, e := db.DB(); e == nil {
+			_ = sqlDB.Close()
+		}
 		return nil, err
 	}
 	return &Store{db: db}, nil
@@ -90,7 +96,7 @@ func (s *Store) Close() error {
 // ---- sources ----
 
 func (r sourceRow) model() model.Source {
-	return model.Source{ID: r.ID, Name: r.Name, Type: r.Type, Data: model.SourceData{URL: r.URL, Proxy: r.Proxy, Plugin: r.Plugin, Settings: r.Settings, Granted: r.Granted}}
+	return model.Source{ID: r.ID, Name: r.Name, Type: r.Type, Data: model.SourceData{URL: r.URL, Proxy: r.Proxy, Router: r.Router, Plugin: r.Plugin, Settings: r.Settings, Granted: r.Granted}}
 }
 
 func (s *Store) ListSources() ([]model.Source, error) {
@@ -124,7 +130,7 @@ func (s *Store) SaveSource(src model.Source) error {
 	if err := s.db.Model(&sourceRow{}).Count(&count).Error; err != nil {
 		return err
 	}
-	row := sourceRow{ID: src.ID, Name: src.Name, Type: src.Type, URL: src.Data.URL, Proxy: src.Data.Proxy, Plugin: src.Data.Plugin, Settings: src.Data.Settings, Granted: src.Data.Granted, Pos: int(count)}
+	row := sourceRow{ID: src.ID, Name: src.Name, Type: src.Type, URL: src.Data.URL, Proxy: src.Data.Proxy, Router: src.Data.Router, Plugin: src.Data.Plugin, Settings: src.Data.Settings, Granted: src.Data.Granted, Pos: int(count)}
 	var old sourceRow
 	if err := s.db.First(&old, "id = ?", src.ID).Error; err == nil {
 		row.Pos = old.Pos // порядок не меняем при обновлении
@@ -157,6 +163,7 @@ func (s *Store) DeleteSource(id string) (bool, error) {
 			}
 			if len(kept) != len(r.Objects) {
 				r.Objects = kept
+				r.Rev++ // серверная правка: открытые редакторы должны увидеть, что их версия устарела
 				if err := tx.Save(&r).Error; err != nil {
 					return err
 				}
@@ -177,7 +184,7 @@ func (r layoutRow) model(scenes []string) model.Layout {
 	if scenes == nil {
 		scenes = []string{}
 	}
-	return model.Layout{ID: r.ID, Name: r.Name, Scenes: scenes, Canvas: model.Canvas{Width: r.CanvasW, Height: r.CanvasH}, Objects: objs}
+	return model.Layout{ID: r.ID, Name: r.Name, Scenes: scenes, Canvas: model.Canvas{Width: r.CanvasW, Height: r.CanvasH}, Objects: objs, Rev: r.Rev}
 }
 
 func (s *Store) scenesByLayout(db *gorm.DB) (map[string][]string, error) {
@@ -234,11 +241,34 @@ func (s *Store) GetLayout(id string) (*model.Layout, error) {
 	return &m, nil
 }
 
-// SaveLayout сохраняет layout и его привязки к сценам одной транзакцией. Сцены, которые принадлежали другим
-// layout, переходят к этому (stolen=true). Layout должен быть уже провалидирован (model.Layout.Validate).
+// ErrRevConflict — layout уже изменили после того, как клиент его прочитал (не совпал Rev).
+var ErrRevConflict = errors.New("layout was changed by someone else")
+
+// SaveLayout сохраняет layout и его привязки к сценам одной транзакцией без проверки версии (серверные правки,
+// создание). Сцены, которые принадлежали другим layout, переходят к этому (stolen=true). Layout должен быть уже
+// провалидирован (model.Layout.Validate). Rev растёт в любом случае.
 func (s *Store) SaveLayout(l model.Layout) (stolen bool, err error) {
+	_, stolen, err = s.SaveLayoutRev(l, nil)
+	return stolen, err
+}
+
+// SaveLayoutRev — то же, но при expect != nil сохраняет, только если Rev в базе равен *expect, иначе ErrRevConflict
+// (ничего не меняется). Возвращает новый Rev.
+func (s *Store) SaveLayoutRev(l model.Layout, expect *int64) (rev int64, stolen bool, err error) {
 	err = s.db.Transaction(func(tx *gorm.DB) error {
-		row := layoutRow{ID: l.ID, Name: l.Name, CanvasW: l.Canvas.Width, CanvasH: l.Canvas.Height, Objects: l.Objects}
+		var cur layoutRow
+		switch e := tx.First(&cur, "id = ?", l.ID).Error; {
+		case e == nil:
+			if expect != nil && cur.Rev != *expect {
+				return ErrRevConflict
+			}
+		case errors.Is(e, gorm.ErrRecordNotFound):
+			cur = layoutRow{}
+		default:
+			return e
+		}
+		rev = cur.Rev + 1
+		row := layoutRow{ID: l.ID, Name: l.Name, CanvasW: l.Canvas.Width, CanvasH: l.Canvas.Height, Objects: l.Objects, Rev: rev}
 		if err := tx.Save(&row).Error; err != nil {
 			return err
 		}
@@ -263,7 +293,10 @@ func (s *Store) SaveLayout(l model.Layout) (stolen bool, err error) {
 		}
 		return nil
 	})
-	return stolen, err
+	if err != nil {
+		return 0, false, err
+	}
+	return rev, stolen, nil
 }
 
 // DeleteLayout удаляет layout и его привязки; если он был default — сбрасывает default.
