@@ -13,6 +13,8 @@ export type Command =
 
 export interface KeyInput {
   key: string;
+  /** Физическая клавиша (KeyboardEvent.code: "KeyZ" …) — не зависит от раскладки. */
+  code?: string;
   /** Ctrl или Cmd. */
   mod: boolean;
   alt: boolean;
@@ -42,9 +44,21 @@ export function isTyping(tag: string, inputType?: string): boolean {
   return tag === "TEXTAREA" || tag === "SELECT" || (tag === "INPUT" && !NON_TEXT_INPUTS.includes(inputType ?? "text"));
 }
 
+/**
+ * Буква для сочетания клавиш. Латинская раскладка (включая Dvorak, AZERTY, QWERTZ) — по самой букве, как привыкли пользователи;
+ * буква другого алфавита (русская «я», «ы» …) — по физической клавише, чтобы Ctrl+Z/Ctrl+S работали в любой раскладке.
+ * Знаки препинания в позиции буквы (`;` в Dvorak на месте Z) не считаются буквой и сочетаний не вызывают.
+ */
+export function shortcutKey(key: string, code?: string): string {
+  const k = key.toLowerCase();
+  if (/^[a-z]$/.test(k) || !/^\p{L}$/u.test(k)) return k;
+  const m = /^Key([A-Z])$/.exec(code ?? "");
+  return m ? m[1].toLowerCase() : k;
+}
+
 /** Команда для нажатия или null, если клавиша не наша. */
 export function resolveKey(k: KeyInput, ctx: KeyContext): Resolved | null {
-  const key = k.key.toLowerCase();
+  const key = shortcutKey(k.key, k.code);
   if (k.mod && key === "s") return { command: { type: "save" }, prevent: true };
 
   if (k.mod && !k.alt && !isTyping(k.tag, k.inputType)) {

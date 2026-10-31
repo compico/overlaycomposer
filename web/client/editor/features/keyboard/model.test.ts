@@ -1,7 +1,7 @@
 // node --experimental-strip-types --test web/client/editor/features/keyboard/model.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { type KeyContext, type KeyInput, resolveKey } from "./model.ts";
+import { type KeyContext, type KeyInput, resolveKey, shortcutKey } from "./model.ts";
 
 const key = (k: string, extra: Partial<KeyInput> = {}): KeyInput => ({ key: k, mod: false, alt: false, shift: false, tag: "BODY", ...extra });
 const ctx = (extra: Partial<KeyContext> = {}): KeyContext => ({ hasSelection: true, selectionLocked: false, hasClip: false, ...extra });
@@ -46,4 +46,29 @@ test("Delete/Backspace удаляют, Escape снимает выбор без p
   assert.deepEqual(resolveKey(key("Delete"), ctx()), { command: { type: "delete" }, prevent: true });
   assert.deepEqual(resolveKey(key("Escape"), ctx()), { command: { type: "deselect" }, prevent: false });
   assert.equal(resolveKey(key("Delete", { tag: "INPUT", inputType: "text" }), ctx()), null);
+});
+
+// Русская раскладка: на клавише Z — «я», на S — «ы», на Y — «н», на C — «с», на V — «м», на L — «д».
+test("сочетания работают в русской раскладке (по физической клавише)", () => {
+  const ru = (k: string, code: string, extra: Partial<KeyInput> = {}) => key(k, { code, ...extra });
+  assert.deepEqual(cmd(ru("я", "KeyZ", { mod: true })), { type: "undo" });
+  assert.deepEqual(cmd(ru("Я", "KeyZ", { mod: true, shift: true })), { type: "redo" });
+  assert.deepEqual(cmd(ru("н", "KeyY", { mod: true })), { type: "redo" });
+  assert.deepEqual(cmd(ru("ы", "KeyS", { mod: true })), { type: "save" });
+  assert.deepEqual(cmd(ru("ы", "KeyS", { mod: true, tag: "INPUT", inputType: "text" })), { type: "save" });
+  assert.deepEqual(cmd(ru("с", "KeyC", { mod: true })), { type: "copy" });
+  assert.deepEqual(cmd(ru("м", "KeyV", { mod: true }), ctx({ hasClip: true })), { type: "paste" });
+  assert.deepEqual(cmd(ru("д", "KeyL")), { type: "toggleCompose" });
+  // в текстовом поле Ctrl+Я по-прежнему оставляет родную отмену браузера
+  assert.equal(cmd(ru("я", "KeyZ", { mod: true, tag: "INPUT", inputType: "text" })), undefined);
+});
+
+test("shortcutKey: латиница — по букве (Dvorak/QWERTZ), знаки — не буквы, без code остаётся как есть", () => {
+  assert.equal(shortcutKey("z", "KeyY"), "z"); // QWERTZ: физическая Y даёт «z» — Ctrl+Z там по букве
+  assert.equal(shortcutKey("Z", "KeyZ"), "z");
+  assert.equal(shortcutKey(";", "KeyZ"), ";"); // Dvorak: «;» на месте Z — не отмена
+  assert.equal(shortcutKey("я", undefined), "я"); // нет code (старый браузер) — прежнее поведение
+  assert.equal(shortcutKey("я", "Digit1"), "я"); // code не буква
+  assert.equal(shortcutKey("Escape", "Escape"), "escape");
+  assert.equal(cmd(key(";", { code: "KeyZ", mod: true })), undefined);
 });
