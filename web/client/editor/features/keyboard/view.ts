@@ -10,7 +10,7 @@ export function mountKeyboard(ports: KeyboardPorts) {
   addEventListener("keydown", (e) => {
     const t = e.target as HTMLElement;
     const r = resolveKey(
-      { key: e.key, mod: e.ctrlKey || e.metaKey, alt: e.altKey, shift: e.shiftKey, tag: t.tagName, inputType: (t as HTMLInputElement).type },
+      { key: e.key, code: e.code, mod: e.ctrlKey || e.metaKey, alt: e.altKey, shift: e.shiftKey, tag: t.tagName, inputType: (t as HTMLInputElement).type },
       ports.context(),
     );
     if (!r) return;
