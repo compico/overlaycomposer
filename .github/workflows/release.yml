@@ -41,6 +41,16 @@ jobs:
           OC_RELEASE: "1" # включает проверку обновлений в собранном приложении
           OC_VERSION: ${{ steps.ver.outputs.tag }}
         run: go run ./cmd/build bin all
+      - name: Контрольные суммы
+        # Файлы в формате sha256sum/sha1sum/…: `sha256sum -c SHA256SUMS`. Проверяют целостность скачанного файла.
+        working-directory: build
+        run: |
+          files="overlay-composer-windows-amd64.exe overlay-composer-linux-amd64"
+          sha256sum $files > SHA256SUMS
+          sha512sum $files > SHA512SUMS
+          sha1sum $files > SHA1SUMS
+          md5sum $files > MD5SUMS
+          cat SHA256SUMS
       - name: Релиз
         env:
           GH_TOKEN: ${{ github.token }}
@@ -49,6 +59,7 @@ jobs:
           gh release create "${{ steps.ver.outputs.tag }}" \
             build/overlay-composer-windows-amd64.exe \
             build/overlay-composer-linux-amd64 \
+            build/SHA256SUMS build/SHA512SUMS build/SHA1SUMS build/MD5SUMS \
             --title "${{ steps.ver.outputs.tag }}" --generate-notes
       - name: Выровнять dev с main
         run: |
