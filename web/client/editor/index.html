@@ -175,6 +175,7 @@
         <button type="button" class="tab sel" role="tab" data-tab="iframe">Web page (iframe)</button>
         <button type="button" class="tab" role="tab" data-tab="existing" id="tabExisting">Existing source</button>
         <button type="button" class="tab" role="tab" data-tab="plugin">Plugins</button>
+        <button type="button" class="tab" role="tab" data-tab="html">HTML file</button>
       </div>
 
       <div class="tabpane" id="pane-iframe" role="tabpanel">
@@ -190,6 +191,22 @@
         </div>
         <div class="row" style="justify-content:flex-end;margin-top:12px">
           <button type="button" class="primary" id="createBtn">Create &amp; place</button>
+        </div>
+      </div>
+
+      <div class="tabpane" id="pane-html" role="tabpanel" hidden>
+        <div class="hint">Your own widget as a file: pick an .html file (with its .css/.js/images next to it) or a whole folder. It is copied into the plugins folder and works like any plugin, with no permissions.</div>
+        <div class="row" style="margin:8px 0">
+          <button type="button" id="htmlPickFilesBtn">Choose file(s)…</button>
+          <button type="button" id="htmlPickFolderBtn">Choose folder…</button>
+        </div>
+        <input type="file" id="htmlFiles" multiple hidden>
+        <input type="file" id="htmlFolder" webkitdirectory hidden>
+        <div class="hint" id="htmlPicked">Nothing selected.</div>
+        <label>Name</label>
+        <input type="text" id="htmlName" placeholder="My alert">
+        <div class="row" style="justify-content:flex-end;margin-top:12px">
+          <button type="button" class="primary" id="htmlCreateBtn">Add &amp; place</button>
         </div>
       </div>
 

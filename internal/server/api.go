@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"runtime"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/compico/overlaycomposer/internal/config"
 	"github.com/compico/overlaycomposer/internal/model"
+	"github.com/compico/overlaycomposer/internal/plugins"
 	"github.com/compico/overlaycomposer/internal/store"
 )
 
@@ -65,6 +67,7 @@ func (s *Server) api() {
 	app.Delete("/api/layouts/:id", s.deleteLayout)
 
 	app.Get("/api/plugins", func(c fiber.Ctx) error { return c.JSON(s.d.Plugins.List()) })
+	app.Post("/api/plugins/local", s.installLocalWidget)
 	app.Get("/api/sources", s.listSources)
 	app.Post("/api/sources", s.createSource)
 	app.Put("/api/sources/:id", s.putSource)
@@ -566,4 +569,54 @@ func (s *Server) clientLogAllowed() bool {
 	}
 	s.logCount++
 	return s.logCount <= 120
+}
+
+// installLocalWidget: виджет из загруженного HTML-файла (и файлов рядом). multipart: name, files (повторяется) и paths —
+// относительные пути в том же порядке (имя в самой части multipart Go обрезает до последнего сегмента).
+// Сохраняется как обычный плагин без разрешений в папке плагинов; в ответе — его манифест.
+func (s *Server) installLocalWidget(c fiber.Ctx) error {
+	form, err := c.MultipartForm()
+	if err != nil {
+		return bad(c, "multipart form expected")
+	}
+	name := ""
+	if v := form.Value["name"]; len(v) > 0 {
+		name = v[0]
+	}
+	headers := form.File["files"]
+	paths := form.Value["paths"]
+	if len(headers) > plugins.MaxLocalFiles {
+		return bad(c, "too many files")
+	}
+	if len(paths) != 0 && len(paths) != len(headers) {
+		return bad(c, "paths must match files")
+	}
+	files := make([]plugins.LocalFile, 0, len(headers))
+	total := int64(0)
+	for i, h := range headers {
+		total += h.Size
+		if total > plugins.MaxLocalBytes {
+			return bad(c, "upload is too large")
+		}
+		f, err := h.Open()
+		if err != nil {
+			return serverErr(c, err)
+		}
+		data, err := io.ReadAll(io.LimitReader(f, plugins.MaxLocalBytes+1))
+		f.Close()
+		if err != nil {
+			return serverErr(c, err)
+		}
+		p := h.Filename
+		if len(paths) > 0 {
+			p = paths[i]
+		}
+		files = append(files, plugins.LocalFile{Path: p, Data: data})
+	}
+	m, err := plugins.InstallLocal(s.d.Paths.PluginsDir, s.d.Plugins, name, files)
+	if err != nil {
+		return bad(c, err.Error())
+	}
+	s.d.Plugins.Scan()
+	return c.JSON(m)
 }
