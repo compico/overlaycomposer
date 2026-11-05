@@ -39,6 +39,9 @@ var migrations = []migration{
 		}
 		return tx.Migrator().AddColumn(&layoutRow{}, "Rev")
 	}},
+	{3, "track_requests — заявки зрителей на треки", func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&TrackRequestRow{}) // идемпотентна: на чистой базе таблицу уже создаст она же при первом запуске
+	}},
 }
 
 // NewerSchemaError — база создана более новой версией приложения.

@@ -31,6 +31,7 @@ import (
 	"github.com/compico/overlaycomposer/internal/plugins"
 	"github.com/compico/overlaycomposer/internal/proxy"
 	"github.com/compico/overlaycomposer/internal/store"
+	"github.com/compico/overlaycomposer/internal/trackreq"
 	"github.com/compico/overlaycomposer/internal/twitch"
 	"github.com/compico/overlaycomposer/web"
 )
@@ -60,9 +61,11 @@ type Deps struct {
 	Auth    *auth.Manager
 	Twitch  *twitch.Manager
 	Chat    *chat.Service
-	KV      *kv.Service
-	Market  *market.Market
-	Notify  *notify.Center
+	// TrackReq — заявки на треки; nil — функция недоступна.
+	TrackReq *trackreq.Service
+	KV       *kv.Service
+	Market   *market.Market
+	Notify   *notify.Center
 	// CheckPlugins запускает проверку обновлений плагинов (force — по кнопке); nil — недоступно.
 	CheckPlugins func(ctx context.Context, force bool) error
 	App          App
@@ -140,6 +143,7 @@ func (s *Server) routes() {
 	app.Use(s.authGuard)
 	s.authRoutes()
 	s.twitchRoutes()
+	s.trackReqRoutes()
 	s.storageRoutes()
 	s.marketRoutes()
 	s.notifyRoutes()
