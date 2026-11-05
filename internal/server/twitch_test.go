@@ -25,7 +25,7 @@ func TestTwitchRoutesLocal(t *testing.T) {
 		case "/oauth2/token":
 			w.Write([]byte(`{"access_token":"acc1","refresh_token":"ref1","expires_in":14000}`))
 		case "/oauth2/validate":
-			w.Write([]byte(`{"login":"mystreamer","user_id":"7","scopes":["chat:read","chat:edit"]}`))
+			w.Write([]byte(`{"login":"mystreamer","user_id":"7","scopes":["chat:read","chat:edit","channel:read:redemptions","channel:manage:redemptions"]}`))
 		}
 	}))
 	defer fakeTwitch.Close()

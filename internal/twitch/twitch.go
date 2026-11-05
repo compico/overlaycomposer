@@ -28,9 +28,10 @@ const (
 	refreshMargin = 5 * time.Minute
 )
 
-// Scopes — права по ролям. Чат читается и пишется через IRC (chat:read / chat:edit); больше не просим.
+// Scopes — права по ролям. Чат читается и пишется через IRC (chat:read / chat:edit); стримеру — ещё награды за баллы канала
+// (заявки на треки): читать погашения через EventSub и управлять наградами.
 var Scopes = map[string][]string{
-	RoleStreamer: {"chat:read", "chat:edit"},
+	RoleStreamer: {"chat:read", "chat:edit", ScopeReadRedemptions, ScopeManageRedemptions},
 	RoleBot:      {"chat:read", "chat:edit"},
 }
 
@@ -74,10 +75,11 @@ type pending struct {
 }
 
 type Manager struct {
-	st     Storage
-	http   *http.Client
-	idBase string // https://id.twitch.tv (в тестах — локальный сервер)
-	now    func() time.Time
+	st      Storage
+	http    *http.Client
+	idBase  string // https://id.twitch.tv (в тестах — локальный сервер)
+	apiBase string // https://api.twitch.tv (Helix)
+	now     func() time.Time
 
 	mu      sync.Mutex
 	pending map[string]pending // state → роль
@@ -86,7 +88,7 @@ type Manager struct {
 
 func New(st Storage) *Manager {
 	return &Manager{
-		st: st, http: &http.Client{Timeout: 15 * time.Second}, idBase: "https://id.twitch.tv",
+		st: st, http: &http.Client{Timeout: 15 * time.Second}, idBase: "https://id.twitch.tv", apiBase: "https://api.twitch.tv",
 		now: time.Now, pending: map[string]pending{},
 	}
 }
