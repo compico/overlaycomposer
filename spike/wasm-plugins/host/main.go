@@ -1,7 +1,7 @@
 // PoC хоста серверных wasm-плагинов: wazero + тот же ABI, что проверен в ../node/harness.mjs.
 //
-// ВНИМАНИЕ: этот файл написан без возможности собрать его (в среде автора не было доступа к модулю wazero),
-// поэтому не проверен. Ожидайте мелких правок API wazero. Запуск:
+// Проверен вручную (Windows, wazero v1.12.0): маршруты, лог плагина, storage, паника → 500, перехват stderr с трассой,
+// перезапуск экземпляра с сохранением состояния. go.mod/go.sum зафиксируйте при первом `go mod tidy`. Запуск:
 //
 //	cd ../guest && GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o hello.wasm .
 //	cd ../host && go mod tidy && go run . ../guest/hello.wasm
@@ -122,7 +122,9 @@ func (p *plugin) start(ctx context.Context) error {
 	go func() {
 		sc := bufio.NewScanner(pr)
 		for sc.Scan() {
-			p.log.Warn("stderr", "line", sc.Text())
+			if line := strings.TrimRight(sc.Text(), "\r"); line != "" {
+				p.log.Warn("stderr", "line", line)
+			}
 		}
 	}()
 	cfg := wazero.NewModuleConfig().WithName("").WithStderr(pw).WithStdout(pw).WithStartFunctions("_initialize")
