@@ -117,9 +117,13 @@ type response struct {
 func ocInit(ptr, n uint32) uint64 {
 	_ = read(ptr, n) // {"apiVersion":1,"config":{...}} — в PoC не используем
 	log("info", "hello plugin initialised", nil)
+	host("timer.set", map[string]any{"id": "t", "ms": 300, "repeat": true}) // таймер принадлежит хосту и переживает перезапуск плагина
 	m, _ := json.Marshal(meta{
 		ID: "hello", Version: "0.1.0", APIVersion: 1,
-		Routes: []route{{"GET", "/greet", "greet"}, {"GET", "/boom", "boom"}},
+		Routes: []route{
+			{"GET", "/greet", "greet"}, {"GET", "/boom", "boom"}, {"GET", "/ticks", "ticks"},
+			{"GET", "/fetch", "fetch"}, {"GET", "/fetch/result", "fetchResult"},
+		},
 	})
 	return pack(m)
 }
@@ -128,7 +132,31 @@ func ocInit(ptr, n uint32) uint64 {
 func ocCall(mp, ml, ap, al uint32) uint64 {
 	name := string(read(mp, ml))
 	arg := read(ap, al)
+	if name == "on_event" {
+		onEvent(arg)
+		return 0
+	}
 	switch name {
+	case "ticks":
+		out, _ := json.Marshal(response{200, map[string]any{"ticks": getInt("ticks")}})
+		return pack(out)
+	case "fetch": // асинхронно: обработчик возвращает ответ сразу, результат придёт событием http.response
+		var req request
+		_ = json.Unmarshal(arg, &req)
+		host("http.fetch", map[string]any{"id": "last", "method": "GET", "url": req.Query["url"]})
+		out, _ := json.Marshal(response{202, map[string]any{"started": true}})
+		return pack(out)
+	case "fetchResult":
+		var res any
+		var cur struct {
+			Value string `json:"value"`
+		}
+		_ = json.Unmarshal(host("storage.get", map[string]string{"key": "fetch:last"}), &cur)
+		if cur.Value != "" {
+			_ = json.Unmarshal([]byte(cur.Value), &res)
+		}
+		out, _ := json.Marshal(response{200, map[string]any{"result": res}})
+		return pack(out)
 	case "greet":
 		var req request
 		_ = json.Unmarshal(arg, &req)
@@ -155,6 +183,32 @@ func ocCall(mp, ml, ap, al uint32) uint64 {
 	}
 	out, _ := json.Marshal(response{404, map[string]any{"error": "unknown handler " + name}})
 	return pack(out)
+}
+
+func getInt(key string) int {
+	var cur struct {
+		Value string `json:"value"`
+	}
+	_ = json.Unmarshal(host("storage.get", map[string]string{"key": key}), &cur)
+	n, _ := strconv.Atoi(cur.Value)
+	return n
+}
+
+// onEvent принимает события хоста: timer (считаем тики) и http.response (кладём результат в storage).
+func onEvent(arg []byte) {
+	var ev struct {
+		Type string          `json:"type"`
+		Data json.RawMessage `json:"data"`
+	}
+	if json.Unmarshal(arg, &ev) != nil {
+		return
+	}
+	switch ev.Type {
+	case "timer":
+		host("storage.set", map[string]string{"key": "ticks", "value": strconv.Itoa(getInt("ticks") + 1)})
+	case "http.response":
+		host("storage.set", map[string]string{"key": "fetch:last", "value": string(ev.Data)})
+	}
 }
 
 func main() {}

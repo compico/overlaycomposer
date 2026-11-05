@@ -8,7 +8,7 @@ const bytes = readFileSync(wasmPath);
 const mod = await WebAssembly.compile(bytes);
 
 const storage = new Map(); // состояние живёт в хосте и переживает перезапуск экземпляра
-const logs = [];
+const logs = [], timers = [], fetches = [];
 
 async function instantiate() {
   const wasi = new WASI({ version: "preview1", args: [], env: {} });
@@ -23,6 +23,8 @@ async function instantiate() {
       case "log": logs.push(arg); break;
       case "storage.get": out = { value: storage.get(arg.key) ?? "" }; break;
       case "storage.set": storage.set(arg.key, arg.value); out = {}; break;
+      case "timer.set": timers.push(arg); out = {}; break;
+      case "http.fetch": fetches.push(arg); out = {}; break;
       default: out = { error: "unknown op " + op };
     }
     if (out === null) return 0n;
@@ -59,7 +61,7 @@ const initArg = Buffer.from(JSON.stringify({ apiVersion: 1, config: {} }));
 const ip = e.alloc(initArg.length); new Uint8Array(e.memory.buffer).set(initArg, ip);
 const r = e.oc_init(ip, initArg.length);
 const meta = JSON.parse(Buffer.from(new Uint8Array(e.memory.buffer).subarray(Number(r >> 32n), Number((r >> 32n) + (r & 0xffffffffn)))).toString());
-check("oc_init отдаёт метаданные и маршруты", meta.id === "hello" && meta.routes.length === 2 && meta.routes[0].path === "/greet", JSON.stringify(meta));
+check("oc_init отдаёт метаданные и маршруты", meta.id === "hello" && meta.routes.length === 5 && meta.routes[0].path === "/greet", JSON.stringify(meta));
 
 let g = call(inst, "greet", { method: "GET", path: "/greet", query: { name: "Ann" } });
 check("greet: ответ и счётчик из storage хоста", g.status === 200 && g.body.hello === "Ann" && g.body.count === 1, JSON.stringify(g));
@@ -77,6 +79,18 @@ check("sad path: паника плагина = trap, хост жив", trapped i
 inst = await instantiate(); // супервизор: перезапуск экземпляра
 g = call(inst, "greet", { query: { name: "Bob" } });
 check("после перезапуска состояние хоста сохранилось", g.status === 200 && g.body.count === 3, JSON.stringify(g));
+
+// события хоста: таймер и асинхронный http
+check("oc_init заказал таймер у хоста", timers.some((t) => t.id === "t" && t.repeat === true), JSON.stringify(timers));
+const ev = (type, data) => call(inst, "on_event", { type, data });
+ev("timer", { id: "t" }); ev("timer", { id: "t" });
+check("событие timer: плагин считает тики", call(inst, "ticks", {}).body.ticks === 2);
+g = call(inst, "fetch", { query: { url: "https://example.test/x" } });
+check("fetch: обработчик отвечает сразу (202), запрос уходит хосту", g.status === 202 && fetches.length === 1 && fetches[0].url === "https://example.test/x", JSON.stringify([g, fetches]));
+check("fetchResult до ответа — пусто", call(inst, "fetchResult", {}).body.result === null);
+ev("http.response", { id: "last", status: 200, body: "ok" });
+check("событие http.response: результат доступен", call(inst, "fetchResult", {}).body.result?.body === "ok");
+check("sad: мусорное событие не роняет плагин", (() => { try { call(inst, "on_event", "не json"); ev("unknown", {}); return true; } catch { return false; } })());
 
 console.log(ok ? "ALL OK" : "FAILED", `(wasm ${(bytes.length / 1048576).toFixed(1)} MB)`);
 process.exit(ok ? 0 : 1);
