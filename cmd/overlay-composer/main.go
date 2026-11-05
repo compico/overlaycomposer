@@ -36,6 +36,7 @@ import (
 	"github.com/compico/overlaycomposer/internal/secret"
 	"github.com/compico/overlaycomposer/internal/server"
 	"github.com/compico/overlaycomposer/internal/store"
+	"github.com/compico/overlaycomposer/internal/trackreq"
 	"github.com/compico/overlaycomposer/internal/tray"
 	"github.com/compico/overlaycomposer/internal/twitch"
 	"github.com/compico/overlaycomposer/internal/update"
@@ -171,6 +172,21 @@ func run() int {
 	chatSvc := chat.New(twMgr)
 	defer chatSvc.Close()
 
+	// Заявки на треки: погашения награды за баллы → очередь плеера. Пока мост к плееру не подключён, заявки ждут в базе.
+	trackSvc, err := trackreq.New(trackreq.FromStore(st), twMgr, trackreq.NoPlayer{},
+		func(onRedeem func(twitch.Redemption), onState func(state, detail string)) trackreq.EventSource {
+			return twMgr.NewEventSub(onRedeem, onState)
+		})
+	if err != nil {
+		slog.Error("заявки на треки", "err", err)
+		platform.ErrorBox(paths.AppTitle, "Не удалось прочитать настройки заявок на треки: "+err.Error())
+		return 1
+	}
+	trackCtx, stopTrack := context.WithCancel(context.Background())
+	defer stopTrack()
+	defer trackSvc.Stop()
+	trackSvc.Start(trackCtx)
+
 	pluginReg := plugins.New(plugins.Builtin(), os.DirFS(p.PluginsDir))
 	mk, err := market.New(market.Config{
 		File: filepath.Join(p.DataDir, "market.json"), Dir: p.PluginsDir, Reg: pluginReg, Builtin: pluginReg.IsBuiltin, Box: box,
@@ -204,6 +220,7 @@ func run() int {
 		Auth:         authMgr,
 		Twitch:       twMgr,
 		Chat:         chatSvc,
+		TrackReq:     trackSvc,
 		KV:           kv.New(st.KV()),
 		Plugins:      pluginReg,
 		Market:       mk,
