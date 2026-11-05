@@ -4,7 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -93,4 +97,61 @@ func TestTimerFromInitFires(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatal("таймер не сработал дважды за 3 секунды")
+}
+
+// Сценарий заявки целиком, как его увидит аддон плеера: событие Twitch → GET /next → POST /started → FULFILLED.
+// То же, что ручные curl, но без терминала.
+func TestMusicFlowOverHTTP(t *testing.T) {
+	p := loadWasm(t, "../music/music.wasm", `{"rewardId":"rw"}`)
+	srv := httptest.NewServer(p.routes())
+	defer srv.Close()
+	do := func(method, path, body string) (int, string) {
+		t.Helper()
+		req, _ := http.NewRequest(method, srv.URL+path, strings.NewReader(body))
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b)
+	}
+	updates := func() []string { p.updMu.Lock(); defer p.updMu.Unlock(); return append([]string(nil), p.updates...) }
+
+	ev := func(id, input string) string {
+		return fmt.Sprintf(`{"type":"twitch.redemption","data":{"id":%q,"rewardId":"rw","userLogin":"v","input":%q}}`, id, input)
+	}
+	if code, _ := do("POST", "/dev/event", ev("r1", "https://music.yandex.ru/album/1/track/2")); code != 202 {
+		t.Fatalf("событие: %d", code)
+	}
+	if code, body := do("GET", "/plugins/music/next", ""); code != 200 || !strings.Contains(body, `"id":1`) || !strings.Contains(body, `"trackId":"2"`) {
+		t.Fatalf("next: %d %s", code, body)
+	}
+	if code, _ := do("POST", "/plugins/music/started", `{"id":1}`); code != 200 {
+		t.Fatalf("started: %d", code)
+	}
+	if u := updates(); len(u) != 1 || u[0] != "r1:FULFILLED" {
+		t.Fatalf("погашение должно закрыться: %v", u)
+	}
+
+	// sad path: плохая ссылка возвращает баллы, чужой id, мусор, неизвестные маршруты
+	do("POST", "/dev/event", ev("r2", "https://evil.example/x"))
+	if u := updates(); len(u) != 2 || u[1] != "r2:CANCELED" {
+		t.Fatalf("плохая ссылка → CANCELED: %v", u)
+	}
+	if code, _ := do("POST", "/plugins/music/started", `{"id":99}`); code != 404 {
+		t.Fatalf("неизвестная заявка: %d", code)
+	}
+	if code, _ := do("POST", "/plugins/music/started", `не json`); code != 400 {
+		t.Fatalf("мусорное тело: %d", code)
+	}
+	if code, _ := do("POST", "/dev/event", `{}`); code != 400 {
+		t.Fatalf("событие без типа: %d", code)
+	}
+	if code, _ := do("GET", "/plugins/music/nope", ""); code != 404 {
+		t.Fatalf("неизвестный маршрут: %d", code)
+	}
+	if code, _ := do("GET", "/plugins/music/started", ""); code != 405 {
+		t.Fatalf("неверный метод: %d", code)
+	}
 }
