@@ -174,17 +174,25 @@ type NewReward struct {
 	InputRequired bool
 }
 
+// ErrInvalidReward — параметры награды не прошли проверку (в отличие от ошибок Twitch и сети).
+var ErrInvalidReward = errors.New("invalid reward")
+
+type invalidReward string
+
+func (e invalidReward) Error() string        { return string(e) }
+func (e invalidReward) Is(target error) bool { return target == ErrInvalidReward }
+
 // CreateReward создаёт награду (она сразу «наша»: ей можно менять статус погашений).
 func (m *Manager) CreateReward(ctx context.Context, n NewReward) (Reward, error) {
 	n.Title = strings.TrimSpace(n.Title)
 	if n.Title == "" || len([]rune(n.Title)) > 45 {
-		return Reward{}, errors.New("reward title: 1..45 characters")
+		return Reward{}, invalidReward("reward title: 1..45 characters")
 	}
 	if n.Cost < 1 {
-		return Reward{}, errors.New("reward cost must be at least 1")
+		return Reward{}, invalidReward("reward cost must be at least 1")
 	}
 	if len([]rune(n.Prompt)) > 200 {
-		return Reward{}, errors.New("reward prompt: at most 200 characters")
+		return Reward{}, invalidReward("reward prompt: at most 200 characters")
 	}
 	in := map[string]any{"title": n.Title, "cost": n.Cost, "prompt": n.Prompt, "is_user_input_required": n.InputRequired, "is_enabled": true}
 	var out struct {
