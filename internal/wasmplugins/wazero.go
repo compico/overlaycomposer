@@ -106,7 +106,7 @@ func (m *wazeroModule) Close(ctx context.Context) error { return m.rt.Close(ctx)
 
 func (m *wazeroModule) New(ctx context.Context, host HostCall, out io.Writer) (Instance, error) {
 	// Без WithSys* wazero отдаёт плагину детерминированные «фальшивые» часы: time.Now() врал бы о дате.
-	cfg := wazero.NewModuleConfig().WithName("").WithStdout(out).WithStderr(out).WithSysWalltime().WithSysNanotime()
+	cfg := wazero.NewModuleConfig().WithName("").WithStdout(out).WithStderr(out)
 	// Reactor-модули (Go c-shared, Rust wasip1 cdylib) имеют _initialize; без него (wasm32-unknown-unknown) — нет.
 	if m.reactor {
 		cfg = cfg.WithStartFunctions("_initialize")
