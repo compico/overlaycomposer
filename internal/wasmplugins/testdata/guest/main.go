@@ -15,7 +15,14 @@ func init() {
 		ID: "testguest", Name: "Test guest", Version: "0.1.0",
 		Permissions: []string{ocplugin.PermStorage, ocplugin.PermTimer},
 	})
-	p.OnInit(func() error { return ocplugin.SetTimer("t", 50*time.Millisecond, true) })
+	p.OnInit(func() error {
+		// Без права timer хост откажет: это обычное состояние до выдачи прав, а не причина падать.
+		// После выдачи прав хост перезапускает плагин, и OnInit выполняется снова.
+		if err := ocplugin.SetTimer("t", 50*time.Millisecond, true); err != nil {
+			ocplugin.Warn("timer is not available yet", "err", err.Error())
+		}
+		return nil
+	})
 	p.OnTimer("t", func() {
 		n, _, _ := ocplugin.Load[int]("ticks")
 		_ = ocplugin.Store("ticks", n+1)

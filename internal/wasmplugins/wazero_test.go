@@ -76,9 +76,7 @@ func TestWazeroEndToEnd(t *testing.T) {
 	if err := m.SetGrants("testguest", []string{PermStorage, PermTimer}); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.Restart("testguest"); err != nil { // oc_init просит таймер уже с правом timer
-		t.Fatal(err)
-	}
+	// выдача прав перезапускает плагин сама: oc_init просит таймер уже с правом timer
 	r, err := get("/greet", map[string]string{"name": "oc"})
 	if err != nil || !strings.Contains(string(r.Body), `"hello":"oc"`) || !strings.Contains(string(r.Body), `"count":1`) {
 		t.Fatalf("greet after grant: %v %s", err, r.Body)
