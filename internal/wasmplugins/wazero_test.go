@@ -36,7 +36,8 @@ func buildGuest(t *testing.T, dir string) {
 	}
 }
 
-// Настоящий wazero и настоящий wasm: метаданные из oc_meta, маршруты, storage, таймер, паника → перезапуск, лог stderr.
+// Настоящий wazero и настоящий wasm (плагин на SDK pkg/ocplugin): метаданные из oc_meta, маршруты, storage, таймер,
+// паника в обработчике → 500, сбой процесса → перезапуск.
 func TestWazeroEndToEnd(t *testing.T) {
 	dir := t.TempDir()
 	buildGuest(t, dir)
@@ -57,7 +58,7 @@ func TestWazeroEndToEnd(t *testing.T) {
 	if len(problems) != 0 || len(infos) != 1 {
 		t.Fatalf("scan: %+v %+v", infos, problems)
 	}
-	if infos[0].Meta.ID != "testguest" || infos[0].State != StateRunning || len(infos[0].Meta.Routes) != 3 {
+	if infos[0].Meta.ID != "testguest" || infos[0].State != StateRunning || len(infos[0].Meta.Routes) != 4 {
 		t.Fatalf("meta must come from oc_meta: %+v", infos[0])
 	}
 	ctx := context.Background()
@@ -65,7 +66,7 @@ func TestWazeroEndToEnd(t *testing.T) {
 		return m.Handle(ctx, "testguest", Request{Method: "GET", Path: path, Query: q})
 	}
 
-	// без разрешений storage недоступен: счётчик не растёт
+	// без разрешений storage недоступен (SDK получает ошибку хоста и пишет предупреждение), но плагин отвечает
 	if r, err := get("/greet", map[string]string{"name": "oc"}); err != nil || strings.Contains(string(r.Body), `"count":1`) && false {
 		t.Fatalf("greet: %v %s", err, r.Body)
 	}
@@ -89,9 +90,17 @@ func TestWazeroEndToEnd(t *testing.T) {
 		return err == nil && json.Unmarshal(r.Body, &v) == nil && v.Ticks >= 2
 	})
 
-	// паника внутри wasm: ошибка наружу, экземпляр пересоздан, состояние хоста цело
-	if _, err := get("/boom", nil); err == nil {
-		t.Fatal("a panic inside the plugin must surface as an error")
+	// паника в обработчике: SDK отвечает 500 и пишет в лог, экземпляр жив (перезапуска нет)
+	res, err := get("/boom", nil)
+	if err != nil || res.Status != 500 || strings.Contains(string(res.Body), "nil map") {
+		t.Fatalf("a recovered panic must be a generic 500: %v %+v", err, res)
+	}
+	if info, _ := m.List(); info[0].Restarts != 0 {
+		t.Fatalf("a recovered panic must not restart the instance: %+v", info[0])
+	}
+	// сбой рантайма (wasm-процесс завершился): ошибка наружу, экземпляр пересоздан, состояние хоста цело
+	if _, err := get("/exit", nil); err == nil {
+		t.Fatal("process exit inside the plugin must surface as an error")
 	}
 	r, err = get("/greet", map[string]string{"name": "again"})
 	if err != nil || !strings.Contains(string(r.Body), `"count":2`) {
@@ -101,7 +110,7 @@ func TestWazeroEndToEnd(t *testing.T) {
 		t.Fatalf("restart must be counted: %+v", info[0])
 	}
 	if !strings.Contains(logs.String(), "panic") {
-		t.Fatalf("the Go panic text from stderr must reach the plugin log:\n%s", logs.String())
+		t.Fatalf("the recovered panic must be logged by the SDK:\n%s", logs.String())
 	}
 	if !strings.Contains(logs.String(), "plugin=testguest") {
 		t.Fatalf("log lines must carry the plugin id:\n%s", logs.String())
