@@ -226,6 +226,7 @@
           <span class="row" style="margin:0">
             <button type="button" id="openStoreBtn" title="Install plugins from GitHub repositories">Plugin store…</button>
             <button type="button" id="openPluginsBtn" title="Folder for your own plugins">Plugins folder</button>
+            <button type="button" id="openWasmBtn" title="Standalone plugins (.wasm): permissions and settings" hidden>Standalone plugins…</button>
           </span>
           <button type="button" class="primary" id="usePluginBtn">Create &amp; place plugin</button>
         </div>
@@ -256,6 +257,20 @@
         </div>
       </details>
       <div id="storeBody" style="max-height:60vh;overflow:auto"></div>
+      <div class="row" style="justify-content:flex-end;margin-top:12px"><button value="close">Close</button></div>
+    </form>
+  </dialog>
+  <dialog id="wasmDialog" style="width:620px;max-width:94vw">
+    <form method="dialog">
+      <strong>Standalone plugins</strong>
+      <div class="hint warn">Standalone plugins are programs written by other people. They run in a sandbox and get only the permissions you tick,
+        but install them only from authors you trust.</div>
+      <div class="row" style="margin-top:6px">
+        <button type="button" id="wasmFolderBtn">Open folder</button>
+        <button type="button" id="wasmReloadBtn" title="Pick up new or changed .wasm files">Rescan</button>
+      </div>
+      <div class="hint" id="wasmStatus" style="white-space:pre-wrap"></div>
+      <div id="wasmBody" style="max-height:60vh;overflow:auto"></div>
       <div class="row" style="justify-content:flex-end;margin-top:12px"><button value="close">Close</button></div>
     </form>
   </dialog>

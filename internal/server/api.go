@@ -514,8 +514,8 @@ func (s *Server) appOpen(c fiber.Ctx) error {
 	var b struct {
 		What string `json:"what"`
 	}
-	if !body(c, &b) || (b.What != "data" && b.What != "logs" && b.What != "plugins") {
-		return bad(c, "what: data | logs | plugins")
+	if !body(c, &b) || (b.What != "data" && b.What != "logs" && b.What != "plugins" && b.What != "wasmplugins") {
+		return bad(c, "what: data | logs | plugins | wasmplugins")
 	}
 	if s.d.App.Open != nil {
 		if err := s.d.App.Open(b.What); err != nil {

@@ -80,6 +80,7 @@ func TestWasmPluginRoutesAndManagement(t *testing.T) {
 		return nil, errors.New("trap")
 	}}
 	mgr := wasmplugins.NewManager(context.Background(), wasmplugins.Options{Engine: eng, Dirs: []string{dir}})
+	_ = mgr.Dirs()
 	defer mgr.Close()
 	mgr.Scan()
 
@@ -151,7 +152,7 @@ func TestWasmPluginRoutesAndManagement(t *testing.T) {
 
 	// управление
 	code, body, _ = call("GET", "/api/wasmplugins", "", nil)
-	if code != 200 || !strings.Contains(body, `"id":"echo"`) || !strings.Contains(body, `"state":"running"`) {
+	if code != 200 || !strings.Contains(body, `"id":"echo"`) || !strings.Contains(body, `"state":"running"`) || !strings.Contains(body, `"dirs":[`) {
 		t.Fatalf("list: %d %s", code, body)
 	}
 	if code, _, _ = call("PUT", "/api/wasmplugins/echo/grants", `{"granted":["storage"]}`, nil); code != 400 {

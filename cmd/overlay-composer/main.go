@@ -470,7 +470,7 @@ func mustJSON(v any) json.RawMessage {
 	return b
 }
 
-// openWasmPlugins собирает менеджер серверных wasm-плагинов. Папки: ocplugs в профиле (создаётся) и ocplugs рядом с
+// openWasmPlugins собирает менеджер автономных (standalone) wasm-плагинов. Папки: ocplugs в профиле (создаётся) и ocplugs рядом с
 // программой (если есть). Ошибка не мешает запуску приложения: wasm-плагины просто будут недоступны.
 func openWasmPlugins(p paths.Paths, kvSvc *kv.Service, tw *twitch.Manager, reg *plugins.Registry) (*wasmplugins.Manager, []string) {
 	profile := filepath.Join(filepath.Dir(p.PluginsDir), "ocplugs")

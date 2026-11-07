@@ -1,4 +1,4 @@
-# ocplugin — SDK серверных wasm-плагинов на Go
+# ocplugin — SDK автономных (standalone) wasm-плагинов на Go
 
 Отдельный модуль без зависимостей (только stdlib): `go get github.com/compico/overlaycomposer/pkg/ocplugin`
 не тянет за собой код приложения и не требует его версии Go (нужен Go 1.24+ для `//go:wasmexport`).

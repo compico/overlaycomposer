@@ -62,7 +62,7 @@ type Deps struct {
 	Twitch  *twitch.Manager
 	Chat    *chat.Service
 	KV      *kv.Service
-	Wasm    *wasmplugins.Manager // серверные wasm-плагины; nil — выключены
+	Wasm    *wasmplugins.Manager // автономные (standalone) wasm-плагины; nil — выключены
 	Market  *market.Market
 	Notify  *notify.Center
 	// CheckPlugins запускает проверку обновлений плагинов (force — по кнопке); nil — недоступно.

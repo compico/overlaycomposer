@@ -248,6 +248,9 @@ func (m *Manager) get(id string) (*Plugin, error) {
 	return p, nil
 }
 
+// Dirs — папки, в которых менеджер ищет плагины (первая — основная: её открывает интерфейс).
+func (m *Manager) Dirs() []string { return append([]string(nil), m.opts.Dirs...) }
+
 // Has — есть ли загруженный wasm-плагин с таким id.
 func (m *Manager) Has(id string) bool {
 	_, err := m.get(id)
