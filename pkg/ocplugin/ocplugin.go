@@ -1,4 +1,4 @@
-// Package ocplugin — SDK для серверных wasm-плагинов Overlay Composer на Go.
+// Package ocplugin — SDK для автономных (standalone) wasm-плагинов Overlay Composer на Go.
 //
 // Он прячет ABI (alloc/dealloc, упаковку указателей, JSON-обёртки): плагин регистрирует маршруты и обработчики событий,
 // а SDK собирает метаданные для oc_meta и вызывает нужный обработчик.

@@ -142,7 +142,7 @@ export function mountWasmPlugins(refs: WasmRefs, model: WasmModel, ports: WasmPo
     const first = v.dirs[0] ?? "";
     refs.status.textContent = `${first ? `Folder: ${first}\n` : ""}${twitchLine(v.twitch, v.plugins.some((p) => (p.meta.permissions ?? []).includes("twitch.redemption") && p.granted.includes("twitch.redemption")))}`;
     const kids: HTMLElement[] = [];
-    if (v.plugins.length === 0) kids.push(el("div", { class: "hint", textContent: "No server plugins yet. Put a .wasm file into the folder above and press Rescan." }));
+    if (v.plugins.length === 0) kids.push(el("div", { class: "hint", textContent: "No standalone plugins yet. Put a .wasm file into the folder above and press Rescan." }));
     for (const p of v.plugins) kids.push(card(p));
     for (const pr of v.problems) kids.push(el("div", { class: "hint warn", textContent: `${pr.file}: ${pr.error}` }));
     refs.body.replaceChildren(...kids);

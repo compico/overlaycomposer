@@ -1,4 +1,4 @@
-// Package wasmplugins — серверные плагины на WebAssembly.
+// Package wasmplugins — автономные (standalone) плагины на WebAssembly.
 //
 // Плагин — один .wasm-файл на любом языке (Rust, Go, …), который реализует небольшой JSON-ABI (см. docs/WASM_PLUGINS.md).
 // Манифеста нет: метаданные плагин отдаёт сам через экспорт oc_meta. Плагин пассивен: он отвечает на маршруты и события,
