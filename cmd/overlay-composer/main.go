@@ -39,6 +39,7 @@ import (
 	"github.com/compico/overlaycomposer/internal/tray"
 	"github.com/compico/overlaycomposer/internal/twitch"
 	"github.com/compico/overlaycomposer/internal/update"
+	"github.com/compico/overlaycomposer/internal/wasmplugins"
 )
 
 // version подставляется при сборке: -ldflags "-X main.version=1.2.3"
@@ -199,12 +200,19 @@ func run() int {
 		})
 	}
 
+	kvSvc := kv.New(st.KV())
+	wasmMgr, wasmDirs := openWasmPlugins(p, kvSvc, twMgr, pluginReg)
+	if wasmMgr != nil {
+		defer wasmMgr.Close()
+	}
+
 	srv = server.New(server.Deps{
 		Paths: p, Cfg: cfgStore, Running: cfg, Store: st, Hub: h, Obs: obsClient, Proxy: px,
 		Auth:         authMgr,
 		Twitch:       twMgr,
 		Chat:         chatSvc,
-		KV:           kv.New(st.KV()),
+		KV:           kvSvc,
+		Wasm:         wasmMgr,
 		Plugins:      pluginReg,
 		Market:       mk,
 		Notify:       center,
@@ -219,6 +227,8 @@ func run() int {
 					return platform.OpenTarget(p.LogDir)
 				case "plugins":
 					return platform.OpenTarget(p.PluginsDir)
+				case "wasmplugins":
+					return platform.OpenTarget(wasmDirs[0])
 				}
 				return platform.OpenTarget(p.DataDir)
 			},
@@ -234,6 +244,14 @@ func run() int {
 			},
 		},
 	})
+
+	if wasmMgr != nil {
+		// Компиляция wasm может занять секунды (Go-плагины ~3 МБ): не задерживаем запуск сервера.
+		go func() {
+			wasmMgr.Scan()
+			srv.SyncWasm()
+		}()
+	}
 
 	errc, err := srv.Listen()
 	if err != nil {
@@ -450,4 +468,36 @@ func openStore(p paths.Paths) (*store.Store, error) {
 func mustJSON(v any) json.RawMessage {
 	b, _ := json.Marshal(v)
 	return b
+}
+
+// openWasmPlugins собирает менеджер серверных wasm-плагинов. Папки: ocplugs в профиле (создаётся) и ocplugs рядом с
+// программой (если есть). Ошибка не мешает запуску приложения: wasm-плагины просто будут недоступны.
+func openWasmPlugins(p paths.Paths, kvSvc *kv.Service, tw *twitch.Manager, reg *plugins.Registry) (*wasmplugins.Manager, []string) {
+	profile := filepath.Join(filepath.Dir(p.PluginsDir), "ocplugs")
+	dirs := []string{profile}
+	if err := os.MkdirAll(profile, 0o755); err != nil {
+		slog.Warn("wasm-плагины: не удалось создать папку", "dir", profile, "err", err)
+	}
+	if exe, err := os.Executable(); err == nil {
+		if next := filepath.Join(filepath.Dir(exe), "ocplugs"); next != profile {
+			dirs = append(dirs, next)
+		}
+	}
+	eng, err := wasmplugins.NewWazeroEngine(filepath.Join(p.DataDir, "wasm-cache"))
+	if err != nil {
+		slog.Error("wasm-плагины недоступны", "err", err)
+		return nil, dirs
+	}
+	var state wasmplugins.StateStore
+	if fs, err := wasmplugins.OpenFileState(filepath.Join(p.DataDir, "wasmplugins.json")); err != nil {
+		slog.Error("wasm-плагины: файл прав и настроек повреждён, права не сохраняются", "err", err)
+		state = &wasmplugins.MemState{}
+	} else {
+		state = fs
+	}
+	return wasmplugins.NewManager(context.Background(), wasmplugins.Options{
+		Engine: eng, Dirs: dirs, State: state,
+		Services: wasmplugins.Services{Storage: wasmplugins.KVStorage{S: kvSvc}, Redeem: tw.UpdateRedemption, Log: slog.Default()},
+		Reserved: func(id string) bool { _, ok := reg.Get(id); return ok },
+	}), dirs
 }
