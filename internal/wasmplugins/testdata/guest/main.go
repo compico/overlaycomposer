@@ -39,6 +39,10 @@ func init() {
 		n, _, _ := ocplugin.Load[int]("ticks")
 		return c.JSON(200, map[string]int{"ticks": n})
 	})
+	// Часы плагина должны быть настоящими (по умолчанию wazero отдаёт фальшивые).
+	p.GET("/now", func(c *ocplugin.Ctx) error {
+		return c.JSON(200, map[string]int64{"unix": time.Now().Unix()})
+	})
 	// Паника в обработчике: SDK превращает её в 500 и пишет в лог, экземпляр остаётся жив.
 	p.GET("/boom", func(*ocplugin.Ctx) error {
 		var m map[string]int

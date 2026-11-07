@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 type syncBuf struct {
@@ -58,7 +59,7 @@ func TestWazeroEndToEnd(t *testing.T) {
 	if len(problems) != 0 || len(infos) != 1 {
 		t.Fatalf("scan: %+v %+v", infos, problems)
 	}
-	if infos[0].Meta.ID != "testguest" || infos[0].State != StateRunning || len(infos[0].Meta.Routes) != 4 {
+	if infos[0].Meta.ID != "testguest" || infos[0].State != StateRunning || len(infos[0].Meta.Routes) != 5 {
 		t.Fatalf("meta must come from oc_meta: %+v", infos[0])
 	}
 	ctx := context.Background()
@@ -87,6 +88,13 @@ func TestWazeroEndToEnd(t *testing.T) {
 		var v struct{ Ticks int }
 		return err == nil && json.Unmarshal(r.Body, &v) == nil && v.Ticks >= 2
 	})
+
+	// часы плагина настоящие: расхождение с хостом — секунды, а не десятилетия
+	r, err = get("/now", nil)
+	var now struct{ Unix int64 }
+	if err != nil || json.Unmarshal(r.Body, &now) != nil || now.Unix < time.Now().Add(-time.Minute).Unix() || now.Unix > time.Now().Add(time.Minute).Unix() {
+		t.Fatalf("plugin clock: %v %s (host %d)", err, r.Body, time.Now().Unix())
+	}
 
 	// паника в обработчике: SDK отвечает 500 и пишет в лог, экземпляр жив (перезапуска нет)
 	res, err := get("/boom", nil)
