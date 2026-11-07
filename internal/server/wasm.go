@@ -97,7 +97,7 @@ func (s *Server) wasmList(c fiber.Ctx) error {
 	if s.redeem != nil {
 		st, detail = s.redeem.State()
 	}
-	return c.JSON(fiber.Map{"plugins": infos, "problems": problems, "twitch": fiber.Map{"state": st, "detail": detail}})
+	return c.JSON(fiber.Map{"plugins": infos, "problems": problems, "dirs": s.d.Wasm.Dirs(), "twitch": fiber.Map{"state": st, "detail": detail}})
 }
 
 func (s *Server) wasmReload(c fiber.Ctx) error {

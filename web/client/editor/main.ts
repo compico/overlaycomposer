@@ -35,6 +35,8 @@ import { createConfigModel } from "./features/config/model.ts";
 import { mountConfig } from "./features/config/view.ts";
 import { createTwitchModel } from "./features/twitch/model.ts";
 import { mountTwitch, mountTwitchBadge } from "./features/twitch/view.ts";
+import { createWasmModel } from "./features/wasmplugins/model.ts";
+import { mountWasmPlugins } from "./features/wasmplugins/view.ts";
 import { createDevicesModel } from "./features/devices/model.ts";
 import { mountDevices } from "./features/devices/view.ts";
 import { createObsImportModel } from "./features/obs-import/model.ts";
@@ -262,6 +264,14 @@ const pluginStore = mountStore(
     openPluginsFolder: () => api("/api/app/open", "POST", { what: "plugins" }),
   },
 );
+
+const wasmModel = createWasmModel(api);
+mountWasmPlugins(
+  { openBtn: $("openWasmBtn"), dialog: $<HTMLDialogElement>("wasmDialog"), body: $("wasmBody"), reloadBtn: $("wasmReloadBtn"), folderBtn: $("wasmFolderBtn"), status: $("wasmStatus") },
+  wasmModel,
+  { ui: { toast, fail }, openFolder: () => api("/api/app/open", "POST", { what: "wasmplugins" }) },
+);
+void wasmModel.load(); // показывает кнопку, только если сервер отдаёт раздел
 
 // ---------- properties panel (features/properties) и форма настроек плагина (features/plugin-settings) ----------
 
