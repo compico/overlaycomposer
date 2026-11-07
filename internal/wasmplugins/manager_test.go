@@ -125,8 +125,18 @@ func TestGrantsAndConfigPersist(t *testing.T) {
 	if m.Wants(EventRedemption) {
 		t.Fatal("not granted: the host must not need EventSub for it")
 	}
+	n0 := mod.count()
 	if err := m.SetGrants("cfg", []string{PermStorage, PermRedeem, PermStorage}); err != nil {
 		t.Fatal(err)
+	}
+	if mod.count() != n0+1 {
+		t.Fatal("a changed set of grants must restart the plugin so that oc_init runs with the new rights")
+	}
+	if err := m.SetGrants("cfg", []string{PermRedeem, PermStorage}); err != nil {
+		t.Fatal(err)
+	}
+	if mod.count() != n0+1 {
+		t.Fatal("the same set of grants (in another order) must not restart the plugin")
 	}
 	if !m.Wants(EventRedemption) {
 		t.Fatal("granted and subscribed: must be wanted")

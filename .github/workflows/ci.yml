@@ -50,6 +50,12 @@ jobs:
             grep -E '^(--- FAIL|FAIL|panic:|WARNING: DATA RACE)|_test\.go:[0-9]+:|\.go:[0-9]+ \+0x' test.log | head -40 | while IFS= read -r l; do echo "::error::$l"; done
           fi
           exit $code
+      - name: SDK плагинов (pkg/ocplugin — отдельный модуль, в ./... не входит)
+        working-directory: pkg/ocplugin
+        run: |
+          go vet .
+          go test -race -count=1 ./...
+          GOOS=wasip1 GOARCH=wasm go build ./...
       - name: tsc (клиент и SDK)
         run: npm run check
         working-directory: web

@@ -304,7 +304,8 @@ func (m *Manager) Wants(typ string) bool {
 	return false
 }
 
-// SetGrants заменяет набор выданных разрешений; можно выдать только то, что плагин запросил.
+// SetGrants заменяет набор выданных разрешений (можно выдать только то, что плагин запросил). Если набор изменился,
+// плагин перезапускается: OnInit выполняется заново уже с новыми правами.
 func (m *Manager) SetGrants(id string, perms []string) error {
 	p, err := m.get(id)
 	if err != nil {
@@ -327,8 +328,32 @@ func (m *Manager) SetGrants(id string, perms []string) error {
 	if err := m.save(id, PluginState{Granted: clean, Config: p.config()}); err != nil {
 		return err
 	}
+	before := p.Info().Granted
 	p.setGrants(clean)
+	if !sameSet(before, p.Info().Granted) {
+		// oc_init уже отработал с прежними правами (например, не смог попросить таймер): запускаем заново.
+		// Сбой запуска виден в состоянии плагина (failed + причина), поэтому не ошибка выдачи прав.
+		if err := p.ResetFailure(); err != nil {
+			m.log.Warn("plugin did not restart after a permission change", "plugin", id, "err", err)
+		}
+	}
 	return nil
+}
+
+func sameSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, x := range a {
+		seen[x] = true
+	}
+	for _, x := range b {
+		if !seen[x] {
+			return false
+		}
+	}
+	return true
 }
 
 // SetConfig сохраняет настройки (JSON-объект) и перезапускает экземпляр, чтобы плагин получил их в oc_init.
