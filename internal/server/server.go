@@ -32,6 +32,7 @@ import (
 	"github.com/compico/overlaycomposer/internal/proxy"
 	"github.com/compico/overlaycomposer/internal/store"
 	"github.com/compico/overlaycomposer/internal/twitch"
+	"github.com/compico/overlaycomposer/internal/wasmplugins"
 	"github.com/compico/overlaycomposer/web"
 )
 
@@ -61,6 +62,7 @@ type Deps struct {
 	Twitch  *twitch.Manager
 	Chat    *chat.Service
 	KV      *kv.Service
+	Wasm    *wasmplugins.Manager // автономные (standalone) wasm-плагины; nil — выключены
 	Market  *market.Market
 	Notify  *notify.Center
 	// CheckPlugins запускает проверку обновлений плагинов (force — по кнопке); nil — недоступно.
@@ -75,6 +77,8 @@ type Server struct {
 	logMu     sync.Mutex // ограничение частоты /api/client-log
 	logWindow time.Time
 	logCount  int
+
+	redeem *wasmplugins.Bridge // EventSub для wasm-плагинов; nil — без Twitch или без wasm
 
 	deny *denyLimiter // отказы без токена по адресам (nil — без ограничения, как в тестах)
 
@@ -104,6 +108,11 @@ func appConfig() fiber.Config {
 func New(d Deps) *Server {
 	s := &Server{d: d, deny: newDenyLimiter(120, time.Minute)}
 	s.app = fiber.New(appConfig())
+	if d.Wasm != nil && d.Twitch != nil {
+		s.redeem = wasmplugins.NewBridge(func(deliver func(id string, data any), onState func(state, detail string)) wasmplugins.Runner {
+			return d.Twitch.NewEventSub(func(r twitch.Redemption) { deliver(r.ID, r) }, onState)
+		}, d.Wasm.Publish)
+	}
 	s.openProxyListener()
 	s.routes()
 	s.chatWS()
@@ -143,6 +152,7 @@ func (s *Server) routes() {
 	s.storageRoutes()
 	s.marketRoutes()
 	s.notifyRoutes()
+	s.wasmRoutes()
 
 	// 1. прокси (маршруты /proxy*, затем запросы со страниц, открытых через прокси). При изоляции он живёт на своём порту
 	// (newProxyApp): на основном origin сайты источников не отдаются вообще.
@@ -160,6 +170,7 @@ func (s *Server) routes() {
 	app.Get("/overlay", s.page(web.OverlayHTML))
 	app.Get("/dist/*", s.dist)
 	app.Get("/plugin-sdk/:name", s.pluginSDK)
+	s.wasmPluginRoutes() // /plugins/:id/api/* — раньше раздачи файлов виджетов
 	app.Get("/plugins/:id/*", s.pluginFile)
 	app.Get("/plugins/:id", func(c fiber.Ctx) error { return c.Redirect().To("/plugins/" + c.Params("id") + "/") })
 }
@@ -419,6 +430,9 @@ func (s *Server) Listen() (<-chan error, error) {
 }
 
 func (s *Server) Shutdown() {
+	if s.redeem != nil {
+		s.redeem.Close()
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if s.proxyApp != nil {

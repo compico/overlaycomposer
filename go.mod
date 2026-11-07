@@ -9,6 +9,7 @@ require (
 	github.com/glebarez/sqlite v1.11.0
 	github.com/gofiber/contrib/v3/websocket v1.2.7
 	github.com/gofiber/fiber/v3 v3.5.0
+	github.com/tetratelabs/wazero v1.12.0
 	golang.org/x/net v0.59.0
 	golang.org/x/sys v0.48.0
 	gorm.io/gorm v1.31.2

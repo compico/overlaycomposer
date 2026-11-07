@@ -55,7 +55,7 @@ func newFake(t *testing.T) *fake {
 				w.Write([]byte(`{"status":400,"message":"Invalid authorization code"}`))
 				return
 			}
-			w.Write([]byte(`{"access_token":"acc1","refresh_token":"ref1","expires_in":14000,"scope":["chat:read","chat:edit"],"token_type":"bearer"}`))
+			w.Write([]byte(`{"access_token":"acc1","refresh_token":"ref1","expires_in":14000,"scope":["chat:read","chat:edit","channel:read:redemptions","channel:manage:redemptions"],"token_type":"bearer"}`))
 		case "refresh_token":
 			f.refreshes.Add(1)
 			if f.failRef.Load() || r.Form.Get("refresh_token") == "" {
@@ -73,7 +73,7 @@ func newFake(t *testing.T) *fake {
 			w.WriteHeader(401)
 			return
 		}
-		w.Write([]byte(`{"client_id":"cid","login":"somestreamer","scopes":["chat:read","chat:edit"],"user_id":"42","expires_in":14000}`))
+		w.Write([]byte(`{"client_id":"cid","login":"somestreamer","scopes":["chat:read","chat:edit","channel:read:redemptions","channel:manage:redemptions"],"user_id":"42","expires_in":14000}`))
 	})
 	mux.HandleFunc("/oauth2/revoke", func(w http.ResponseWriter, r *http.Request) { f.revoked.Add(1) })
 	f.srv = httptest.NewServer(mux)
@@ -130,7 +130,7 @@ func TestAuthURL(t *testing.T) {
 func TestCallbackFlow(t *testing.T) {
 	m, st, _ := setup(t)
 	acc := connect(t, m, RoleStreamer)
-	if acc.Login != "somestreamer" || acc.UserID != "42" || acc.Role != RoleStreamer || len(acc.Scopes) != 2 {
+	if acc.Login != "somestreamer" || acc.UserID != "42" || acc.Role != RoleStreamer || len(acc.Scopes) != 4 {
 		t.Fatalf("account: %+v", acc)
 	}
 	if st.accs[RoleStreamer].AccessToken != "acc1" || st.accs[RoleStreamer].RefreshToken != "ref1" {
@@ -251,10 +251,10 @@ func TestAccountsNeedsReconnect(t *testing.T) {
 
 	// Приложение стало просить больше прав, чем выдано аккаунту стримера — нужно переподключить.
 	old := Scopes[RoleStreamer]
-	Scopes[RoleStreamer] = append(append([]string{}, old...), "channel:read:redemptions")
+	Scopes[RoleStreamer] = append(append([]string{}, old...), "channel:read:subscriptions")
 	defer func() { Scopes[RoleStreamer] = old }()
 	a := byRole()[RoleStreamer]
-	if !a.NeedsReconnect || len(a.MissingScopes) != 1 || a.MissingScopes[0] != "channel:read:redemptions" {
+	if !a.NeedsReconnect || len(a.MissingScopes) != 1 || a.MissingScopes[0] != "channel:read:subscriptions" {
 		t.Fatalf("missing scope: %+v", a)
 	}
 
@@ -266,7 +266,7 @@ func TestAccountsNeedsReconnect(t *testing.T) {
 }
 
 func TestReconnectItems(t *testing.T) {
-	ok := Account{Role: RoleStreamer, Login: "me", Scopes: []string{"chat:read", "chat:edit"}}
+	ok := Account{Role: RoleStreamer, Login: "me", Scopes: []string{"chat:read", "chat:edit", ScopeReadRedemptions, ScopeManageRedemptions}}
 	expired := Account{Role: RoleBot, Login: "bot1", Scopes: []string{"chat:read", "chat:edit"}, LastError: "reconnect required: Invalid refresh token"}
 	if got := ReconnectItems([]Account{ok}); len(got) != 0 {
 		t.Fatalf("healthy account must not notify: %+v", got)
