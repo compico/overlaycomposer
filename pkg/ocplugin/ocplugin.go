@@ -51,6 +51,17 @@ type Meta struct {
 	Permissions []string `json:"permissions,omitempty"`
 	// ConfigSchema — описание настроек для формы в интерфейсе (хост его не толкует).
 	ConfigSchema map[string]any `json:"configSchema,omitempty"`
+	// Widgets — виджеты плагина: HTML лежит в статике (секция oc.assets, её добавляет утилита ocpack), Entry — путь к нему.
+	Widgets []Widget `json:"widgets,omitempty"`
+}
+
+// Widget — виджет плагина, который пользователь добавляет на сцену. Width/Height — размер по умолчанию (0 — 400×300).
+type Widget struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Entry  string `json:"entry"`
+	Width  int    `json:"width,omitempty"`
+	Height int    `json:"height,omitempty"`
 }
 
 // Handler обрабатывает запрос к маршруту. Возвращённая ошибка — это 500 без подробностей наружу (подробности — в лог плагина).

@@ -331,3 +331,21 @@ func TestRegistrationMistakesPanic(t *testing.T) {
 	mustPanic("second New", func() { New(Meta{}) })
 	p.POST("/a", func(*Ctx) error { return nil }) // другой метод — можно
 }
+
+func TestMetaWidgetsAreReported(t *testing.T) {
+	current = nil
+	p := New(Meta{ID: "w", Name: "W", Version: "1.0.0", Widgets: []Widget{{ID: "main", Name: "Main", Entry: "index.html", Width: 320}}})
+	var m struct {
+		Widgets []Widget `json:"widgets"`
+	}
+	if err := json.Unmarshal(p.metaJSON(), &m); err != nil {
+		t.Fatal(err)
+	}
+	if len(m.Widgets) != 1 || m.Widgets[0].Entry != "index.html" || m.Widgets[0].Width != 320 {
+		t.Fatalf("widgets: %+v", m.Widgets)
+	}
+	current = nil
+	if strings.Contains(string(New(Meta{ID: "x", Name: "X", Version: "1.0.0"}).metaJSON()), "widgets") {
+		t.Fatal("no widgets: the field must be omitted")
+	}
+}

@@ -7,8 +7,11 @@ package wasmplugins
 
 import (
 	"fmt"
+	"path"
 	"regexp"
 	"strings"
+
+	"github.com/compico/overlaycomposer/internal/wasmassets"
 )
 
 // APIVersion — версия ABI между хостом и плагином.
@@ -22,6 +25,10 @@ const (
 	PermTimer    = "timer"
 	maxRoutes    = 64
 	maxMetaBytes = 64 << 10
+	maxWidgets   = 16
+	defWidgetW   = 400
+	defWidgetH   = 300
+	maxWidgetDim = 8192
 )
 
 // События, на которые плагин может подписаться.
@@ -62,6 +69,17 @@ type Meta struct {
 	Subscriptions []string `json:"subscriptions,omitempty"`
 	// ConfigSchema — необязательное описание настроек (JSON Schema-подобное), UI строит по нему форму. Хост его не толкует.
 	ConfigSchema map[string]any `json:"configSchema,omitempty"`
+	// Widgets — виджеты плагина (iframe с HTML из секции oc.assets); пользователь добавляет их на сцену как обычные виджеты.
+	Widgets []Widget `json:"widgets,omitempty"`
+}
+
+// Widget — виджет плагина. Entry — путь HTML-файла в статике плагина (/plugins/<id>/ui/<entry>).
+type Widget struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Entry  string `json:"entry"`
+	Width  int    `json:"width,omitempty"`
+	Height int    `json:"height,omitempty"`
 }
 
 // Validate проверяет метаданные, чтобы кривой плагин не попал в маршруты и интерфейс.
@@ -122,6 +140,42 @@ func (m *Meta) Validate() error {
 	}
 	if subs[EventRedemption] && !perms[PermRedeem] {
 		return fmt.Errorf("subscription %q requires permission %q", EventRedemption, PermRedeem)
+	}
+	return m.validateWidgets()
+}
+
+func (m *Meta) validateWidgets() error {
+	if len(m.Widgets) > maxWidgets {
+		return fmt.Errorf("too many widgets (max %d)", maxWidgets)
+	}
+	seen := map[string]bool{}
+	for i := range m.Widgets {
+		w := &m.Widgets[i]
+		if !idRe.MatchString(w.ID) {
+			return fmt.Errorf("widget id %q: a-z, 0-9 and '-', up to 64 characters", w.ID)
+		}
+		if seen[w.ID] {
+			return fmt.Errorf("duplicate widget id %q", w.ID)
+		}
+		seen[w.ID] = true
+		if strings.TrimSpace(w.Name) == "" || len([]rune(w.Name)) > 80 {
+			return fmt.Errorf("widget %q: name must be 1..80 characters", w.ID)
+		}
+		if err := wasmassets.ValidPath(w.Entry); err != nil {
+			return fmt.Errorf("widget %q: entry: %w", w.ID, err)
+		}
+		if ext := strings.ToLower(path.Ext(w.Entry)); ext != ".html" && ext != ".htm" {
+			return fmt.Errorf("widget %q: entry must be an HTML file", w.ID)
+		}
+		if w.Width == 0 {
+			w.Width = defWidgetW
+		}
+		if w.Height == 0 {
+			w.Height = defWidgetH
+		}
+		if w.Width < 1 || w.Width > maxWidgetDim || w.Height < 1 || w.Height > maxWidgetDim {
+			return fmt.Errorf("widget %q: size must be 1..%d", w.ID, maxWidgetDim)
+		}
 	}
 	return nil
 }

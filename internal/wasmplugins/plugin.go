@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/compico/overlaycomposer/internal/wasmassets"
 )
 
 // Состояния плагина.
@@ -97,6 +99,8 @@ type Plugin struct {
 	mod  Module
 	svc  Services
 	log  *slog.Logger
+
+	assets *wasmassets.Assets // статика из секции oc.assets; nil — её нет
 
 	ctx    context.Context
 	cancel context.CancelFunc
