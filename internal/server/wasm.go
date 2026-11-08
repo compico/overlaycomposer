@@ -32,6 +32,34 @@ func (s *Server) wasmRoutes() {
 func (s *Server) wasmPluginRoutes() {
 	s.app.All("/plugins/:id/api", s.wasmRoute)
 	s.app.All("/plugins/:id/api/*", s.wasmRoute)
+	s.app.Get("/plugins/:id/ui/*", s.wasmUI)
+}
+
+// wasmUI раздаёт статику плагина — файлы из секции oc.assets его .wasm (HTML виджета, js, css, картинки).
+// Плагин для этого не вызывается: хост отдаёт готовые байты из памяти. Страница плагина — чужой код, поэтому каждый ответ
+// несёт CSP `sandbox allow-scripts`: даже открытая напрямую по ссылке (не в iframe) она получает «непрозрачный» origin
+// и не может обратиться к API приложения. Файлы публичны (как и файлы HTML-плагинов), CORS открыт для запросов из sandbox-iframe.
+func (s *Server) wasmUI(c fiber.Ctx) error {
+	id := c.Params("id")
+	if s.d.Wasm == nil || !s.d.Wasm.Has(id) {
+		return c.Next() // не wasm-плагин: возможно, у HTML-плагина есть папка ui
+	}
+	data, mime, sha, ok := s.d.Wasm.Asset(id, c.Params("*"))
+	if !ok {
+		return notFound(c)
+	}
+	etag := `"` + sha[:16] + `"` // содержимое меняется только вместе с файлом плагина
+	c.Set("Content-Security-Policy", "sandbox allow-scripts")
+	c.Set("Access-Control-Allow-Origin", "*")
+	c.Set("X-Content-Type-Options", "nosniff")
+	c.Set("Referrer-Policy", "no-referrer")
+	c.Set("Cache-Control", "no-cache")
+	c.Set("ETag", etag)
+	if c.Get("If-None-Match") == etag {
+		return c.SendStatus(fiber.StatusNotModified)
+	}
+	c.Set("Content-Type", mime)
+	return c.Send(data)
 }
 
 func (s *Server) wasmRoute(c fiber.Ctx) error {

@@ -17,6 +17,7 @@ import (
 
 	"github.com/compico/overlaycomposer/internal/config"
 	"github.com/compico/overlaycomposer/internal/plugins"
+	"github.com/compico/overlaycomposer/internal/wasmassets"
 	"github.com/compico/overlaycomposer/internal/wasmplugins"
 )
 
@@ -212,4 +213,108 @@ func TestWasmDisabled(t *testing.T) {
 		t.Fatalf("plugin route without the manager: %d", resp.StatusCode)
 	}
 	s.SyncWasm() // не должен паниковать без менеджера и моста
+}
+
+// uiEngine — плагин с виджетом: его статика берётся из секции oc.assets реального wasm-файла (собранного PackWasm).
+type uiEngine struct{}
+
+func (uiEngine) Compile(context.Context, []byte) (wasmplugins.Module, error) { return uiModule{}, nil }
+func (uiEngine) Close(context.Context) error                                 { return nil }
+
+type uiModule struct{}
+
+func (uiModule) New(context.Context, wasmplugins.HostCall, io.Writer) (wasmplugins.Instance, error) {
+	return uiInst{}, nil
+}
+func (uiModule) Close(context.Context) error { return nil }
+
+type uiInst struct{}
+
+func (uiInst) Meta(context.Context) ([]byte, error) {
+	return json.Marshal(wasmplugins.Meta{
+		ID: "ui", Name: "UI", Version: "1.0.0", APIVersion: 1,
+		Routes:  []wasmplugins.Route{{Method: "GET", Path: "/secret", Handler: "secret"}},
+		Widgets: []wasmplugins.Widget{{ID: "main", Name: "Main", Entry: "index.html"}},
+	})
+}
+func (uiInst) Init(context.Context, []byte) ([]byte, error) { return nil, nil }
+func (uiInst) Call(context.Context, string, []byte) ([]byte, error) {
+	return []byte(`{"body":"api"}`), nil
+}
+func (uiInst) Close(context.Context) error { return nil }
+
+func TestWasmStaticAssets(t *testing.T) {
+	src := t.TempDir()
+	_ = os.WriteFile(filepath.Join(src, "index.html"), []byte("<p>widget</p>"), 0o644)
+	_ = os.MkdirAll(filepath.Join(src, "js"), 0o755)
+	_ = os.WriteFile(filepath.Join(src, "js", "app.js"), []byte("1"), 0o644)
+	wasm, err := wasmassets.PackWasm([]byte("\x00asm\x01\x00\x00\x00"), src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "ui.wasm"), wasm, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mgr := wasmplugins.NewManager(context.Background(), wasmplugins.Options{Engine: uiEngine{}, Dirs: []string{dir}})
+	defer mgr.Close()
+	mgr.Scan()
+
+	htmlFS := fstest.MapFS{"widget/plugin.json": {Data: []byte(`{"id":"widget","name":"W","entry":"index.html"}`)}, "widget/index.html": {Data: []byte("<p>w</p>")}, "widget/ui/own.txt": {Data: []byte("static")}}
+	s := &Server{d: Deps{Wasm: mgr, Plugins: plugins.New(htmlFS, fstest.MapFS{}), Running: config.Config{Host: "127.0.0.1", Port: 8123}}}
+	s.app = fiber.New()
+	s.wasmPluginRoutes()
+	s.app.Get("/plugins/:id/*", s.pluginFile)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go s.app.Listener(ln, fiber.ListenConfig{DisableStartupMessage: true})
+	defer s.app.Shutdown()
+	get := func(path string, hdr map[string]string) (int, string, http.Header) {
+		req, _ := http.NewRequest("GET", "http://"+ln.Addr().String()+path, nil)
+		for k, v := range hdr {
+			req.Header.Set(k, v)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b), resp.Header
+	}
+
+	code, body, h := get("/plugins/ui/ui/index.html", nil)
+	if code != 200 || body != "<p>widget</p>" || !strings.HasPrefix(h.Get("Content-Type"), "text/html") {
+		t.Fatalf("index: %d %q %v", code, body, h)
+	}
+	if !strings.Contains(h.Get("Content-Security-Policy"), "sandbox") || h.Get("Access-Control-Allow-Origin") != "*" || h.Get("X-Content-Type-Options") != "nosniff" {
+		t.Fatalf("security headers: %v", h)
+	}
+	if code, body, h = get("/plugins/ui/ui/js/app.js", nil); code != 200 || body != "1" || !strings.HasPrefix(h.Get("Content-Type"), "text/javascript") {
+		t.Fatalf("nested file: %d %q %v", code, body, h)
+	}
+	// условный запрос
+	etag := h.Get("ETag")
+	if etag == "" {
+		t.Fatal("ETag expected")
+	}
+	if code, body, _ = get("/plugins/ui/ui/js/app.js", map[string]string{"If-None-Match": etag}); code != 304 || body != "" {
+		t.Fatalf("conditional: %d %q", code, body)
+	}
+	// sad paths: нет файла, выход из архива, каталог, чужой плагин; статика не должна открывать маршруты плагина
+	for _, p := range []string{"/plugins/ui/ui/missing.js", "/plugins/ui/ui/", "/plugins/ui/ui/js", "/plugins/ui/ui/%2e%2e/api/secret", "/plugins/ui/ui/..%2fapi%2fsecret", "/plugins/ui/ui/js/../../ui.wasm"} {
+		if code, body, _ = get(p, nil); code == 200 {
+			t.Fatalf("%s must not be served: %q", p, body)
+		}
+	}
+	// HTML-плагин с папкой ui по-прежнему отдаёт свои файлы
+	if code, body, _ = get("/plugins/widget/ui/own.txt", nil); code != 200 || body != "static" {
+		t.Fatalf("html plugin ui folder: %d %q", code, body)
+	}
+	// ответ маршрута плагина остаётся JSON и без CSP-«песочницы» статики
+	if code, _, h = get("/plugins/ui/api/secret", nil); code != 200 || !strings.HasPrefix(h.Get("Content-Type"), "application/json") {
+		t.Fatalf("api: %d %v", code, h)
+	}
 }

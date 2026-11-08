@@ -15,10 +15,12 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/compico/overlaycomposer/internal/wasmassets"
 )
 
 const (
-	maxWasmBytes   = 64 << 20
+	maxWasmBytes   = wasmassets.MaxWasmBytes
 	maxConfigBytes = 64 << 10
 )
 
@@ -198,6 +200,17 @@ func (m *Manager) load(c candidate) (*Plugin, error) {
 		_ = mod.Close(m.ctx)
 		return nil, fmt.Errorf("id %q is already used by another plugin", meta.ID)
 	}
+	assets, err := wasmassets.Of(c.data)
+	if err != nil {
+		_ = mod.Close(m.ctx)
+		return nil, err
+	}
+	for _, w := range meta.Widgets {
+		if !assets.Has(w.Entry) {
+			_ = mod.Close(m.ctx)
+			return nil, fmt.Errorf("widget %q: entry %q is not in the plugin's %s section", w.ID, w.Entry, wasmassets.Section)
+		}
+	}
 	var st PluginState
 	if m.opts.State != nil {
 		if st, err = m.opts.State.Load(meta.ID); err != nil {
@@ -205,7 +218,19 @@ func (m *Manager) load(c candidate) (*Plugin, error) {
 			st = PluginState{}
 		}
 	}
-	return newPlugin(m.ctx, m.opts.Services, mod, *meta, c.path, c.sha, st.Config, st.Granted), nil
+	p := newPlugin(m.ctx, m.opts.Services, mod, *meta, c.path, c.sha, st.Config, st.Granted)
+	p.assets = assets
+	return p, nil
+}
+
+// Asset отдаёт файл статики плагина (из секции oc.assets). ok=false — нет плагина или файла.
+func (m *Manager) Asset(id, p string) (data []byte, mime string, sha string, ok bool) {
+	pl, err := m.get(id)
+	if err != nil {
+		return nil, "", "", false
+	}
+	data, mime, ok = pl.assets.Get(p)
+	return data, mime, pl.sha, ok
 }
 
 func stubHost(context.Context, string, []byte) []byte {
