@@ -1,0 +1,54 @@
+name: ocpack
+description: >-
+  Pack the UI of a standalone Overlay Composer plugin into its .wasm (custom section oc.assets).
+  Builds ocpack from the same revision as the action, so pin the action to a release tag or a commit.
+
+inputs:
+  wasm:
+    description: Path to the built plugin .wasm (relative to the workspace).
+    required: true
+  ui:
+    description: Folder with the widget files (index.html, js, css, images).
+    required: true
+  output:
+    description: Where to write the result. Empty — the input file is replaced.
+    required: false
+    default: ""
+
+outputs:
+  file:
+    description: Path of the packed .wasm.
+    value: ${{ steps.pack.outputs.file }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: ${{ github.action_path }}/../../go.mod
+        cache: false
+    - name: Build ocpack
+      shell: bash
+      env:
+        ACTION_ROOT: ${{ github.action_path }}/../..
+      run: |
+        set -euo pipefail
+        cd "$ACTION_ROOT"
+        CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/ocpack" ./cmd/ocpack
+    - name: Pack
+      id: pack
+      shell: bash
+      # Входы идут через env, а не подставляются в команду: так значение не может стать частью shell-кода.
+      env:
+        IN_WASM: ${{ inputs.wasm }}
+        IN_UI: ${{ inputs.ui }}
+        IN_OUT: ${{ inputs.output }}
+      run: |
+        set -euo pipefail
+        out="${IN_OUT:-$IN_WASM}"
+        if [ -n "$IN_OUT" ]; then
+          "$RUNNER_TEMP/ocpack" pack "$IN_WASM" "$IN_UI" -o "$IN_OUT"
+        else
+          "$RUNNER_TEMP/ocpack" pack "$IN_WASM" "$IN_UI"
+        fi
+        echo "file=$out" >> "$GITHUB_OUTPUT"

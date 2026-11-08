@@ -124,6 +124,24 @@ go run ./cmd/ocpack list out.wasm                 # что внутри
 Результат детерминирован (порядок файлов и даты фиксированы). Формат простой — custom section `oc.assets` с обычным zip, —
 поэтому архив можно собрать и любым другим инструментом.
 
+### Упаковка в CI (GitHub Actions)
+
+В репозитории есть готовое действие `actions/ocpack`: собирает `ocpack` из той же ревизии, что и действие (бинарников не скачивает),
+и упаковывает статику в `.wasm`. Закрепляйте его за тегом релиза или коммитом. Работает на Linux и macOS раннерах.
+
+```yaml
+- name: Сборка плагина
+  run: GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o music.wasm ./wasm/music
+- name: Упаковка интерфейса
+  uses: compico/overlaycomposer/actions/ocpack@<тег-или-коммит>
+  with:
+    wasm: music.wasm
+    ui: wasm/music/ui
+    # output: dist/music.wasm   # по умолчанию файл заменяется
+```
+
+Выход `file` — путь к готовому файлу. Упаковка повторяема: тот же вход даёт тот же `.wasm`, поэтому `sha256` в релизе воспроизводим.
+
 Правила (нарушение — плагин не загружается, причина видна в списке проблем):
 - пути относительные, с `/`, символы `A–Z a–z 0–9 . _ ~ @ -`, без `..`, без скрытых файлов (при упаковке `.DS_Store`, `.git` пропускаются);
 - расширения только из списка: html, htm, js, mjs, css, json, txt, png, jpg, jpeg, gif, webp, svg, ico, woff, woff2, mp3, ogg, wav;
