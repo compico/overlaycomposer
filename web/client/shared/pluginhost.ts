@@ -35,7 +35,10 @@ export class PluginHost {
   #pending = new Map<number, Pending>();
   #nextReq = 1;
 
-  constructor(private opts: HostOptions) {
+  private opts: HostOptions; // не parameter property: такой синтаксис не читается node --experimental-strip-types (тесты)
+
+  constructor(opts: HostOptions) {
+    this.opts = opts;
     addEventListener("message", (ev) => this.#onMessage(ev));
   }
 
@@ -68,7 +71,8 @@ export class PluginHost {
       case "chat:sub:result":
       case "chat:say:result":
       case "storage:result":
-      case "net:result": {
+      case "net:result":
+      case "plugin:result": {
         const p = this.#pending.get(msg.reqId as number);
         if (p) {
           this.#pending.delete(msg.reqId as number);
@@ -207,6 +211,25 @@ export class PluginHost {
         });
         if (r.ok !== true) throw new Error(String(r.error ?? "send failed"));
         return undefined;
+      }
+      case "plugin.call": {
+        // Виджет автономного плагина вызывает маршрут своего плагина. Адресат всегда плагин этого виджета (e.info),
+        // а не то, что прислал виджет; сервер перепроверяет, что источник — виджет именно этого плагина.
+        if (!e.info.widget) throw new Error("plugin.call is only for standalone plugin widgets");
+        const method = str(p.method, "method", 8);
+        const path = str(p.path, "path", 256);
+        if (!method || !path) throw new Error("invalid method or path");
+        let query: Record<string, string | number | boolean> | undefined;
+        if (p.query !== undefined && p.query !== null) {
+          if (typeof p.query !== "object" || Array.isArray(p.query)) throw new Error("invalid query");
+          const entries = Object.entries(p.query as Record<string, unknown>);
+          if (entries.length > 32) throw new Error("invalid query");
+          for (const [, v] of entries) if (typeof v !== "string" && typeof v !== "number" && typeof v !== "boolean") throw new Error("invalid query");
+          query = Object.fromEntries(entries) as Record<string, string | number | boolean>;
+        }
+        const r = await this.#request({ type: "plugin:call", plugin: e.info.pluginId, source: e.info.sourceId, method, path, query, body: p.body });
+        if (r.ok !== true) throw new Error(String(r.error ?? "plugin call failed"));
+        return { status: r.status, body: r.body ?? null };
       }
       case "net.localGet": {
         this.#need(e, "net.local");

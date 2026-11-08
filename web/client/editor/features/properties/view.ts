@@ -1,4 +1,5 @@
 import type { LayoutObject, PluginManifest, RouterMode, Source, Transform } from "../../../../shared/types.ts";
+import { sourcePluginKey } from "../../../shared/pluginkey.ts";
 import { COPY_ICON, EYE_ICON, EYE_OFF_ICON, copyText } from "../../lib/clipboard.ts";
 import { el } from "../../lib/dom.ts";
 import { urlView } from "../add-source/model.ts";
@@ -67,12 +68,13 @@ export function mountProperties(root: HTMLElement, model: PropertiesModel, ports
     root.append(el("h3", { textContent: "Source" }));
     if (src.type === "plugin") {
       root.append(nameRow(src));
-      const m = ports.state().plugins.find((p) => p.id === src.data.plugin);
+      const key = sourcePluginKey(src.data);
+      const m = ports.state().plugins.find((p) => sourcePluginKey({ plugin: p.id, widget: p.widget }) === key);
       if (m) {
-        root.append(el("div", { class: "hint", textContent: `${m.name}${m.version ? ` ${m.version}` : ""}${m.builtin ? "" : " · custom plugin"}` }));
+        root.append(el("div", { class: "hint", textContent: `${m.name}${m.version ? ` ${m.version}` : ""}${m.wasm ? " · standalone plugin" : m.builtin ? "" : " · custom plugin"}` }));
         root.append(ports.pluginForm(src, m));
       } else {
-        root.append(el("div", { class: "hint warn", textContent: `Plugin “${src.data.plugin}” is not installed — the widget will be empty. Put it back into the plugins folder.` }));
+        root.append(el("div", { class: "hint warn", textContent: `Plugin “${key}” is not installed — the widget will be empty. Put it back into the plugins folder.` }));
       }
       return;
     }

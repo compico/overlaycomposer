@@ -2,6 +2,8 @@
 
 export interface PluginInfo {
   pluginId: string;
+  /** виджет автономного (wasm) плагина: его id; у обычного HTML-плагина нет */
+  widget?: string;
   sourceId: string;
   settings: Record<string, string | number | boolean>;
   permissions: string[];

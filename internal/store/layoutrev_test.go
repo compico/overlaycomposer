@@ -127,3 +127,37 @@ func TestMigrationAddsRevToExistingLayouts(t *testing.T) {
 		t.Fatalf("rev=%d err=%v", rev, err)
 	}
 }
+
+// База версии 2 (без колонки widget): миграция 3 добавляет её, прежние источники целы, виджет сохраняется.
+func TestMigrationAddsWidgetToSources(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "oc.db")
+	db := rawDB(t, path)
+	for _, q := range []string{
+		"CREATE TABLE sources (id text PRIMARY KEY, name text, type text, url text, proxy numeric, router text, plugin text, settings text, granted text, pos integer)",
+		"INSERT INTO sources (id, name, type, plugin, pos) VALUES ('old', 'Old', 'plugin', 'chat', 0)",
+		"PRAGMA user_version = 2",
+	} {
+		if err := db.Exec(q).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	sqlDB, _ := db.DB()
+	_ = sqlDB.Close()
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	old, err := s.GetSource("old")
+	if err != nil || old == nil || old.Data.Plugin != "chat" || old.Data.Widget != "" {
+		t.Fatalf("%+v %v", old, err)
+	}
+	if err := s.SaveSource(model.Source{ID: "w", Name: "W", Type: "plugin", Data: model.SourceData{Plugin: "music", Widget: "queue"}}); err != nil {
+		t.Fatal(err)
+	}
+	w, err := s.GetSource("w")
+	if err != nil || w == nil || w.Data.Plugin != "music" || w.Data.Widget != "queue" {
+		t.Fatalf("%+v %v", w, err)
+	}
+}

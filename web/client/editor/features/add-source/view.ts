@@ -1,4 +1,5 @@
 import type { PluginManifest, Source } from "../../../../shared/types.ts";
+import { pluginKey } from "../../../shared/pluginkey.ts";
 import { el } from "../../lib/dom.ts";
 import { type AddSourceModel, defaultWidgetName, existingMeta, type PickedFile, pickSelection, pluginHint, pluginTitle, stripCommonRoot } from "./model.ts";
 
@@ -79,16 +80,16 @@ export function mountAddSource(refs: AddSourceRefs, model: AddSourceModel, ports
 
   function renderPlugins() {
     const plugins = ports.plugins();
-    selectedPluginId = pickSelection(plugins.map((x) => x.id), selectedPluginId);
+    selectedPluginId = pickSelection(plugins.map(pluginKey), selectedPluginId);
     refs.pluginList.replaceChildren(...plugins.map((p) => pickItem(
-      p.id === selectedPluginId, pluginTitle(p), p.description ?? "",
-      () => { selectedPluginId = p.id; renderPlugins(); },
+      pluginKey(p) === selectedPluginId, pluginTitle(p), p.description ?? "",
+      () => { selectedPluginId = pluginKey(p); renderPlugins(); },
       () => refs.usePluginBtn.click(),
     )));
     if (plugins.length === 0) {
       refs.pluginList.replaceChildren(el("div", { class: "empty", textContent: "No plugins installed yet. Open the Plugin store to install some, or put a plugin folder (with plugin.json) into the plugins folder." }));
     }
-    const p = plugins.find((x) => x.id === selectedPluginId);
+    const p = plugins.find((x) => pluginKey(x) === selectedPluginId);
     refs.pluginHint.textContent = pluginHint(p);
     refs.usePluginBtn.toggleAttribute("disabled", !p);
   }

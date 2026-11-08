@@ -66,7 +66,7 @@ func (s *Server) api() {
 	app.Put("/api/layouts/:id", s.putLayout)
 	app.Delete("/api/layouts/:id", s.deleteLayout)
 
-	app.Get("/api/plugins", func(c fiber.Ctx) error { return c.JSON(s.d.Plugins.List()) })
+	app.Get("/api/plugins", func(c fiber.Ctx) error { return c.JSON(append(s.d.Plugins.List(), s.wasmManifests()...)) })
 	app.Post("/api/plugins/local", s.installLocalWidget)
 	app.Get("/api/sources", s.listSources)
 	app.Post("/api/sources", s.createSource)
@@ -330,7 +330,7 @@ func (s *Server) createSource(c fiber.Ctx) error {
 		return bad(c, "invalid source (type: iframe | plugin)")
 	}
 	if b.Type == "plugin" {
-		p, ok := s.d.Plugins.Get(b.Data.Plugin)
+		p, ok := s.sourceManifest(b.Data.Plugin, b.Data.Widget)
 		if !ok {
 			return bad(c, "unknown plugin")
 		}
@@ -342,7 +342,7 @@ func (s *Server) createSource(c fiber.Ctx) error {
 		if err != nil {
 			return bad(c, err.Error())
 		}
-		b.Data = model.SourceData{Plugin: p.ID, Settings: settings, Granted: granted} // URL, proxy и router у плагина не бывает
+		b.Data = model.SourceData{Plugin: p.ID, Widget: p.Widget, Settings: settings, Granted: granted} // URL, proxy и router у плагина не бывает
 	} else {
 		if !model.SafeURL(b.Data.URL) {
 			return bad(c, "invalid url (only http/https or /path)")
@@ -353,7 +353,7 @@ func (s *Server) createSource(c fiber.Ctx) error {
 		if !model.ValidRouter(b.Data.Router) {
 			return bad(c, `invalid router (use "", "on" or "off")`)
 		}
-		b.Data.Plugin, b.Data.Settings, b.Data.Granted = "", nil, nil
+		b.Data.Plugin, b.Data.Widget, b.Data.Settings, b.Data.Granted = "", "", nil, nil
 	}
 	if old, err := s.d.Store.GetSource(b.ID); err != nil {
 		return serverErr(c, err)
@@ -405,7 +405,7 @@ func (s *Server) putSource(c fiber.Ctx) error {
 			cur.Data.Router = *b.Data.Router
 		}
 		if b.Data.Settings != nil {
-			p, ok := s.d.Plugins.Get(cur.Data.Plugin)
+			p, ok := s.sourceManifest(cur.Data.Plugin, cur.Data.Widget)
 			if cur.Type != "plugin" || !ok {
 				return bad(c, "source is not a known plugin widget")
 			}
@@ -416,7 +416,7 @@ func (s *Server) putSource(c fiber.Ctx) error {
 			cur.Data.Settings = settings
 		}
 		if b.Data.Granted != nil {
-			p, ok := s.d.Plugins.Get(cur.Data.Plugin)
+			p, ok := s.sourceManifest(cur.Data.Plugin, cur.Data.Widget)
 			if cur.Type != "plugin" || !ok {
 				return bad(c, "source is not a known plugin widget")
 			}

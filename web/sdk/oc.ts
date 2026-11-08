@@ -157,6 +157,15 @@ const oc = {
     on: (event: string, h: Handler) => subscribe(`chat.${event}`, h),
     off: (event: string, h: Handler) => off(`chat.${event}`, h),
   },
+  plugin: {
+    /** Вызвать маршрут своего плагина (только виджеты автономных плагинов). 4xx/5xx — не ошибка: смотрите `status`. */
+    call: <T = unknown>(method: string, path: string, options?: { query?: Record<string, string | number | boolean>; body?: unknown }) =>
+      call<{ status: number; body: T | null }>("plugin.call", { method, path, ...options }),
+    get: <T = unknown>(path: string, query?: Record<string, string | number | boolean>) =>
+      call<{ status: number; body: T | null }>("plugin.call", { method: "GET", path, query }),
+    post: <T = unknown>(path: string, body?: unknown) =>
+      call<{ status: number; body: T | null }>("plugin.call", { method: "POST", path, body }),
+  },
   net: {
     localGet: (target: string, path: string) => call<{ status: number; body: string }>("net.localGet", { target, path }),
   },

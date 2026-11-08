@@ -3,6 +3,7 @@ import { CSS3DObject, CSS3DRenderer } from "three/addons/renderers/CSS3DRenderer
 import type { Layout, LayoutObject, Source } from "../../shared/types.ts";
 import { visibleBox } from "../../shared/types.ts";
 import type { PluginHost } from "./pluginhost.ts";
+import { pluginFrameUrl } from "./pluginkey.ts";
 import { proxyBase } from "./proxybase.ts";
 
 const FOV = 50;
@@ -28,11 +29,7 @@ const FRAME_ALLOW = frameAllow();
 function frameUrl(src: Source): string | null {
   if (src.type === "plugin") {
     // Плагин-виджет: его файлы раздаёт сервер, а настройки уходят виджету в query (?channel=…&msgSize=…).
-    if (!src.data.plugin) return null;
-    const q = new URLSearchParams();
-    for (const [k, v] of Object.entries(src.data.settings ?? {})) q.set(k, String(v));
-    const qs = q.toString();
-    return `/plugins/${encodeURIComponent(src.data.plugin)}/${qs ? `?${qs}` : ""}`;
+    return pluginFrameUrl(src.data);
   }
   const url = src.data.url;
   if (!url) return null;
@@ -160,7 +157,7 @@ export class OverlayScene {
         e = this.#createEntry(key, url, src.type === "plugin", granted);
         if (src.type === "plugin") {
           this.opts.plugins?.register(e.frame, {
-            pluginId: src.data.plugin ?? "", sourceId: src.id, settings: src.data.settings ?? {}, permissions: src.data.granted ?? [],
+            pluginId: src.data.plugin ?? "", widget: src.data.widget, sourceId: src.id, settings: src.data.settings ?? {}, permissions: src.data.granted ?? [],
           });
         }
         this.#pool.set(key, e);

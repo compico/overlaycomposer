@@ -16,7 +16,9 @@ import (
 	"github.com/gofiber/fiber/v3"
 
 	"github.com/compico/overlaycomposer/internal/config"
+	"github.com/compico/overlaycomposer/internal/model"
 	"github.com/compico/overlaycomposer/internal/plugins"
+	"github.com/compico/overlaycomposer/internal/store"
 	"github.com/compico/overlaycomposer/internal/wasmassets"
 	"github.com/compico/overlaycomposer/internal/wasmplugins"
 )
@@ -317,4 +319,143 @@ func TestWasmStaticAssets(t *testing.T) {
 	if code, _, h = get("/plugins/ui/api/secret", nil); code != 200 || !strings.HasPrefix(h.Get("Content-Type"), "application/json") {
 		t.Fatalf("api: %d %v", code, h)
 	}
+}
+
+// Виджеты автономных плагинов: манифесты, редирект на статику, вызов плагина из виджета.
+func TestWasmWidgets(t *testing.T) {
+	src := t.TempDir()
+	_ = os.WriteFile(filepath.Join(src, "index.html"), []byte("<p>w</p>"), 0o644)
+	wasm, err := wasmassets.PackWasm([]byte("\x00asm\x01\x00\x00\x00"), src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "ui.wasm"), wasm, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mgr := wasmplugins.NewManager(context.Background(), wasmplugins.Options{Engine: uiEngine{}, Dirs: []string{dir}})
+	defer mgr.Close()
+	mgr.Scan()
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "oc.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	save := func(id, plugin, widget string) {
+		t.Helper()
+		if err := st.SaveSource(model.Source{ID: id, Name: id, Type: "plugin", Data: model.SourceData{Plugin: plugin, Widget: widget}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	save("w-ok", "ui", "main")
+	save("w-html", "ui", "")         // источник без widget — это не виджет автономного плагина
+	save("w-other", "other", "main") // плагин из источника не совпадает с тем, что назвала страница
+	save("w-gone", "ui", "removed")  // виджет, которого у плагина нет
+
+	s := &Server{d: Deps{Wasm: mgr, Store: st, Plugins: plugins.New(fstest.MapFS{}, fstest.MapFS{})}}
+
+	t.Run("манифесты", func(t *testing.T) {
+		ms := s.wasmManifests()
+		if len(ms) != 1 {
+			t.Fatalf("%+v", ms)
+		}
+		m := ms[0]
+		if m.ID != "ui" || m.Widget != "main" || !m.Wasm || m.Name != "Main" || m.Entry != "index.html" ||
+			m.DefaultSize.Width != 400 || m.DefaultSize.Height != 300 || m.Version != "1.0.0" {
+			t.Fatalf("%+v", m)
+		}
+		if _, ok := s.sourceManifest("ui", "main"); !ok {
+			t.Error("виджет должен находиться")
+		}
+		for _, c := range [][2]string{{"ui", "nope"}, {"nope", "main"}, {"ui", ""}} {
+			if _, ok := s.sourceManifest(c[0], c[1]); ok {
+				t.Errorf("%v не должен находиться", c)
+			}
+		}
+		// у виджета нет разрешений моста и настроек: лишнее отбрасывается или отклоняется
+		if _, err := ms[0].CleanGranted([]string{"storage"}); err == nil {
+			t.Error("разрешение, которого виджет не просил, должно отклоняться")
+		}
+		if got, err := ms[0].CleanSettings(map[string]any{"x": 1}); err != nil || len(got) != 0 {
+			t.Errorf("settings: %v %v", got, err)
+		}
+		if (&Server{}).wasmManifests() != nil {
+			t.Error("без менеджера виджетов нет")
+		}
+	})
+
+	t.Run("вызов плагина из виджета", func(t *testing.T) {
+		call := func(m pluginCallReq) pluginCallRes {
+			m.Type = "plugin:call"
+			return s.pluginCall(context.Background(), m)
+		}
+		ok := call(pluginCallReq{ReqID: 7, Plugin: "ui", Source: "w-ok", Method: "GET", Path: "/secret"})
+		if !ok.OK || ok.Status != 200 || string(ok.Body) != `"api"` || ok.ReqID != 7 || ok.Type != "plugin:result" {
+			t.Fatalf("ok: %+v", ok)
+		}
+		big := make([]byte, maxPluginCallBody+1)
+		for i := range big {
+			big[i] = ' '
+		}
+		for name, m := range map[string]pluginCallReq{
+			"нет источника":           {Plugin: "ui", Source: "nope", Method: "GET", Path: "/secret"},
+			"источник без widget":     {Plugin: "ui", Source: "w-html", Method: "GET", Path: "/secret"},
+			"плагин не совпадает":     {Plugin: "ui", Source: "w-other", Method: "GET", Path: "/secret"},
+			"чужой плагин в запросе":  {Plugin: "other", Source: "w-ok", Method: "GET", Path: "/secret"},
+			"пустой плагин":           {Plugin: "", Source: "w-ok", Method: "GET", Path: "/secret"},
+			"виджет исчез из плагина": {Plugin: "ui", Source: "w-gone", Method: "GET", Path: "/secret"},
+			"метод":                       {Plugin: "ui", Source: "w-ok", Method: "TRACE", Path: "/secret"},
+			"путь без /":                  {Plugin: "ui", Source: "w-ok", Method: "GET", Path: "secret"},
+			"query в пути":                {Plugin: "ui", Source: "w-ok", Method: "GET", Path: "/secret?a=1"},
+			"пустой путь":                 {Plugin: "ui", Source: "w-ok", Method: "GET", Path: ""},
+			"длинный путь":                {Plugin: "ui", Source: "w-ok", Method: "GET", Path: "/" + strings.Repeat("a", maxPluginCallPath)},
+			"маршрут не объявлен":         {Plugin: "ui", Source: "w-ok", Method: "GET", Path: "/undeclared"},
+			"маршрут другого метода":      {Plugin: "ui", Source: "w-ok", Method: "POST", Path: "/secret"},
+			"большое тело":                {Plugin: "ui", Source: "w-ok", Method: "POST", Path: "/secret", Body: big},
+			"query со вложенным объектом": {Plugin: "ui", Source: "w-ok", Method: "GET", Path: "/secret", Query: map[string]any{"a": []any{1}}},
+		} {
+			if r := call(m); r.OK || r.Error == "" {
+				t.Errorf("%s: ожидалась ошибка, получено %+v", name, r)
+			}
+		}
+		// ответ плагина не раскрывает внутренние причины
+		if r := call(pluginCallReq{Plugin: "ui", Source: "w-ok", Method: "GET", Path: "/undeclared"}); r.Error != "no such route" {
+			t.Errorf("error text: %q", r.Error)
+		}
+	})
+
+	t.Run("редирект на статику", func(t *testing.T) {
+		app := fiber.New()
+		s.app = app
+		s.wasmPluginRoutes()
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		go app.Listener(ln, fiber.ListenConfig{DisableStartupMessage: true})
+		defer app.Shutdown()
+		client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+		get := func(p string) (int, string) {
+			resp, err := client.Get("http://" + ln.Addr().String() + p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			_, _ = io.Copy(io.Discard, resp.Body)
+			return resp.StatusCode, resp.Header.Get("Location")
+		}
+		if code, loc := get("/plugins/ui/widget/main?channel=abc&x=1"); code != 302 || loc != "/plugins/ui/ui/index.html?channel=abc&x=1" {
+			t.Fatalf("redirect: %d %q", code, loc)
+		}
+		if code, loc := get("/plugins/ui/widget/main"); code != 302 || loc != "/plugins/ui/ui/index.html" {
+			t.Fatalf("redirect without query: %d %q", code, loc)
+		}
+		if code, _ := get("/plugins/ui/widget/nope"); code != 404 {
+			t.Fatalf("unknown widget: %d", code)
+		}
+		if code, _ := get("/plugins/nobody/widget/main"); code == 302 {
+			t.Fatal("not a wasm plugin: no redirect")
+		}
+	})
 }

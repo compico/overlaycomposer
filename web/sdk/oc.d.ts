@@ -32,6 +32,8 @@ type OCPermission =
 interface OCPluginInfo {
   /** id плагина (plugin.json → id). */
   pluginId: string;
+  /** id виджета автономного (wasm) плагина (из его метаданных); у обычного HTML-плагина нет. */
+  widget?: string;
   /** id источника (source) в OC: настройки и разрешения принадлежат ему. */
   sourceId: string;
   /** Сохранённые значения настроек из редактора (то же, что приходит в query-параметрах адреса). */
@@ -224,6 +226,19 @@ interface OCNet {
   localGet(target: string, path: string): Promise<{ status: number; body: string }>;
 }
 
+interface OCPlugin {
+  /**
+   * Вызвать маршрут своего автономного плагина (`/plugins/<id>/api/…`): только для виджетов автономных плагинов.
+   * Адресат всегда плагин этого виджета; маршрут должен быть объявлен плагином. Запрос идёт через OC без CORS и Origin,
+   * разрешений в `permissions` не требуется. `body` — любой JSON. Ответ: `status` плагина и `body` (JSON или null).
+   * Статус 4xx/5xx не ошибка — смотрите `status`. Ошибка — плагин остановлен, маршрута нет, тело больше 1 МБ, нет ответа 15 с.
+   * Из предпросмотра редактора (`info.preview`) тоже работает: не отправляйте оттуда действия, которые меняют состояние сами.
+   */
+  call<T = unknown>(method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE", path: string, options?: { query?: Record<string, string | number | boolean>; body?: unknown }): Promise<{ status: number; body: T | null }>;
+  get<T = unknown>(path: string, query?: Record<string, string | number | boolean>): Promise<{ status: number; body: T | null }>;
+  post<T = unknown>(path: string, body?: unknown): Promise<{ status: number; body: T | null }>;
+}
+
 interface OC {
   /** Версия протокола API. */
   readonly version: 1;
@@ -240,6 +255,7 @@ interface OC {
   readonly chat: OCChat;
   readonly storage: OCStorage;
   readonly net: OCNet;
+  readonly plugin: OCPlugin;
   readonly lifecycle: OCLifecycle;
 }
 

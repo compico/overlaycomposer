@@ -118,6 +118,7 @@ func New(d Deps) *Server {
 	s.chatWS()
 	s.storageWS()
 	s.netWS()
+	s.pluginWS()
 	return s
 }
 

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { PluginManifest, Source } from "../../../../shared/types.ts";
 import { fakeApi } from "../../lib/fakeapi.test-helper.ts";
-import { createAddSourceModel, defaultWidgetName, existingMeta, stripCommonRoot, maskUrl, pickSelection, pluginHint, uniqueName, urlView } from "./model.ts";
+import { createAddSourceModel, defaultWidgetName, existingMeta, stripCommonRoot, maskUrl, pickSelection, pluginHint, pluginTitle, uniqueName, urlView } from "./model.ts";
 
 test("maskUrl прячет всё после ? и #", () => {
   assert.equal(maskUrl("http://a/b"), "http://a/b");
@@ -150,4 +150,34 @@ test("createLocalHtml, sad path: без имени или файлов ниче�
   assert.equal(await model.createLocalHtml({ name: " ", files: [pick("a.html")] }), false);
   assert.equal(await model.createLocalHtml({ name: "A", files: [] }), false);
   assert.deepEqual(f.calls, []);
+});
+
+test("usePlugin: у автономного плагина несколько виджетов — выбирается именно тот, чей ключ передан", async () => {
+  const a = { id: "music", widget: "queue", wasm: true, name: "Queue", defaultSize: { width: 400, height: 300 } } as unknown as PluginManifest;
+  const b = { id: "music", widget: "now", wasm: true, name: "Now playing", defaultSize: { width: 500, height: 120 } } as unknown as PluginManifest;
+  const { model, f, added } = setup([a, b], [], false);
+  assert.equal(await model.usePlugin("music/now"), true);
+  const body = f.bodies[0] as { name: string; data: { plugin: string; widget?: string; granted: string[] } };
+  assert.equal(body.name, "Now playing");
+  assert.equal(body.data.plugin, "music");
+  assert.equal(body.data.widget, "now");
+  assert.deepEqual(body.data.granted, []);
+  assert.deepEqual(added[0].slice(1), [500, 120]);
+  // ключ без виджета у такого плагина не находит ничего: «music» — не то же, что «music/now»
+  assert.equal(await model.usePlugin("music"), false);
+});
+
+test("usePlugin: у обычного плагина в запросе нет поля widget", async () => {
+  const p = { id: "p", name: "P", defaultSize: { width: 1, height: 1 } } as unknown as PluginManifest;
+  const { model, f } = setup([p], [], false);
+  await model.usePlugin("p");
+  assert.equal("widget" in (f.bodies[0] as { data: object }).data, false);
+});
+
+test("pluginTitle/pluginHint/existingMeta различают автономные плагины", () => {
+  assert.match(pluginTitle({ name: "Queue", version: "0.1.0", builtin: false, wasm: true }), /\(standalone\)/);
+  assert.doesNotMatch(pluginTitle({ name: "X", builtin: true }), /standalone|custom/);
+  assert.match(pluginHint({ wasm: true }), /standalone plugin/);
+  assert.equal(existingMeta({ type: "plugin", data: { plugin: "music", widget: "queue" } }), "plugin · music/queue");
+  assert.equal(existingMeta({ type: "plugin", data: { plugin: "demo" } }), "plugin · demo");
 });
