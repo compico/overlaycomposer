@@ -48,7 +48,7 @@ type Problem struct {
 // Options — настройки менеджера.
 type Options struct {
 	Engine   Engine
-	Dirs     []string // папки с .wasm: ocplugs рядом с exe и т.п.; несуществующие пропускаются
+	Dirs     []string // папки с .wasm (сейчас — папка плагинов профиля); несуществующие пропускаются
 	Services Services
 	State    StateStore
 	// Reserved — id, которые заняты чем-то другим (HTML-плагины): wasm-плагин с таким id не загружается.

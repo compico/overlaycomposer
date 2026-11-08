@@ -219,3 +219,27 @@ func TestMetaValidate(t *testing.T) {
 		}
 	}
 }
+
+// Общая папка плагинов: рядом с .wasm лежат подпапки HTML-плагинов и прочие файлы — менеджер берёт только файлы .wasm.
+func TestScanIgnoresHTMLPluginFoldersAndOtherFiles(t *testing.T) {
+	dir := t.TempDir()
+	writeWasm(t, dir, "good.wasm", "GOOD")
+	if err := os.MkdirAll(filepath.Join(dir, "html-plugin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeWasm(t, filepath.Join(dir, "html-plugin"), "nested.wasm", "NESTED") // внутри подпапки — не наш
+	writeWasm(t, filepath.Join(dir, "html-plugin"), "plugin.json", `{"id":"html-plugin"}`)
+	writeWasm(t, dir, "readme.txt", "x")
+	writeWasm(t, dir, ".hidden.wasm", "HIDDEN")
+	eng := &fakeEngine{mods: map[string]*fakeModule{
+		"GOOD":   {meta: baseMeta("good"), handler: nopHandler},
+		"NESTED": {meta: baseMeta("nested"), handler: nopHandler},
+		"HIDDEN": {meta: baseMeta("hidden"), handler: nopHandler},
+	}}
+	m := newTestManager(t, eng, &MemState{}, dir)
+	m.Scan()
+	infos, problems := m.List()
+	if len(infos) != 1 || infos[0].Meta.ID != "good" || len(problems) != 0 {
+		t.Fatalf("infos=%+v problems=%+v", infos, problems)
+	}
+}

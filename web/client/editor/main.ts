@@ -269,7 +269,7 @@ const wasmModel = createWasmModel(api);
 mountWasmPlugins(
   { openBtn: $("openWasmBtn"), dialog: $<HTMLDialogElement>("wasmDialog"), body: $("wasmBody"), reloadBtn: $("wasmReloadBtn"), folderBtn: $("wasmFolderBtn"), status: $("wasmStatus") },
   wasmModel,
-  { ui: { toast, fail }, openFolder: () => api("/api/app/open", "POST", { what: "wasmplugins" }) },
+  { ui: { toast, fail }, openFolder: () => api("/api/app/open", "POST", { what: "plugins" }) },
 );
 void wasmModel.load(); // показывает кнопку, только если сервер отдаёт раздел
 
