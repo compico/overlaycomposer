@@ -40,6 +40,9 @@ var migrations = []migration{
 		return tx.Migrator().AddColumn(&layoutRow{}, "Rev")
 	}},
 	{3, "sources.widget — виджет автономного (wasm) плагина", func(tx *gorm.DB) error {
+		if !tx.Migrator().HasTable(&sourceRow{}) { // таблицы нет (неполная база, например в тестах): создаём по актуальной структуре
+			return tx.AutoMigrate(&sourceRow{})
+		}
 		if tx.Migrator().HasColumn(&sourceRow{}, "Widget") {
 			return nil
 		}
