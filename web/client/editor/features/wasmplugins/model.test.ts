@@ -10,7 +10,7 @@ const plugin = (o: Partial<WasmPlugin> = {}): WasmPlugin => ({
   meta: { id: "music", name: "Music", version: "0.1.0", permissions: ["storage", "twitch.redemption"] },
   file: "music.wasm", state: "running", restarts: 0, granted: [], ...o,
 });
-const info = (plugins: WasmPlugin[]): WasmInfo => ({ plugins, problems: [], dirs: ["/x/ocplugs"], twitch: { state: "off" } });
+const info = (plugins: WasmPlugin[]): WasmInfo => ({ plugins, problems: [], dirs: ["/x/plugins"], twitch: { state: "off" } });
 
 function fakeApi(handler: (path: string, method: string, body: unknown) => unknown) {
   const calls: { path: string; method: string; body: unknown }[] = [];

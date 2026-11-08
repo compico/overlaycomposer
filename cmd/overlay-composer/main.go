@@ -201,7 +201,7 @@ func run() int {
 	}
 
 	kvSvc := kv.New(st.KV())
-	wasmMgr, wasmDirs := openWasmPlugins(p, kvSvc, twMgr, pluginReg)
+	wasmMgr, _ := openWasmPlugins(p, kvSvc, twMgr, pluginReg)
 	if wasmMgr != nil {
 		defer wasmMgr.Close()
 	}
@@ -227,8 +227,6 @@ func run() int {
 					return platform.OpenTarget(p.LogDir)
 				case "plugins":
 					return platform.OpenTarget(p.PluginsDir)
-				case "wasmplugins":
-					return platform.OpenTarget(wasmDirs[0])
 				}
 				return platform.OpenTarget(p.DataDir)
 			},
@@ -470,19 +468,11 @@ func mustJSON(v any) json.RawMessage {
 	return b
 }
 
-// openWasmPlugins собирает менеджер автономных (standalone) wasm-плагинов. Папки: ocplugs в профиле (создаётся) и ocplugs рядом с
-// программой (если есть). Ошибка не мешает запуску приложения: wasm-плагины просто будут недоступны.
+// openWasmPlugins собирает менеджер автономных (standalone) wasm-плагинов. Папка та же, что у плагинов-виджетов (PluginsDir):
+// HTML-плагины — подпапки с plugin.json, автономные — файлы .wasm рядом с ними (подпапки менеджер не читает, а реестр HTML-плагинов
+// не трогает файлы). Ошибка не мешает запуску приложения: wasm-плагины просто будут недоступны.
 func openWasmPlugins(p paths.Paths, kvSvc *kv.Service, tw *twitch.Manager, reg *plugins.Registry) (*wasmplugins.Manager, []string) {
-	profile := filepath.Join(filepath.Dir(p.PluginsDir), "ocplugs")
-	dirs := []string{profile}
-	if err := os.MkdirAll(profile, 0o755); err != nil {
-		slog.Warn("wasm-плагины: не удалось создать папку", "dir", profile, "err", err)
-	}
-	if exe, err := os.Executable(); err == nil {
-		if next := filepath.Join(filepath.Dir(exe), "ocplugs"); next != profile {
-			dirs = append(dirs, next)
-		}
-	}
+	dirs := []string{p.PluginsDir}
 	eng, err := wasmplugins.NewWazeroEngine(filepath.Join(p.DataDir, "wasm-cache"))
 	if err != nil {
 		slog.Error("wasm-плагины недоступны", "err", err)

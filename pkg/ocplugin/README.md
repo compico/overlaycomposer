@@ -27,7 +27,7 @@ func main() {} // обязателен для сборки reactor, остаёт
 GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o hello.wasm .
 ```
 
-Положите `hello.wasm` в папку `ocplugs`. Маршрут: `/plugins/hello/api/greet?name=oc`.
+Положите `hello.wasm` в папку плагинов (рядом с обычными плагинами-виджетами). Маршрут: `/plugins/hello/api/greet?name=oc`.
 
 ## API
 

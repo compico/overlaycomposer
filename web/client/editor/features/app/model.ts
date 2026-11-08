@@ -19,7 +19,7 @@ export interface AppModel extends Readable<AppInfo | null> {
   /** Перечитать; старый/недоступный сервер — не ошибка (остаётся прежнее значение). */
   load(): Promise<void>;
   setAutostart(enabled: boolean): Promise<void>;
-  open(what: "data" | "logs" | "plugins" | "wasmplugins"): Promise<void>;
+  open(what: "data" | "logs" | "plugins"): Promise<void>;
   /** Остановить приложение; обрыв соединения после этого — норма. */
   quit(): Promise<void>;
 }
