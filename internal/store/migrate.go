@@ -39,6 +39,12 @@ var migrations = []migration{
 		}
 		return tx.Migrator().AddColumn(&layoutRow{}, "Rev")
 	}},
+	{3, "sources.widget — виджет автономного (wasm) плагина", func(tx *gorm.DB) error {
+		if tx.Migrator().HasColumn(&sourceRow{}, "Widget") {
+			return nil
+		}
+		return tx.Migrator().AddColumn(&sourceRow{}, "Widget")
+	}},
 }
 
 // NewerSchemaError — база создана более новой версией приложения.

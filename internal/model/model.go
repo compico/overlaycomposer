@@ -89,6 +89,8 @@ type SourceData struct {
 	// Для type "plugin": id плагина-виджета и его настройки (значения по схеме из plugin.json; передаются виджету в query).
 	Plugin   string         `json:"plugin,omitempty"`
 	Settings map[string]any `json:"settings,omitempty"`
+	// Widget — для виджета автономного (wasm) плагина: id виджета из его метаданных. Пусто — обычный HTML-плагин.
+	Widget string `json:"widget,omitempty"`
 	// Granted — разрешения, выданные плагину этим источником (подмножество permissions манифеста).
 	Granted []string `json:"granted,omitempty"`
 }

@@ -33,6 +33,7 @@ func (s *Server) wasmPluginRoutes() {
 	s.app.All("/plugins/:id/api", s.wasmRoute)
 	s.app.All("/plugins/:id/api/*", s.wasmRoute)
 	s.app.Get("/plugins/:id/ui/*", s.wasmUI)
+	s.app.Get("/plugins/:id/widget/:wid", s.wasmWidget)
 }
 
 // wasmUI раздаёт статику плагина — файлы из секции oc.assets его .wasm (HTML виджета, js, css, картинки).

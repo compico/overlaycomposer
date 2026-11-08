@@ -2,6 +2,7 @@
 import type { LayoutObject, PluginManifest, Source } from "../../../../shared/types.ts";
 import { uid } from "../../../../shared/types.ts";
 import type { Api } from "../../lib/api.ts";
+import { pluginKey, sourcePluginKey } from "../../../shared/pluginkey.ts";
 import { PERM_TEXT } from "../../lib/permissions.ts";
 import { MIN_SIZE } from "../properties/model.ts";
 
@@ -48,14 +49,15 @@ export function pickSelection(ids: string[], selected: string): string {
 }
 
 export const existingMeta = (s: Pick<Source, "type" | "data">): string =>
-  s.type === "plugin" ? `plugin · ${s.data.plugin}` : maskUrl(s.data.url ?? "iframe");
+  s.type === "plugin" ? `plugin · ${sourcePluginKey(s.data)}` : maskUrl(s.data.url ?? "iframe");
 
-export const pluginTitle = (p: Pick<PluginManifest, "name" | "version" | "builtin">): string =>
-  `${p.name}${p.version ? ` ${p.version}` : ""}${p.builtin ? "" : " (custom)"}`;
+export const pluginTitle = (p: Pick<PluginManifest, "name" | "version" | "builtin" | "wasm">): string =>
+  `${p.name}${p.version ? ` ${p.version}` : ""}${p.wasm ? " (standalone)" : p.builtin ? "" : " (custom)"}`;
 
 /** Подсказка под списком плагинов. */
-export function pluginHint(p: Pick<PluginManifest, "permissions"> | undefined): string {
+export function pluginHint(p: Pick<PluginManifest, "permissions" | "wasm"> | undefined): string {
   if (!p) return "";
+  if (p.wasm) return "Widget of a standalone plugin: it talks only to its own plugin. Permissions of the plugin itself are in “Standalone plugins…”.";
   return p.permissions?.length
     ? `Asks for: ${p.permissions.map((x) => PERM_TEXT[x] ?? x).join("; ")}. You confirm this when placing it.`
     : "Asks for no permissions.";
@@ -114,18 +116,19 @@ export interface AddSourceModel {
   createLocalHtml(input: LocalHtmlInput): Promise<boolean>;
   useExisting(id: string): void;
   /** false — такого плагина нет. */
-  usePlugin(pluginId: string): Promise<boolean>;
+  usePlugin(key: string): Promise<boolean>;
 }
 
 export function createAddSourceModel(deps: AddSourceDeps): AddSourceModel {
   const { api, editor } = deps;
-  async function usePlugin(pluginId: string): Promise<boolean> {
-    const p = editor.get().plugins.find((x) => x.id === pluginId);
+  /** key — pluginKey(): id обычного плагина или `id/виджет` автономного. */
+  async function usePlugin(key: string): Promise<boolean> {
+    const p = editor.get().plugins.find((x) => pluginKey(x) === key);
     if (!p) return false;
     const granted = p.permissions?.length && deps.confirmPermissions(p, p.permissions) ? p.permissions : [];
     const name = uniqueName(p.name, editor.get().sources.map((x) => x.name));
     const id = uid("src");
-    await api("/api/sources", "POST", { id, name, type: "plugin", data: { plugin: p.id, settings: {}, granted } });
+    await api("/api/sources", "POST", { id, name, type: "plugin", data: { plugin: p.id, ...(p.widget ? { widget: p.widget } : {}), settings: {}, granted } });
     await editor.loadSources();
     editor.addObject(id, p.defaultSize.width, p.defaultSize.height);
     return true;
