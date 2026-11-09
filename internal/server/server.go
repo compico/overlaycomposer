@@ -146,6 +146,7 @@ func (s *Server) routes() {
 	// 0. журнал доступа к страницам и бандлам: видно, дошёл ли OBS до /overlay, /dist/* и /ws
 	app.Use(s.accessLog)
 	// 0.1 запросы с чужих страниц (Origin ≠ Host) отклоняем; затем доступ с других устройств только по токену (с localhost — свободно)
+	app.Use(s.pluginAPIOrigin) // раньше originGuard: доверенный origin окна Яндекс Музыки на маршрутах плагинов
 	app.Use(s.originGuard)
 	app.Use(s.authGuard)
 	s.authRoutes()
