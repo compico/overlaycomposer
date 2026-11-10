@@ -5,6 +5,20 @@ import {
   type ConfigField, type Reward, type WasmInfo, type WasmModel, type WasmPlugin,
 } from "./model.ts";
 
+/** Окно «Settings» плагина: форма настроек OC и (если плагин объявил `settings`) его страница в sandbox-iframe. */
+export interface WasmSettingsRefs {
+  dialog: HTMLDialogElement;
+  title: HTMLElement;
+  form: HTMLElement;
+  frameBox: HTMLElement;
+}
+
+/** Мост к iframe плагина (PluginHost из редактора). */
+export interface FrameHost {
+  register(frame: HTMLIFrameElement, info: { pluginId: string; sourceId: string; settings: Record<string, never>; permissions: string[]; page: "settings" }): void;
+  unregister(frame: HTMLIFrameElement): void;
+}
+
 export interface WasmRefs {
   openBtn: HTMLElement;
   dialog: HTMLDialogElement;
@@ -12,11 +26,18 @@ export interface WasmRefs {
   reloadBtn: HTMLElement;
   folderBtn: HTMLElement;
   status: HTMLElement;
+  settings?: WasmSettingsRefs;
 }
 
 export interface WasmPorts {
   ui: Ui;
   openFolder(): Promise<unknown>;
+  host?: FrameHost;
+}
+
+/** URL страницы настроек плагина: /plugins/<id>/ui/<путь>. */
+export function settingsUrl(pluginId: string, entry: string): string {
+  return `/plugins/${encodeURIComponent(pluginId)}/ui/${entry.split("/").map(encodeURIComponent).join("/")}`;
 }
 
 // Всё, что пришло от плагина (имя, описание, ошибка, схема настроек), попадает в DOM только через textContent/el().
@@ -25,7 +46,8 @@ export function mountWasmPlugins(refs: WasmRefs, model: WasmModel, ports: WasmPo
   const drafts = new Map<string, Record<string, string | boolean>>();
   // Какие разделы карточек раскрыты: карточки перерисовываются при каждом изменении модели.
   const openPerms = new Set<string>();
-  const openSettings = new Set<string>();
+  let settingsId: string | null = null;
+  let settingsFrame: HTMLIFrameElement | null = null;
   let rewards: Reward[] | null = null;
   let rewardsError = "";
 
@@ -128,9 +150,9 @@ export function mountWasmPlugins(refs: WasmRefs, model: WasmModel, ports: WasmPo
       b.addEventListener("click", () => { if (!openPerms.delete(m.id)) openPerms.add(m.id); render(model.get()); });
       actions.append(b);
     }
-    if (form) {
+    if ((form || m.settings) && refs.settings) {
       const b = el("button", { type: "button", textContent: "Settings" });
-      b.addEventListener("click", () => { if (!openSettings.delete(m.id)) openSettings.add(m.id); render(model.get()); });
+      b.addEventListener("click", () => openSettings(p));
       actions.append(b);
     }
     const restart = el("button", { type: "button", textContent: "Restart" });
@@ -148,8 +170,45 @@ export function mountWasmPlugins(refs: WasmRefs, model: WasmModel, ports: WasmPo
         kids.push(el("label", { class: "row", title: perm }, cb, el("span", { textContent: permissionText(perm) })));
       }
     }
-    if (form && openSettings.has(m.id)) kids.push(form);
     return el("div", { class: "migration", style: warn ? "" : "border-left-color:var(--line)" }, ...kids);
+  }
+
+  function closeSettingsFrame() {
+    if (settingsFrame) {
+      ports.host?.unregister(settingsFrame);
+      settingsFrame.src = "about:blank";
+      settingsFrame.remove();
+      settingsFrame = null;
+    }
+    refs.settings?.frameBox.replaceChildren();
+  }
+
+  function openSettings(p: WasmPlugin) {
+    const s = refs.settings;
+    if (!s) return;
+    closeSettingsFrame();
+    settingsId = p.meta.id;
+    s.title.textContent = `${p.meta.name} — settings`;
+    if (p.meta.settings && ports.host) {
+      const frame = el("iframe", { title: `${p.meta.name} settings`, style: "width:100%;height:60vh;border:1px solid var(--line);border-radius:6px;background:transparent" });
+      // Тот же sandbox, что у виджетов: без allow-same-origin страница плагина не видит ни cookie, ни API приложения.
+      frame.setAttribute("sandbox", "allow-scripts allow-forms allow-modals");
+      ports.host.register(frame, { pluginId: p.meta.id, sourceId: "", settings: {}, permissions: p.granted, page: "settings" });
+      frame.src = settingsUrl(p.meta.id, p.meta.settings);
+      s.frameBox.replaceChildren(frame);
+      settingsFrame = frame;
+    }
+    renderSettingsForm();
+    s.dialog.showModal();
+  }
+
+  function renderSettingsForm() {
+    const s = refs.settings;
+    if (!s || !settingsId) return;
+    const p = model.get()?.plugins.find((x) => x.meta.id === settingsId);
+    if (!p) { s.dialog.close(); return; }
+    const form = configForm(p);
+    s.form.replaceChildren(...(form ? [form] : []));
   }
 
   function render(v: WasmInfo | null) {
@@ -167,6 +226,7 @@ export function mountWasmPlugins(refs: WasmRefs, model: WasmModel, ports: WasmPo
     for (const p of v.plugins) kids.push(card(p));
     for (const pr of v.problems) kids.push(el("div", { class: "hint warn", textContent: `${pr.file}: ${pr.error}` }));
     refs.body.replaceChildren(...kids);
+    renderSettingsForm();
     if (rewards === null && v.plugins.some((p) => configFields(p.meta.configSchema).some((f) => f.kind === "reward"))) { rewards = []; void loadRewards(); }
   }
 
@@ -174,10 +234,10 @@ export function mountWasmPlugins(refs: WasmRefs, model: WasmModel, ports: WasmPo
   refs.openBtn.addEventListener("click", async () => {
     rewards = null;
     drafts.clear();
-    openSettings.clear();
     await model.load();
     refs.dialog.showModal();
   });
+  refs.settings?.dialog.addEventListener("close", () => { settingsId = null; closeSettingsFrame(); });
   refs.reloadBtn.addEventListener("click", async () => { try { await model.reload(); ui.toast("Rescanned"); } catch (e) { ui.fail(e); } });
   refs.folderBtn.addEventListener("click", () => { ports.openFolder().catch(ui.fail); });
   return { open: () => refs.openBtn.click() };

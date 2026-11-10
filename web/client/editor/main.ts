@@ -267,9 +267,10 @@ const pluginStore = mountStore(
 
 const wasmModel = createWasmModel(api);
 mountWasmPlugins(
-  { openBtn: $("pluginsBtn"), dialog: $<HTMLDialogElement>("wasmDialog"), body: $("wasmBody"), reloadBtn: $("wasmReloadBtn"), folderBtn: $("wasmFolderBtn"), status: $("wasmStatus") },
+  { openBtn: $("pluginsBtn"), dialog: $<HTMLDialogElement>("wasmDialog"), body: $("wasmBody"), reloadBtn: $("wasmReloadBtn"), folderBtn: $("wasmFolderBtn"), status: $("wasmStatus"),
+    settings: { dialog: $<HTMLDialogElement>("wasmSettingsDialog"), title: $("wasmSettingsTitle"), form: $("wasmSettingsForm"), frameBox: $("wasmSettingsFrame") } },
   wasmModel,
-  { ui: { toast, fail }, openFolder: () => api("/api/app/open", "POST", { what: "plugins" }) },
+  { ui: { toast, fail }, openFolder: () => api("/api/app/open", "POST", { what: "plugins" }), host: pluginHost },
 );
 void wasmModel.load(); // показывает кнопку, только если сервер отдаёт раздел
 
