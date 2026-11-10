@@ -91,7 +91,18 @@ func (s *Server) wasmWidget(c fiber.Ctx) error {
 	return c.Redirect().Status(fiber.StatusFound).To(target)
 }
 
-// ---- вызов плагина из его виджета (ws plugin:call) ----
+// hasSettingsPage — загружен ли плагин и объявляет ли он страницу настроек.
+func (s *Server) hasSettingsPage(plugin string) bool {
+	infos, _ := s.d.Wasm.List()
+	for _, in := range infos {
+		if in.Meta.ID == plugin && in.Meta.Settings != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// ---- вызов плагина из его виджета или страницы настроек (ws plugin:call) ----
 
 type pluginCallReq struct {
 	Type   string          `json:"type"`
@@ -130,12 +141,19 @@ func (s *Server) pluginCall(ctx context.Context, m pluginCallReq) pluginCallRes 
 	if s.d.Wasm == nil || s.d.Store == nil {
 		return fail("not available")
 	}
-	src, err := s.d.Store.GetSource(m.Source)
-	if err != nil || src == nil || src.Type != "plugin" || src.Data.Plugin != m.Plugin || src.Data.Widget == "" || m.Plugin == "" {
-		return fail("unknown widget")
-	}
-	if _, ok := s.widgetOf(src.Data.Plugin, src.Data.Widget); !ok {
-		return fail("plugin is not loaded")
+	if m.Source == "" {
+		// Страница настроек плагина (окно «Plugins → Settings»): источника нет, но плагин должен её объявлять.
+		if m.Plugin == "" || !s.hasSettingsPage(m.Plugin) {
+			return fail("unknown settings page")
+		}
+	} else {
+		src, err := s.d.Store.GetSource(m.Source)
+		if err != nil || src == nil || src.Type != "plugin" || src.Data.Plugin != m.Plugin || src.Data.Widget == "" || m.Plugin == "" {
+			return fail("unknown widget")
+		}
+		if _, ok := s.widgetOf(src.Data.Plugin, src.Data.Widget); !ok {
+			return fail("plugin is not loaded")
+		}
 	}
 	switch m.Method {
 	case "GET", "POST", "PUT", "PATCH", "DELETE":

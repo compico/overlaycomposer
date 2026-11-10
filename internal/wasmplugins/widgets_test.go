@@ -106,3 +106,18 @@ func TestManagerLoadsAssetsAndChecksWidgetEntry(t *testing.T) {
 		t.Fatal("missing plugin")
 	}
 }
+
+func TestSettingsPageValidate(t *testing.T) {
+	with := func(p string) error { m := baseMeta("x"); m.Settings = p; return m.Validate() }
+	if err := with(""); err != nil {
+		t.Fatalf("без страницы настроек: %v", err)
+	}
+	if err := with("settings.html"); err != nil {
+		t.Fatalf("корректный путь: %v", err)
+	}
+	for _, bad := range []string{"../x.html", "/abs.html", "settings.js", "a/../../b.html", "settings.html?x=1"} {
+		if err := with(bad); err == nil {
+			t.Errorf("%q должен отклоняться", bad)
+		}
+	}
+}

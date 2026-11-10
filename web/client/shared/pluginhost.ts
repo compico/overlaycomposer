@@ -215,7 +215,7 @@ export class PluginHost {
       case "plugin.call": {
         // Виджет автономного плагина вызывает маршрут своего плагина. Адресат всегда плагин этого виджета (e.info),
         // а не то, что прислал виджет; сервер перепроверяет, что источник — виджет именно этого плагина.
-        if (!e.info.widget) throw new Error("plugin.call is only for standalone plugin widgets");
+        if (!e.info.widget && e.info.page !== "settings") throw new Error("plugin.call is only for standalone plugin widgets and settings pages");
         const method = str(p.method, "method", 8);
         const path = str(p.path, "path", 256);
         if (!method || !path) throw new Error("invalid method or path");

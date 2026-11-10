@@ -71,6 +71,9 @@ type Meta struct {
 	ConfigSchema map[string]any `json:"configSchema,omitempty"`
 	// Widgets — виджеты плагина (iframe с HTML из секции oc.assets); пользователь добавляет их на сцену как обычные виджеты.
 	Widgets []Widget `json:"widgets,omitempty"`
+	// Settings — страница настроек плагина: путь HTML-файла в статике (/plugins/<id>/ui/<settings>). Редактор открывает её
+	// в sandbox-iframe в окне «Plugins → Settings»; страница говорит только с маршрутами своего плагина (oc.plugin.*).
+	Settings string `json:"settings,omitempty"`
 }
 
 // Widget — виджет плагина. Entry — путь HTML-файла в статике плагина (/plugins/<id>/ui/<entry>).
@@ -141,7 +144,23 @@ func (m *Meta) Validate() error {
 	if subs[EventRedemption] && !perms[PermRedeem] {
 		return fmt.Errorf("subscription %q requires permission %q", EventRedemption, PermRedeem)
 	}
-	return m.validateWidgets()
+	if err := m.validateWidgets(); err != nil {
+		return err
+	}
+	return m.validateSettings()
+}
+
+func (m *Meta) validateSettings() error {
+	if m.Settings == "" {
+		return nil
+	}
+	if err := wasmassets.ValidPath(m.Settings); err != nil {
+		return fmt.Errorf("settings: %w", err)
+	}
+	if ext := strings.ToLower(path.Ext(m.Settings)); ext != ".html" && ext != ".htm" {
+		return fmt.Errorf("settings must be an HTML file")
+	}
+	return nil
 }
 
 func (m *Meta) validateWidgets() error {

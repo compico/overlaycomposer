@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { PluginHost } from "./pluginhost.ts";
 
 // Мост без браузера: слушатель message перехватываем, iframe заменяем объектом с contentWindow.
-function setup(info: { pluginId: string; widget?: string; sourceId?: string }) {
+function setup(info: { pluginId: string; widget?: string; sourceId?: string; page?: "settings" }) {
   let listener: (ev: { data: unknown; source: unknown }) => void = () => {};
   (globalThis as unknown as { addEventListener: unknown }).addEventListener = (_t: string, fn: typeof listener) => { listener = fn; };
   const sent: Record<string, unknown>[] = [];
@@ -11,7 +11,7 @@ function setup(info: { pluginId: string; widget?: string; sourceId?: string }) {
   const replies: Record<string, unknown>[] = [];
   const win = { postMessage: (m: Record<string, unknown>) => replies.push(m) };
   const frame = { contentWindow: win } as unknown as HTMLIFrameElement;
-  host.register(frame, { pluginId: info.pluginId, widget: info.widget, sourceId: info.sourceId ?? "src1", settings: {}, permissions: [] });
+  host.register(frame, { pluginId: info.pluginId, widget: info.widget, sourceId: info.sourceId ?? "src1", settings: {}, permissions: [], page: info.page });
   let id = 0;
   const call = async (method: string, params: unknown) => {
     const before = replies.length;
@@ -81,4 +81,14 @@ test("plugin.call от чужого окна игнорируется", async ()
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(t.sent.length, 0);
   assert.equal(t.replies.length, 0);
+});
+
+test("plugin.call со страницы настроек: источника нет, плагин берётся из регистрации, а не из сообщения", async () => {
+  const t = setup({ pluginId: "music", sourceId: "", page: "settings" });
+  const p = t.call("plugin.call", { method: "GET", path: "/bans", plugin: "evil", source: "other" });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(t.sent.length, 1);
+  assert.deepEqual({ ...t.sent[0], reqId: undefined }, { type: "plugin:call", plugin: "music", source: "", method: "GET", path: "/bans", query: undefined, body: undefined, reqId: undefined });
+  t.host.onServerMessage({ type: "plugin:result", reqId: t.sent[0].reqId, ok: true, status: 200, body: { items: [] } });
+  assert.equal((await p).reply?.ok, true);
 });

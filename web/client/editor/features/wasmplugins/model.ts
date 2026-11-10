@@ -11,6 +11,8 @@ export interface WasmMeta {
   author?: string;
   permissions?: string[];
   configSchema?: Record<string, unknown>;
+  /** путь HTML страницы настроек плагина (в его статике) */
+  settings?: string;
 }
 
 export interface WasmPlugin {
