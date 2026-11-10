@@ -71,7 +71,7 @@ export function mountProperties(root: HTMLElement, model: PropertiesModel, ports
       const key = sourcePluginKey(src.data);
       const m = ports.state().plugins.find((p) => sourcePluginKey({ plugin: p.id, widget: p.widget }) === key);
       if (m) {
-        root.append(el("div", { class: "hint", textContent: `${m.name}${m.version ? ` ${m.version}` : ""}${m.wasm ? " · standalone plugin" : m.builtin ? "" : " · custom plugin"}` }));
+        root.append(el("div", { class: "hint", textContent: `${m.name}${m.version ? ` ${m.version}` : ""}${m.wasm ? " · plugin widget" : m.builtin ? "" : " · custom widget"}` }));
         root.append(ports.pluginForm(src, m));
       } else {
         root.append(el("div", { class: "hint warn", textContent: `Plugin “${key}” is not installed — the widget will be empty. Put it back into the plugins folder.` }));

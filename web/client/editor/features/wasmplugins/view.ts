@@ -23,6 +23,9 @@ export interface WasmPorts {
 export function mountWasmPlugins(refs: WasmRefs, model: WasmModel, ports: WasmPorts) {
   const { ui } = ports;
   const drafts = new Map<string, Record<string, string | boolean>>();
+  // Какие разделы карточек раскрыты: карточки перерисовываются при каждом изменении модели.
+  const openPerms = new Set<string>();
+  const openSettings = new Set<string>();
   let rewards: Reward[] | null = null;
   let rewardsError = "";
 
@@ -115,8 +118,27 @@ export function mountWasmPlugins(refs: WasmRefs, model: WasmModel, ports: WasmPo
     if (m.description) kids.push(el("div", { textContent: m.description }));
     if (p.lastError) kids.push(el("div", { class: "hint warn", textContent: `${p.lastError}${p.restarts ? ` (restarts: ${p.restarts})` : ""}` }));
     const perms = m.permissions ?? [];
+    const miss = missingGrants(p);
+    const form = configForm(p);
+    const actions = el("div", { class: "row", style: "margin-top:6px;flex-wrap:wrap" });
     if (perms.length) {
-      kids.push(el("div", { class: "hint", style: "margin-top:6px", textContent: "Permissions" }));
+      // Подсвечиваем кнопку, пока плагину выданы не все запрошенные права.
+      const b = el("button", { type: "button", class: miss.length ? "attn" : "", title: miss.length ? "The plugin asks for permissions you have not allowed" : "Permissions of this plugin",
+        textContent: miss.length ? `⚠ Permissions (${miss.length} new)` : `Permissions (${perms.length})` });
+      b.addEventListener("click", () => { if (!openPerms.delete(m.id)) openPerms.add(m.id); render(model.get()); });
+      actions.append(b);
+    }
+    if (form) {
+      const b = el("button", { type: "button", textContent: "Settings" });
+      b.addEventListener("click", () => { if (!openSettings.delete(m.id)) openSettings.add(m.id); render(model.get()); });
+      actions.append(b);
+    }
+    const restart = el("button", { type: "button", textContent: "Restart" });
+    restart.addEventListener("click", async () => { try { await model.restart(m.id); } catch (e) { ui.fail(e); } });
+    actions.append(restart);
+    kids.push(actions);
+    if (miss.length) kids.push(el("div", { class: "hint warn", textContent: "The plugin does not work until you allow what it asks for." }));
+    if (perms.length && (openPerms.has(m.id) || miss.length)) {
       for (const perm of perms) {
         const cb = el("input", { type: "checkbox", checked: p.granted.includes(perm) });
         cb.addEventListener("change", async () => {
@@ -125,24 +147,23 @@ export function mountWasmPlugins(refs: WasmRefs, model: WasmModel, ports: WasmPo
         });
         kids.push(el("label", { class: "row", title: perm }, cb, el("span", { textContent: permissionText(perm) })));
       }
-      const miss = missingGrants(p);
-      if (miss.length) kids.push(el("div", { class: "hint warn", textContent: "The plugin does not work until you allow what it asks for." }));
     }
-    const form = configForm(p);
-    if (form) kids.push(form);
-    const restart = el("button", { type: "button", textContent: "Restart" });
-    restart.addEventListener("click", async () => { try { await model.restart(m.id); } catch (e) { ui.fail(e); } });
-    kids.push(el("div", { class: "row", style: "margin-top:6px" }, restart));
+    if (form && openSettings.has(m.id)) kids.push(form);
     return el("div", { class: "migration", style: warn ? "" : "border-left-color:var(--line)" }, ...kids);
   }
 
   function render(v: WasmInfo | null) {
     refs.openBtn.hidden = !v;
     if (!v) return;
+    // Кнопка «Plugins» подсвечивается, если какому-то плагину нужно внимание (новые права, сбой).
+    const attention = v.plugins.filter(needsAttention).length;
+    refs.openBtn.classList.toggle("attn", attention > 0);
+    refs.openBtn.textContent = attention > 0 ? `🧩 Plugins (${attention})` : "🧩 Plugins";
+    refs.openBtn.title = attention > 0 ? "Some plugins need your attention: new permissions or a failure" : "Plugins: permissions and settings";
     const first = v.dirs[0] ?? "";
     refs.status.textContent = `${first ? `Folder: ${first}\n` : ""}${twitchLine(v.twitch, v.plugins.some((p) => (p.meta.permissions ?? []).includes("twitch.redemption") && p.granted.includes("twitch.redemption")))}`;
     const kids: HTMLElement[] = [];
-    if (v.plugins.length === 0) kids.push(el("div", { class: "hint", textContent: "No standalone plugins yet. Put a .wasm file into the folder above and press Rescan." }));
+    if (v.plugins.length === 0) kids.push(el("div", { class: "hint", textContent: "No plugins yet. Put a .wasm file into the folder above and press Rescan." }));
     for (const p of v.plugins) kids.push(card(p));
     for (const pr of v.problems) kids.push(el("div", { class: "hint warn", textContent: `${pr.file}: ${pr.error}` }));
     refs.body.replaceChildren(...kids);
@@ -153,6 +174,7 @@ export function mountWasmPlugins(refs: WasmRefs, model: WasmModel, ports: WasmPo
   refs.openBtn.addEventListener("click", async () => {
     rewards = null;
     drafts.clear();
+    openSettings.clear();
     await model.load();
     refs.dialog.showModal();
   });

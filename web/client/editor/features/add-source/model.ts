@@ -52,12 +52,12 @@ export const existingMeta = (s: Pick<Source, "type" | "data">): string =>
   s.type === "plugin" ? `plugin · ${sourcePluginKey(s.data)}` : maskUrl(s.data.url ?? "iframe");
 
 export const pluginTitle = (p: Pick<PluginManifest, "name" | "version" | "builtin" | "wasm">): string =>
-  `${p.name}${p.version ? ` ${p.version}` : ""}${p.wasm ? " (standalone)" : p.builtin ? "" : " (custom)"}`;
+  `${p.name}${p.version ? ` ${p.version}` : ""}${p.wasm ? " (plugin)" : p.builtin ? "" : " (custom)"}`;
 
 /** Подсказка под списком плагинов. */
 export function pluginHint(p: Pick<PluginManifest, "permissions" | "wasm"> | undefined): string {
   if (!p) return "";
-  if (p.wasm) return "Widget of a standalone plugin: it talks only to its own plugin. Permissions of the plugin itself are in “Standalone plugins…”.";
+  if (p.wasm) return "Widget of a plugin: it talks only to its own plugin. The plugin’s own permissions are in the Plugins button.";
   return p.permissions?.length
     ? `Asks for: ${p.permissions.map((x) => PERM_TEXT[x] ?? x).join("; ")}. You confirm this when placing it.`
     : "Asks for no permissions.";

@@ -175,9 +175,9 @@ test("usePlugin: у обычного плагина в запросе нет п�
 });
 
 test("pluginTitle/pluginHint/existingMeta различают автономные плагины", () => {
-  assert.match(pluginTitle({ name: "Queue", version: "0.1.0", builtin: false, wasm: true }), /\(standalone\)/);
-  assert.doesNotMatch(pluginTitle({ name: "X", builtin: true }), /standalone|custom/);
-  assert.match(pluginHint({ wasm: true }), /standalone plugin/);
+  assert.match(pluginTitle({ name: "Queue", version: "0.1.0", builtin: false, wasm: true }), /\(plugin\)/);
+  assert.doesNotMatch(pluginTitle({ name: "X", builtin: true }), /plugin|custom/);
+  assert.match(pluginHint({ wasm: true }), /of a plugin/);
   assert.equal(existingMeta({ type: "plugin", data: { plugin: "music", widget: "queue" } }), "plugin · music/queue");
   assert.equal(existingMeta({ type: "plugin", data: { plugin: "demo" } }), "plugin · demo");
 });
