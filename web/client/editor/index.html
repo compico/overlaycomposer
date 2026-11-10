@@ -51,6 +51,10 @@
     .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 8px; }
     .grid2 label { display: flex; flex-direction: column; gap: 2px; color: var(--muted); font-size: 11px; }
     .empty { color: var(--muted); padding: 6px; }
+    .center { display: grid; grid-template-rows: 36px 1fr; min-width: 0; min-height: 0; }
+    #canvasBar { display: flex; align-items: center; gap: 6px; padding: 0 10px; background: var(--panel); border-bottom: 1px solid var(--line); }
+    #canvasBar .sep { width: 1px; height: 18px; background: var(--line); margin: 0 4px; }
+    button.attn { border-color: #e0a030; color: #e0a030; }
     #viewport { position: relative; overflow: hidden; background:
       repeating-conic-gradient(#1a1c22 0% 25%, #16181d 0% 50%) 0 0 / 24px 24px; }
     #canvasFrame { position: absolute; outline: 1px solid #4a4f60; background: rgba(0,0,0,.35); }
@@ -135,12 +139,8 @@
       <span class="badge bad" id="twitchBadge" hidden></span>
       <span class="badge" id="sceneBadge"></span>
       <span class="badge" id="dirtyBadge"></span>
-      <button id="undoBtn" title="Undo (Ctrl+Z)" aria-label="Undo" disabled>↶</button>
-      <button id="redoBtn" title="Redo (Ctrl+Shift+Z / Ctrl+Y)" aria-label="Redo" disabled>↷</button>
-      <button id="historyBtn" title="History" aria-label="History">🕘</button>
-      <button id="composeBtn" title="Layout mode: outlines and names of all widgets (L)" aria-pressed="false">▦ Layout</button>
-      <button id="snapBtn" title="Snap to other widgets and canvas edges (hold Ctrl to bypass)" aria-pressed="true">🧲 Snap</button>
       <button id="bellBtn" title="Notifications" aria-label="Notifications">🔔<span class="bellcount" id="bellCount" hidden></span></button>
+      <button id="pluginsBtn" title="Plugins: permissions and settings" hidden>🧩 Plugins</button>
       <button id="settingsBtn" title="Settings">⚙ Settings</button>
       <button class="primary" id="saveBtn">Save (Ctrl+S)</button>
     </header>
@@ -157,11 +157,21 @@
         <div class="list" id="layerList"></div>
         <div class="row"><button id="addObjBtn">+ Add Source</button><button id="copyObjBtn" title="Copy the selected layer to another layout (Ctrl+C, then Ctrl+V in another layout does the same)">Copy to layout…</button></div>
       </aside>
-      <div id="viewport">
-        <div id="canvasFrame">
-          <div id="stage"></div>
-          <div id="overlayLayer"></div>
-          <div id="guideLayer"></div>
+      <div class="center">
+        <div id="canvasBar" role="toolbar" aria-label="Layout tools">
+          <button id="undoBtn" title="Undo (Ctrl+Z)" aria-label="Undo" disabled>↶</button>
+          <button id="redoBtn" title="Redo (Ctrl+Shift+Z / Ctrl+Y)" aria-label="Redo" disabled>↷</button>
+          <button id="historyBtn" title="History" aria-label="History">🕘</button>
+          <span class="sep"></span>
+          <button id="composeBtn" title="Layout mode: outlines and names of all widgets (L)" aria-pressed="false">▦ Layout</button>
+          <button id="snapBtn" title="Snap to other widgets and canvas edges (hold Ctrl to bypass)" aria-pressed="true">🧲 Snap</button>
+        </div>
+        <div id="viewport">
+          <div id="canvasFrame">
+            <div id="stage"></div>
+            <div id="overlayLayer"></div>
+            <div id="guideLayer"></div>
+          </div>
         </div>
       </div>
       <aside class="right" id="props"></aside>
@@ -174,7 +184,7 @@
       <div class="tabs" role="tablist">
         <button type="button" class="tab sel" role="tab" data-tab="iframe">Web page (iframe)</button>
         <button type="button" class="tab" role="tab" data-tab="existing" id="tabExisting">Existing source</button>
-        <button type="button" class="tab" role="tab" data-tab="plugin">Plugins</button>
+        <button type="button" class="tab" role="tab" data-tab="plugin">Widgets</button>
         <button type="button" class="tab" role="tab" data-tab="html">HTML file</button>
       </div>
 
@@ -224,11 +234,10 @@
         <div class="hint" id="pluginHint"></div>
         <div class="row" style="justify-content:space-between;margin-top:12px">
           <span class="row" style="margin:0">
-            <button type="button" id="openStoreBtn" title="Install plugins from GitHub repositories">Plugin store…</button>
-            <button type="button" id="openPluginsBtn" title="Folder for your own plugins">Plugins folder</button>
-            <button type="button" id="openWasmBtn" title="Standalone plugins (.wasm): permissions and settings" hidden>Standalone plugins…</button>
+            <button type="button" id="openStoreBtn" title="Install widgets from GitHub repositories">Widget store…</button>
+            <button type="button" id="openPluginsBtn" title="Folder for your own widgets">Widgets folder</button>
           </span>
-          <button type="button" class="primary" id="usePluginBtn">Create &amp; place plugin</button>
+          <button type="button" class="primary" id="usePluginBtn">Create &amp; place widget</button>
         </div>
       </div>
 
@@ -237,8 +246,8 @@
   </dialog>
   <dialog id="storeDialog" style="width:560px;max-width:94vw">
     <form method="dialog">
-      <strong>Plugin store</strong>
-      <div class="hint warn">Plugins are code written by other people. They run in a sandbox and get only the permissions you allow,
+      <strong>Widget store</strong>
+      <div class="hint warn">Widgets are code written by other people. They run in a sandbox and get only the permissions you allow,
         but still install them only from authors you trust — you are responsible for the sources you add.</div>
       <label>Sources — GitHub repositories with a <code>plugins/</code> folder</label>
       <div class="row">
@@ -262,9 +271,9 @@
   </dialog>
   <dialog id="wasmDialog" style="width:620px;max-width:94vw">
     <form method="dialog">
-      <strong>Standalone plugins</strong>
-      <div class="hint warn">Standalone plugins are programs written by other people. They run in a sandbox and get only the permissions you tick,
-        but install them only from authors you trust.</div>
+      <strong>Plugins</strong>
+      <div class="hint warn">Plugins are programs written by other people. They run in a sandbox and get only the permissions you tick,
+        but install them only from authors you trust. Their widgets are in Add Source → Widgets.</div>
       <div class="row" style="margin-top:6px">
         <button type="button" id="wasmFolderBtn">Open folder</button>
         <button type="button" id="wasmReloadBtn" title="Pick up new or changed .wasm files">Rescan</button>

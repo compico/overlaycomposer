@@ -88,7 +88,7 @@ export function mountNotifications(refs: NotificationsRefs, model: Notifications
         if (c.changes?.length) refs.detail.append(textList(c.changes));
         if (c.migration) refs.detail.append(el("div", { class: "hint" }, "What to do after updating:"), el("div", { class: "migration" }, c.migration));
       }
-      const open = el("button", { type: "button", class: "primary" }, "Open plugin store");
+      const open = el("button", { type: "button", class: "primary" }, "Open widget store");
       open.addEventListener("click", () => { refs.dialog.close(); ports.openStore(); });
       refs.actions.append(open);
     } else if (n.kind === "app-update") {

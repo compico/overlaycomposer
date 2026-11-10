@@ -87,7 +87,7 @@ export function mountAddSource(refs: AddSourceRefs, model: AddSourceModel, ports
       () => refs.usePluginBtn.click(),
     )));
     if (plugins.length === 0) {
-      refs.pluginList.replaceChildren(el("div", { class: "empty", textContent: "No plugins installed yet. Open the Plugin store to install some, or put a plugin folder (with plugin.json) into the plugins folder." }));
+      refs.pluginList.replaceChildren(el("div", { class: "empty", textContent: "No widgets installed yet. Open the Widget store to install some, or put a widget folder (with plugin.json) into the widgets folder." }));
     }
     const p = plugins.find((x) => pluginKey(x) === selectedPluginId);
     refs.pluginHint.textContent = pluginHint(p);
