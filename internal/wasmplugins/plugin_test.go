@@ -421,6 +421,7 @@ func TestEventsPublishNeedsPermissionAndUsesHostNamespace(t *testing.T) {
 	bus := &fakeBus{}
 	meta := baseMeta("music")
 	meta.Events = []EventDecl{{ID: "now"}}
+	meta.Permissions = []string{PermPublish} // выдать можно только то, что плагин запросил
 	mod := &fakeModule{meta: meta, handler: func(*fakeInst, string, []byte) ([]byte, error) { return nil, nil }}
 	denied := newTestPlugin(t, mod, Services{Events: bus})
 	var m map[string]any
@@ -446,7 +447,9 @@ func TestEventsPublishNeedsPermissionAndUsesHostNamespace(t *testing.T) {
 }
 
 func TestEventsUnavailableWithoutBusAndForgetOnStop(t *testing.T) {
-	mod := &fakeModule{meta: baseMeta("a"), handler: func(*fakeInst, string, []byte) ([]byte, error) { return nil, nil }}
+	a := baseMeta("a")
+	a.Permissions = []string{PermPublish}
+	mod := &fakeModule{meta: a, handler: func(*fakeInst, string, []byte) ([]byte, error) { return nil, nil }}
 	p := newTestPlugin(t, mod, Services{}, PermPublish)
 	var m map[string]any
 	_ = json.Unmarshal(p.hostCall(context.Background(), "events.publish", []byte(`{"topic":"x","data":1}`)), &m)
