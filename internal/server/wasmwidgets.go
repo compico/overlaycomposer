@@ -133,27 +133,37 @@ const (
 // выполняются по одному, а очередь из зависших страниц ничего не даёт.
 var pluginCallSlots = make(chan struct{}, 8)
 
+// authorizePlugin решает, может ли страница обращаться к плагину: без источника это страница настроек плагина (он должен
+// её объявлять), иначе источник должен существовать и быть виджетом именно этого загруженного плагина. Пустая строка — можно,
+// иначе текст отказа. Общая проверка для вызовов (plugin:call) и подписок (plugin:sub).
+func (s *Server) authorizePlugin(plugin, source string) string {
+	if s.d.Wasm == nil || s.d.Store == nil {
+		return "not available"
+	}
+	if source == "" {
+		// Страница настроек плагина (окно «Plugins → Settings»): источника нет, но плагин должен её объявлять.
+		if plugin == "" || !s.hasSettingsPage(plugin) {
+			return "unknown settings page"
+		}
+		return ""
+	}
+	src, err := s.d.Store.GetSource(source)
+	if err != nil || src == nil || src.Type != "plugin" || src.Data.Plugin != plugin || src.Data.Widget == "" || plugin == "" {
+		return "unknown widget"
+	}
+	if _, ok := s.widgetOf(src.Data.Plugin, src.Data.Widget); !ok {
+		return "plugin is not loaded"
+	}
+	return ""
+}
+
 // pluginCall проверяет вызов и выполняет маршрут плагина. Страница лишь называет плагин и источник, решает сервер:
 // источник должен существовать, быть виджетом именно этого автономного плагина, а маршрут — объявлен плагином.
 func (s *Server) pluginCall(ctx context.Context, m pluginCallReq) pluginCallRes {
 	res := pluginCallRes{Type: "plugin:result", ReqID: m.ReqID}
 	fail := func(msg string) pluginCallRes { res.Error = msg; return res }
-	if s.d.Wasm == nil || s.d.Store == nil {
-		return fail("not available")
-	}
-	if m.Source == "" {
-		// Страница настроек плагина (окно «Plugins → Settings»): источника нет, но плагин должен её объявлять.
-		if m.Plugin == "" || !s.hasSettingsPage(m.Plugin) {
-			return fail("unknown settings page")
-		}
-	} else {
-		src, err := s.d.Store.GetSource(m.Source)
-		if err != nil || src == nil || src.Type != "plugin" || src.Data.Plugin != m.Plugin || src.Data.Widget == "" || m.Plugin == "" {
-			return fail("unknown widget")
-		}
-		if _, ok := s.widgetOf(src.Data.Plugin, src.Data.Widget); !ok {
-			return fail("plugin is not loaded")
-		}
+	if msg := s.authorizePlugin(m.Plugin, m.Source); msg != "" {
+		return fail(msg)
 	}
 	switch m.Method {
 	case "GET", "POST", "PUT", "PATCH", "DELETE":
@@ -204,7 +214,15 @@ func (s *Server) pluginCall(ctx context.Context, m pluginCallReq) pluginCallRes 
 func (s *Server) pluginWS() {
 	s.d.Hub.Handle("plugin:", func(p *hub.Peer, raw []byte) {
 		var m pluginCallReq
-		if json.Unmarshal(raw, &m) != nil || m.Type != "plugin:call" {
+		if json.Unmarshal(raw, &m) != nil {
+			return
+		}
+		switch m.Type {
+		case "plugin:sub", "plugin:unsub":
+			s.pluginSubscription(p, raw)
+			return
+		case "plugin:call":
+		default:
 			return
 		}
 		go func() { p.Send(s.pluginCall(context.Background(), m)) }() // плагин может отвечать долго — чтение сообщений клиента не блокируем

@@ -143,6 +143,51 @@ function param<T extends string | number | boolean>(key: string, fallback: T): T
   return raw as T;
 }
 
+// ---- события плагина (oc.plugin.subscribe) ----
+
+type PluginEventMeta = { topic: string; seq: number; retained: boolean };
+type PluginEventHandler = (data: unknown, meta: PluginEventMeta) => void;
+const topicHandlers = new Map<string, Set<PluginEventHandler>>();
+const topicReady = new Map<string, Promise<unknown>>();
+let topicWired = false;
+
+function pluginSubscribe(topic: string, h: PluginEventHandler): Promise<() => void> {
+  if (!topicWired) {
+    topicWired = true;
+    subscribe("plugin.event", (d) => {
+      const m = d as { topic: string; data: unknown; seq: number; retained: boolean };
+      for (const fn of [...(topicHandlers.get(m.topic) ?? [])]) {
+        try { fn(m.data, { topic: m.topic, seq: m.seq, retained: m.retained }); } catch (e) { console.error("oc: plugin event handler error", e); }
+      }
+    });
+  }
+  let ready = topicReady.get(topic);
+  if (!ready) {
+    ready = call<{ topic: string }>("plugin.subscribe", { topic });
+    topicReady.set(topic, ready);
+    ready.catch(() => { topicReady.delete(topic); });
+  }
+  let set = topicHandlers.get(topic);
+  if (!set) topicHandlers.set(topic, (set = new Set()));
+  set.add(h);
+  const handlers = set;
+  return ready.then(
+    () => () => {
+      handlers.delete(h);
+      if (handlers.size === 0 && topicHandlers.get(topic) === handlers) {
+        topicHandlers.delete(topic);
+        topicReady.delete(topic);
+        call("plugin.unsubscribe", { topic }).catch(() => {});
+      }
+    },
+    (err: unknown) => {
+      handlers.delete(h);
+      if (handlers.size === 0 && topicHandlers.get(topic) === handlers) topicHandlers.delete(topic);
+      throw err;
+    },
+  );
+}
+
 const oc = {
   version: 1 as const,
   hosted,
@@ -158,6 +203,8 @@ const oc = {
     off: (event: string, h: Handler) => off(`chat.${event}`, h),
   },
   plugin: {
+    /** Подписаться на событие (топик) своего плагина. Возвращает функцию отписки. */
+    subscribe: pluginSubscribe,
     /** Вызвать маршрут своего плагина (только виджеты автономных плагинов). 4xx/5xx — не ошибка: смотрите `status`. */
     call: <T = unknown>(method: string, path: string, options?: { query?: Record<string, string | number | boolean>; body?: unknown }) =>
       call<{ status: number; body: T | null }>("plugin.call", { method, path, ...options }),
