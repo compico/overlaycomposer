@@ -180,6 +180,7 @@ func (s *Server) routes() {
 	app.Get("/dist/*", s.dist)
 	app.Get("/plugin-sdk/:name", s.pluginSDK)
 	s.wasmPluginRoutes() // /plugins/:id/api/* — раньше раздачи файлов виджетов
+	s.pluginWSRoute()    // /plugins/:id/ws — тоже раньше раздачи файлов
 	app.Get("/plugins/:id/*", s.pluginFile)
 	app.Get("/plugins/:id", func(c fiber.Ctx) error { return c.Redirect().To("/plugins/" + c.Params("id") + "/") })
 }
