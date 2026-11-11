@@ -33,6 +33,7 @@ const (
 	PermRedeem  = "twitch.redemption"
 	PermTimer   = "timer"
 	PermPublish = "events.publish"
+	PermChat    = "chat.send" // писать в чат канала от имени бота
 )
 
 const (

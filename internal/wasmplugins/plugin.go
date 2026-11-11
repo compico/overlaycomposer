@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/compico/overlaycomposer/internal/events"
 	"github.com/compico/overlaycomposer/internal/wasmassets"
@@ -60,6 +61,8 @@ type Services struct {
 	Log   *slog.Logger
 	// Events — брокер событий для events.publish; nil — публикация недоступна.
 	Events EventBus
+	// Say пишет в чат канала стримера от имени бота (chat.send); nil — недоступно. Вызывается в отдельной горутине.
+	Say func(ctx context.Context, text string) error
 }
 
 // EventBus — то, что плагинам нужно от брокера событий (его реализует *events.Broker).
@@ -131,6 +134,10 @@ type Plugin struct {
 
 	tmMu   sync.Mutex
 	timers map[string]context.CancelFunc
+
+	chatMu     sync.Mutex // ограничитель chat.send
+	chatTokens float64
+	chatLast   time.Time
 
 	infly chan struct{}
 	http  *http.Client
@@ -457,6 +464,7 @@ func (p *Plugin) hostCall(ctx context.Context, op string, arg []byte) []byte {
 		"storage.get": PermStorage, "storage.set": PermStorage, "storage.delete": PermStorage,
 		"timer.set": PermTimer, "timer.clear": PermTimer,
 		"events.publish":           PermPublish,
+		"chat.send":                PermChat,
 		"http.fetch":               PermNetHTTP,
 		"twitch.redemption.update": PermRedeem,
 	}
@@ -481,6 +489,8 @@ func (p *Plugin) hostCall(ctx context.Context, op string, arg []byte) []byte {
 		return nil
 	case "events.publish":
 		return p.opPublish(arg)
+	case "chat.send":
+		return p.opChatSend(arg)
 	case "http.fetch":
 		return p.opFetch(arg)
 	case "twitch.redemption.update":
@@ -579,6 +589,63 @@ func (p *Plugin) opPublish(arg []byte) []byte {
 		}
 		return errOut("%v", err)
 	}
+	return jsonOut(map[string]any{})
+}
+
+// chat.send: сообщение уходит в чат канала стримера от бота. Хост не даёт выбрать канал или аккаунт, режет частоту
+// (всплеск chatBurst, затем одно сообщение в chatEvery) и длину; отправка идёт в фоне, чтобы сеть не держала плагин.
+const (
+	chatBurst   = 3
+	chatEvery   = 3 * time.Second
+	chatMaxText = 300
+	chatTimeout = 15 * time.Second
+)
+
+func (p *Plugin) chatAllow(now time.Time) bool {
+	p.chatMu.Lock()
+	defer p.chatMu.Unlock()
+	if p.chatLast.IsZero() {
+		p.chatTokens = chatBurst
+	} else {
+		p.chatTokens += float64(now.Sub(p.chatLast)) / float64(chatEvery)
+		if p.chatTokens > chatBurst {
+			p.chatTokens = chatBurst
+		}
+	}
+	p.chatLast = now
+	if p.chatTokens < 1 {
+		return false
+	}
+	p.chatTokens--
+	return true
+}
+
+func (p *Plugin) opChatSend(arg []byte) []byte {
+	if p.svc.Say == nil {
+		return errOut("chat is not available")
+	}
+	var a struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(arg, &a); err != nil {
+		return errOut("bad arguments: %v", err)
+	}
+	text := strings.TrimSpace(a.Text)
+	if text == "" || utf8.RuneCountInString(text) > chatMaxText {
+		return errOut("text: 1..%d characters", chatMaxText)
+	}
+	if !p.chatAllow(time.Now()) {
+		p.log.Warn("chat.send: rate limit exceeded, message dropped")
+		return errOut("rate limit exceeded")
+	}
+	say, ctx := p.svc.Say, p.ctx
+	go func() {
+		ctx, cancel := context.WithTimeout(ctx, chatTimeout)
+		defer cancel()
+		if err := say(ctx, text); err != nil {
+			p.log.Warn("chat.send: message was not sent", "err", err)
+		}
+	}()
 	return jsonOut(map[string]any{})
 }
 

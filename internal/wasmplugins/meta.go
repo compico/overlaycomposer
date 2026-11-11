@@ -25,6 +25,7 @@ const (
 	PermRedeem   = "twitch.redemption"
 	PermTimer    = "timer"
 	PermPublish  = "events.publish" // публиковать события для подписчиков (виджеты, аддоны, deck)
+	PermChat     = "chat.send"      // писать в чат канала от имени бота
 	maxRoutes    = 64
 	maxMetaBytes = 64 << 10
 	maxWidgets   = 16
@@ -47,7 +48,7 @@ var (
 	pathSegRe = regexp.MustCompile(`^[A-Za-z0-9._~-]+$`)
 )
 
-var knownPerms = map[string]bool{PermStorage: true, PermNetHTTP: true, PermRedeem: true, PermTimer: true, PermPublish: true}
+var knownPerms = map[string]bool{PermStorage: true, PermNetHTTP: true, PermRedeem: true, PermTimer: true, PermPublish: true, PermChat: true}
 
 var knownEvents = map[string]bool{EventRedemption: true, EventTimer: true, EventHTTPResponse: true}
 
