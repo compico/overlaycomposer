@@ -12,6 +12,7 @@ interface Entry {
   frame: HTMLIFrameElement;
   info: PluginInfo;
   subs: Map<string, number>; // канал → сколько раз подписан
+  topics: Set<string>; // топики событий своего плагина (oc.plugin.subscribe)
   stopHook: boolean; // плагин подписан на остановку приложения (oc.lifecycle.onStop)
   onStopped?: () => void; // ждём ответа «закончил» при остановке
 }
@@ -32,6 +33,8 @@ const SERVER_EVENT_NAMES: Record<string, string> = { message: "chat.message", de
 
 export class PluginHost {
   #entries = new Set<Entry>();
+  // Подписки страницы на события плагинов: одна серверная подписка на пару «плагин + топик», сколько бы окон её ни держали.
+  #topicSubs = new Map<string, { plugin: string; topic: string; source: string; count: number }>();
   #pending = new Map<number, Pending>();
   #nextReq = 1;
 
@@ -43,7 +46,7 @@ export class PluginHost {
   }
 
   register(frame: HTMLIFrameElement, info: Omit<PluginInfo, "preview">) {
-    this.#entries.add({ frame, info: { ...info, preview: !this.opts.canSend }, subs: new Map(), stopHook: false });
+    this.#entries.add({ frame, info: { ...info, preview: !this.opts.canSend }, subs: new Map(), topics: new Set(), stopHook: false });
   }
 
   /** iframe закрывается: снимаем все его подписки. */
@@ -51,12 +54,14 @@ export class PluginHost {
     for (const e of this.#entries) {
       if (e.frame !== frame) continue;
       for (const [ch, n] of e.subs) for (let i = 0; i < n; i++) this.opts.send({ type: "chat:unsub", channel: ch });
+      for (const topic of [...e.topics]) this.#releaseTopic(e, topic);
       this.#entries.delete(e);
     }
   }
 
   /** Соединение /ws (пере)открылось: сервер ничего не помнит — подписываемся заново. */
   onConnected() {
+    for (const t of this.#topicSubs.values()) this.opts.send({ type: "plugin:sub", reqId: 0, plugin: t.plugin, source: t.source, topic: t.topic });
     for (const e of this.#entries) {
       for (const [ch, n] of e.subs) for (let i = 0; i < n; i++) this.opts.send({ type: "chat:sub", reqId: 0, channel: ch });
     }
@@ -72,12 +77,21 @@ export class PluginHost {
       case "chat:say:result":
       case "storage:result":
       case "net:result":
+      case "plugin:sub:result":
       case "plugin:result": {
         const p = this.#pending.get(msg.reqId as number);
         if (p) {
           this.#pending.delete(msg.reqId as number);
           clearTimeout(p.timer);
           p.resolve(msg);
+        }
+        return true;
+      }
+      case "plugin:event": {
+        // Событие плагина получают окна этого плагина, подписанные на топик (сервер уже проверил топик и плагин).
+        for (const e of this.#entries) {
+          if (e.info.pluginId !== msg.plugin || !e.topics.has(msg.topic as string)) continue;
+          this.#toPlugin(e, { oc: 1, t: "event", name: "plugin.event", data: { topic: msg.topic, data: msg.data, seq: msg.seq, retained: msg.retained === true } });
         }
         return true;
       }
@@ -153,6 +167,17 @@ export class PluginHost {
     }
   }
 
+  /** Окно больше не слушает топик: снимаем серверную подписку, когда слушателей не осталось. force — окно в e.topics не записано. */
+  #releaseTopic(e: Entry, topic: string, force = false) {
+    if (!force && !e.topics.delete(topic)) return;
+    const key = `${e.info.pluginId}\u0000${topic}`;
+    const t = this.#topicSubs.get(key);
+    if (!t) return;
+    if (--t.count > 0) return;
+    this.#topicSubs.delete(key);
+    this.opts.send({ type: "plugin:unsub", plugin: t.plugin, topic: t.topic });
+  }
+
   #need(e: Entry, perm: string) {
     if (!e.info.permissions.includes(perm)) throw new Error(`permission denied: ${perm}`);
   }
@@ -210,6 +235,36 @@ export class PluginHost {
           type: "chat:say", text, channel: str(p.channel, "channel", 64) ?? "", as: as ?? "", replyTo: str(p.replyTo, "replyTo", 64) ?? "",
         });
         if (r.ok !== true) throw new Error(String(r.error ?? "send failed"));
+        return undefined;
+      }
+      case "plugin.subscribe": {
+        if (!e.info.widget && e.info.page !== "settings") throw new Error("plugin.subscribe is only for standalone plugin widgets and settings pages");
+        const topic = str(p.topic, "topic", 64);
+        if (!topic || !/^[a-z0-9._-]{1,64}$/.test(topic)) throw new Error("invalid topic");
+        if (e.topics.has(topic)) return { topic };
+        if (e.topics.size >= 16) throw new Error("too many topics");
+        const key = `${e.info.pluginId}\u0000${topic}`;
+        const known = this.#topicSubs.get(key);
+        if (known) {
+          known.count++;
+        } else {
+          const r = await this.#request({ type: "plugin:sub", plugin: e.info.pluginId, source: e.info.sourceId, topic });
+          if (r.ok !== true) throw new Error(String(r.error ?? "subscribe failed"));
+          const again = this.#topicSubs.get(key); // другое окно могло подписаться, пока ждали ответ
+          if (again) again.count++;
+          else this.#topicSubs.set(key, { plugin: e.info.pluginId, topic, source: e.info.sourceId, count: 1 });
+        }
+        if (!this.#entries.has(e)) {
+          // окно закрылось, пока ждали ответ: отдаём подписку обратно
+          this.#releaseTopic(e, topic, true);
+        } else {
+          e.topics.add(topic);
+        }
+        return { topic };
+      }
+      case "plugin.unsubscribe": {
+        const topic = str(p.topic, "topic", 64);
+        if (topic) this.#releaseTopic(e, topic);
         return undefined;
       }
       case "plugin.call": {

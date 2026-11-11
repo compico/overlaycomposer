@@ -22,6 +22,7 @@ import (
 	"github.com/compico/overlaycomposer/internal/auth"
 	"github.com/compico/overlaycomposer/internal/chat"
 	"github.com/compico/overlaycomposer/internal/config"
+	"github.com/compico/overlaycomposer/internal/events"
 	"github.com/compico/overlaycomposer/internal/hub"
 	"github.com/compico/overlaycomposer/internal/kv"
 	"github.com/compico/overlaycomposer/internal/market"
@@ -63,6 +64,7 @@ type Deps struct {
 	Chat    *chat.Service
 	KV      *kv.Service
 	Wasm    *wasmplugins.Manager // автономные (standalone) wasm-плагины; nil — выключены
+	Events  *events.Broker       // события плагинов (pub/sub); nil — подписки недоступны
 	Market  *market.Market
 	Notify  *notify.Center
 	// CheckPlugins запускает проверку обновлений плагинов (force — по кнопке); nil — недоступно.
@@ -79,6 +81,10 @@ type Server struct {
 	logCount  int
 
 	redeem *wasmplugins.Bridge // EventSub для wasm-плагинов; nil — без Twitch или без wasm
+
+	evMu       sync.Mutex // подписки страниц на события плагинов (wasmevents.go)
+	evPeers    map[*hub.Peer]*peerSubs
+	pluginAuth func(plugin, source string) string // подмена authorizePlugin в тестах
 
 	deny *denyLimiter // отказы без токена по адресам (nil — без ограничения, как в тестах)
 
@@ -119,6 +125,7 @@ func New(d Deps) *Server {
 	s.storageWS()
 	s.netWS()
 	s.pluginWS()
+	d.Hub.OnPeerGone(s.dropPeerSubs)
 	return s
 }
 

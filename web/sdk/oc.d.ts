@@ -236,6 +236,15 @@ interface OCPlugin {
    */
   call<T = unknown>(method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE", path: string, options?: { query?: Record<string, string | number | boolean>; body?: unknown }): Promise<{ status: number; body: T | null }>;
   get<T = unknown>(path: string, query?: Record<string, string | number | boolean>): Promise<{ status: number; body: T | null }>;
+  /**
+   * Подписаться на событие (топик) своего плагина вместо опроса. Топик плагин объявляет в `events` метаданных и публикует
+   * через `ocplugin.Publish`; подписаться можно только на объявленный (иначе ошибка), чужие плагины недоступны.
+   * `handler(data, meta)` получает данные события; `meta.retained` — значение из хранилища хоста (последнее состояние),
+   * которое приходит сразу после подписки, если плагин публиковал топик с `PublishRetained`. Без retain события не переигрываются.
+   * События могут теряться при медленной странице или разрыве соединения: держите запасной опрос и сверяйтесь с `meta.seq`.
+   * Возвращает функцию отписки. Как `plugin.call`, работает только в виджетах автономных плагинов и на странице настроек.
+   */
+  subscribe(topic: string, handler: (data: unknown, meta: { topic: string; seq: number; retained: boolean }) => void): Promise<() => void>;
   post<T = unknown>(path: string, body?: unknown): Promise<{ status: number; body: T | null }>;
 }
 
