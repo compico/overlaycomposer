@@ -107,6 +107,25 @@ func SetTimer(id string, d time.Duration, repeat bool) error {
 // ClearTimer останавливает таймер.
 func ClearTimer(id string) { _, _ = call("timer.clear", map[string]string{"id": id}) }
 
+// ---- события (PermPublish) ----
+
+// Publish публикует событие в топик, объявленный в Meta.Events: его получают подписчики (виджеты, аддоны, deck).
+// Данные должны кодироваться в JSON (до 64 КБ). Частота ограничена хостом; при превышении вернётся ошибка.
+func Publish(topic string, v any) error { return publish(topic, v, false) }
+
+// PublishRetained публикует событие и просит хост хранить последнее значение топика: новый подписчик получит его сразу.
+// Подходит для состояния («сейчас играет»), а не для команд.
+func PublishRetained(topic string, v any) error { return publish(topic, v, true) }
+
+func publish(topic string, v any, retain bool) error {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	_, err = call("events.publish", map[string]any{"topic": topic, "data": json.RawMessage(data), "retain": retain})
+	return err
+}
+
 // ---- сеть (PermNetHTTP) ----
 
 // FetchRequest — исходящий HTTP-запрос. В локальную сеть ходить нельзя.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -381,5 +382,81 @@ func TestUnknownOpAndLog(t *testing.T) {
 	lw := &lineWriter{log: quietLog()}
 	if n, err := lw.Write([]byte("panic: x\ngoroutine 1")); err != nil || n != 20 {
 		t.Fatalf("lineWriter: %d %v", n, err)
+	}
+}
+
+type fakeBus struct {
+	mu        sync.Mutex
+	declared  map[string][]string
+	forgotten []string
+	pub       []string
+	err       error
+}
+
+func (b *fakeBus) Declare(plugin string, topics []string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.declared == nil {
+		b.declared = map[string][]string{}
+	}
+	b.declared[plugin] = topics
+	return nil
+}
+func (b *fakeBus) Forget(plugin string) {
+	b.mu.Lock()
+	b.forgotten = append(b.forgotten, plugin)
+	b.mu.Unlock()
+}
+func (b *fakeBus) Publish(plugin, topic string, data json.RawMessage, retain bool) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.err != nil {
+		return b.err
+	}
+	b.pub = append(b.pub, fmt.Sprintf("%s/%s/%s/%v", plugin, topic, data, retain))
+	return nil
+}
+
+func TestEventsPublishNeedsPermissionAndUsesHostNamespace(t *testing.T) {
+	bus := &fakeBus{}
+	meta := baseMeta("music")
+	meta.Events = []EventDecl{{ID: "now"}}
+	mod := &fakeModule{meta: meta, handler: func(*fakeInst, string, []byte) ([]byte, error) { return nil, nil }}
+	denied := newTestPlugin(t, mod, Services{Events: bus})
+	var m map[string]any
+	_ = json.Unmarshal(denied.hostCall(context.Background(), "events.publish", []byte(`{"topic":"now","data":1}`)), &m)
+	if m["error"] == nil || len(bus.pub) != 0 {
+		t.Fatalf("без права публикация должна отклоняться: %v %v", m, bus.pub)
+	}
+	p := newTestPlugin(t, &fakeModule{meta: meta, handler: mod.handler}, Services{Events: bus}, PermPublish)
+	// плагин не может указать чужое пространство имён: plugin в аргументе игнорируется
+	out := p.hostCall(context.Background(), "events.publish", []byte(`{"plugin":"evil","topic":"now","data":{"a":1},"retain":true}`))
+	if string(out) != "{}" || len(bus.pub) != 1 || bus.pub[0] != `music/now/{"a":1}/true` {
+		t.Fatalf("out=%s pub=%v", out, bus.pub)
+	}
+	bus.err = errors.New("topic is not declared by the plugin")
+	m = nil
+	_ = json.Unmarshal(p.hostCall(context.Background(), "events.publish", []byte(`{"topic":"other","data":1}`)), &m)
+	if m["error"] != "topic is not declared by the plugin" {
+		t.Fatalf("ошибка брокера должна дойти до плагина: %v", m)
+	}
+	if got := bus.declared["music"]; len(got) != 1 || got[0] != "now" {
+		t.Fatalf("topics: %v", bus.declared)
+	}
+}
+
+func TestEventsUnavailableWithoutBusAndForgetOnStop(t *testing.T) {
+	mod := &fakeModule{meta: baseMeta("a"), handler: func(*fakeInst, string, []byte) ([]byte, error) { return nil, nil }}
+	p := newTestPlugin(t, mod, Services{}, PermPublish)
+	var m map[string]any
+	_ = json.Unmarshal(p.hostCall(context.Background(), "events.publish", []byte(`{"topic":"x","data":1}`)), &m)
+	if m["error"] == nil {
+		t.Fatal("без брокера публикация недоступна")
+	}
+	bus := &fakeBus{}
+	p2 := newTestPlugin(t, &fakeModule{meta: baseMeta("b"), handler: mod.handler}, Services{Events: bus})
+	p2.Stop()
+	if len(bus.forgotten) != 1 || bus.forgotten[0] != "b" {
+		t.Fatalf("Stop должен снимать топики: %v", bus.forgotten)
 	}
 }

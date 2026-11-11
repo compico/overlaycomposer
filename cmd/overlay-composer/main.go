@@ -22,6 +22,7 @@ import (
 	"github.com/compico/overlaycomposer/internal/auth"
 	"github.com/compico/overlaycomposer/internal/chat"
 	"github.com/compico/overlaycomposer/internal/config"
+	"github.com/compico/overlaycomposer/internal/events"
 	"github.com/compico/overlaycomposer/internal/hub"
 	"github.com/compico/overlaycomposer/internal/kv"
 	"github.com/compico/overlaycomposer/internal/logx"
@@ -487,7 +488,7 @@ func openWasmPlugins(p paths.Paths, kvSvc *kv.Service, tw *twitch.Manager, reg *
 	}
 	return wasmplugins.NewManager(context.Background(), wasmplugins.Options{
 		Engine: eng, Dirs: dirs, State: state,
-		Services: wasmplugins.Services{Storage: wasmplugins.KVStorage{S: kvSvc}, Redeem: tw.UpdateRedemption, Log: slog.Default()},
+		Services: wasmplugins.Services{Storage: wasmplugins.KVStorage{S: kvSvc}, Redeem: tw.UpdateRedemption, Log: slog.Default(), Events: events.New(events.Options{})},
 		Reserved: func(id string) bool { _, ok := reg.Get(id); return ok },
 	}), dirs
 }

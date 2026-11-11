@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/compico/overlaycomposer/internal/events"
 	"github.com/compico/overlaycomposer/internal/wasmassets"
 )
 
@@ -23,6 +24,7 @@ const (
 	PermNetHTTP  = "net.http"
 	PermRedeem   = "twitch.redemption"
 	PermTimer    = "timer"
+	PermPublish  = "events.publish" // публиковать события для подписчиков (виджеты, аддоны, deck)
 	maxRoutes    = 64
 	maxMetaBytes = 64 << 10
 	maxWidgets   = 16
@@ -45,7 +47,7 @@ var (
 	pathSegRe = regexp.MustCompile(`^[A-Za-z0-9._~-]+$`)
 )
 
-var knownPerms = map[string]bool{PermStorage: true, PermNetHTTP: true, PermRedeem: true, PermTimer: true}
+var knownPerms = map[string]bool{PermStorage: true, PermNetHTTP: true, PermRedeem: true, PermTimer: true, PermPublish: true}
 
 var knownEvents = map[string]bool{EventRedemption: true, EventTimer: true, EventHTTPResponse: true}
 
@@ -74,6 +76,24 @@ type Meta struct {
 	// Settings — страница настроек плагина: путь HTML-файла в статике (/plugins/<id>/ui/<settings>). Редактор открывает её
 	// в sandbox-iframe в окне «Plugins → Settings»; страница говорит только с маршрутами своего плагина (oc.plugin.*).
 	Settings string `json:"settings,omitempty"`
+	// Events — топики, которые плагин публикует (events.publish): id, название и описание. Хост пересылает только объявленные.
+	Events []EventDecl `json:"events,omitempty"`
+}
+
+// EventDecl — объявление публикуемого топика события.
+type EventDecl struct {
+	ID          string `json:"id"`
+	Name        string `json:"name,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+// EventTopics — id объявленных топиков.
+func (m *Meta) EventTopics() []string {
+	out := make([]string, 0, len(m.Events))
+	for _, e := range m.Events {
+		out = append(out, e.ID)
+	}
+	return out
 }
 
 // Widget — виджет плагина. Entry — путь HTML-файла в статике плагина (/plugins/<id>/ui/<entry>).
@@ -147,7 +167,22 @@ func (m *Meta) Validate() error {
 	if err := m.validateWidgets(); err != nil {
 		return err
 	}
-	return m.validateSettings()
+	if err := m.validateSettings(); err != nil {
+		return err
+	}
+	return m.validateEvents()
+}
+
+func (m *Meta) validateEvents() error {
+	if err := events.ValidateDeclared(m.EventTopics()); err != nil {
+		return fmt.Errorf("events: %w", err)
+	}
+	for _, e := range m.Events {
+		if len([]rune(e.Name)) > 80 || len([]rune(e.Description)) > 300 {
+			return fmt.Errorf("event %q: name up to 80 and description up to 300 characters", e.ID)
+		}
+	}
+	return nil
 }
 
 func (m *Meta) validateSettings() error {
