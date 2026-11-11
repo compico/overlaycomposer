@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestHandleRoutesAndResponses(t *testing.T) {
@@ -461,5 +462,67 @@ func TestEventsUnavailableWithoutBusAndForgetOnStop(t *testing.T) {
 	p2.Stop()
 	if len(bus.forgotten) != 1 || bus.forgotten[0] != "b" {
 		t.Fatalf("Stop должен снимать топики: %v", bus.forgotten)
+	}
+}
+
+func TestChatSendNeedsPermissionAndIsLimited(t *testing.T) {
+	meta := baseMeta("music")
+	meta.Permissions = []string{PermChat}
+	mod := &fakeModule{meta: meta, handler: func(*fakeInst, string, []byte) ([]byte, error) { return nil, nil }}
+	sent := make(chan string, 10)
+	svc := Services{Say: func(_ context.Context, text string) error { sent <- text; return nil }}
+
+	denied := newTestPlugin(t, mod, svc)
+	var m map[string]any
+	_ = json.Unmarshal(denied.hostCall(context.Background(), "chat.send", []byte(`{"text":"hi"}`)), &m)
+	if m["error"] == nil || len(sent) != 0 {
+		t.Fatalf("без права сообщение не уходит: %v", m)
+	}
+
+	p := newTestPlugin(t, &fakeModule{meta: meta, handler: mod.handler}, svc, PermChat)
+	if out := p.hostCall(context.Background(), "chat.send", []byte(`{"text":"  привет  ","channel":"evil","as":"streamer"}`)); string(out) != "{}" {
+		t.Fatalf("out=%s", out)
+	}
+	select {
+	case got := <-sent:
+		if got != "привет" { // канал и аккаунт плагин выбрать не может: хост их не читает
+			t.Fatalf("got %q", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("сообщение не отправлено")
+	}
+	// плохой текст
+	for _, a := range []string{`{"text":""}`, `{"text":"   "}`, `{"text":"` + strings.Repeat("я", chatMaxText+1) + `"}`, `{"text":1}`, `nope`} {
+		m = nil
+		_ = json.Unmarshal(p.hostCall(context.Background(), "chat.send", []byte(a)), &m)
+		if m["error"] == nil {
+			t.Fatalf("%.30s должно отклоняться", a)
+		}
+	}
+	// всплеск: chatBurst сообщений проходят (одно уже ушло), следующее отклоняется
+	ok, limited := 1, 0
+	for i := 0; i < chatBurst+2; i++ {
+		m = nil
+		_ = json.Unmarshal(p.hostCall(context.Background(), "chat.send", []byte(`{"text":"x"}`)), &m)
+		if m["error"] == nil {
+			ok++
+		} else if m["error"] == "rate limit exceeded" {
+			limited++
+		}
+	}
+	if ok != chatBurst || limited != 3 {
+		t.Fatalf("ok=%d limited=%d", ok, limited)
+	}
+}
+
+func TestChatSendUnavailableWithoutService(t *testing.T) {
+	meta := baseMeta("a")
+	meta.Permissions = []string{PermChat}
+	mod := &fakeModule{meta: meta, handler: func(*fakeInst, string, []byte) ([]byte, error) { return nil, nil }}
+	p := newTestPlugin(t, mod, Services{}, PermChat)
+	var m map[string]any
+	_ = json.Unmarshal(p.hostCall(context.Background(), "chat.send", []byte(`{"text":"hi"}`)), &m)
+	if m["error"] == nil {
+		t.Fatal("без сервиса чата операция недоступна")
 	}
 }

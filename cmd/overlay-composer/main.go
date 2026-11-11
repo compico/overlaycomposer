@@ -203,7 +203,7 @@ func run() int {
 
 	kvSvc := kv.New(st.KV())
 	eventBus := events.New(events.Options{})
-	wasmMgr, _ := openWasmPlugins(p, kvSvc, twMgr, pluginReg, eventBus)
+	wasmMgr, _ := openWasmPlugins(p, kvSvc, twMgr, chatSvc, pluginReg, eventBus)
 	if wasmMgr != nil {
 		defer wasmMgr.Close()
 	}
@@ -474,7 +474,7 @@ func mustJSON(v any) json.RawMessage {
 // openWasmPlugins собирает менеджер автономных (standalone) wasm-плагинов. Папка та же, что у плагинов-виджетов (PluginsDir):
 // HTML-плагины — подпапки с plugin.json, автономные — файлы .wasm рядом с ними (подпапки менеджер не читает, а реестр HTML-плагинов
 // не трогает файлы). Ошибка не мешает запуску приложения: wasm-плагины просто будут недоступны.
-func openWasmPlugins(p paths.Paths, kvSvc *kv.Service, tw *twitch.Manager, reg *plugins.Registry, bus *events.Broker) (*wasmplugins.Manager, []string) {
+func openWasmPlugins(p paths.Paths, kvSvc *kv.Service, tw *twitch.Manager, chatSvc *chat.Service, reg *plugins.Registry, bus *events.Broker) (*wasmplugins.Manager, []string) {
 	dirs := []string{p.PluginsDir}
 	eng, err := wasmplugins.NewWazeroEngine(filepath.Join(p.DataDir, "wasm-cache"))
 	if err != nil {
@@ -490,7 +490,10 @@ func openWasmPlugins(p paths.Paths, kvSvc *kv.Service, tw *twitch.Manager, reg *
 	}
 	return wasmplugins.NewManager(context.Background(), wasmplugins.Options{
 		Engine: eng, Dirs: dirs, State: state,
-		Services: wasmplugins.Services{Storage: wasmplugins.KVStorage{S: kvSvc}, Redeem: tw.UpdateRedemption, Log: slog.Default(), Events: bus},
+		Services: wasmplugins.Services{Storage: wasmplugins.KVStorage{S: kvSvc}, Redeem: tw.UpdateRedemption, Log: slog.Default(), Events: bus,
+			Say: func(ctx context.Context, text string) error {
+				return chatSvc.Say(ctx, chat.SayRequest{Text: text, As: twitch.RoleBot})
+			}},
 		Reserved: func(id string) bool { _, ok := reg.Get(id); return ok },
 	}), dirs
 }
