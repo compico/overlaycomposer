@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/compico/overlaycomposer/internal/events"
 	"github.com/compico/overlaycomposer/internal/wasmassets"
 )
 
@@ -57,6 +58,15 @@ type Services struct {
 	// Fetch — клиент для http.fetch; nil — клиент, закрытый от локальной сети.
 	Fetch *http.Client
 	Log   *slog.Logger
+	// Events — брокер событий для events.publish; nil — публикация недоступна.
+	Events EventBus
+}
+
+// EventBus — то, что плагинам нужно от брокера событий (его реализует *events.Broker).
+type EventBus interface {
+	Declare(plugin string, topics []string) error
+	Forget(plugin string)
+	Publish(plugin, topic string, data json.RawMessage, retain bool) error
 }
 
 // Request/Response — обращение к маршруту плагина.
@@ -161,6 +171,11 @@ func normConfig(c json.RawMessage) json.RawMessage {
 
 // Start запускает первый экземпляр и обработчик событий. Ошибка запуска не фатальна для менеджера: плагин будет в failed.
 func (p *Plugin) Start() error {
+	if p.svc.Events != nil {
+		if err := p.svc.Events.Declare(p.meta.ID, p.meta.EventTopics()); err != nil {
+			p.log.Warn("events: topics were not declared", "err", err)
+		}
+	}
 	p.mu.Lock()
 	err := p.startLocked()
 	p.mu.Unlock()
@@ -193,6 +208,9 @@ func (p *Plugin) startLocked() error {
 
 // Stop останавливает таймеры, очередь и экземпляр. Повторный вызов безвреден.
 func (p *Plugin) Stop() {
+	if p.svc.Events != nil {
+		p.svc.Events.Forget(p.meta.ID)
+	}
 	p.cancel()
 	p.tmMu.Lock()
 	for id, c := range p.timers {
@@ -438,6 +456,7 @@ func (p *Plugin) hostCall(ctx context.Context, op string, arg []byte) []byte {
 	need := map[string]string{
 		"storage.get": PermStorage, "storage.set": PermStorage, "storage.delete": PermStorage,
 		"timer.set": PermTimer, "timer.clear": PermTimer,
+		"events.publish":           PermPublish,
 		"http.fetch":               PermNetHTTP,
 		"twitch.redemption.update": PermRedeem,
 	}
@@ -460,6 +479,8 @@ func (p *Plugin) hostCall(ctx context.Context, op string, arg []byte) []byte {
 		_ = json.Unmarshal(arg, &a)
 		p.clearTimer(a.ID)
 		return nil
+	case "events.publish":
+		return p.opPublish(arg)
 	case "http.fetch":
 		return p.opFetch(arg)
 	case "twitch.redemption.update":
@@ -534,6 +555,29 @@ func (p *Plugin) opStorage(ctx context.Context, op string, arg []byte) []byte {
 		if err := p.svc.Storage.Delete(ctx, p.meta.ID, a.Key); err != nil {
 			return errOut("%v", err)
 		}
+	}
+	return jsonOut(map[string]any{})
+}
+
+// opPublish — events.publish: публикует событие в объявленный топик этого плагина. Пространство имён задаёт хост (id плагина),
+// а не аргумент вызова; данные проходят проверку формата и размера в брокере.
+func (p *Plugin) opPublish(arg []byte) []byte {
+	if p.svc.Events == nil {
+		return errOut("events are not available")
+	}
+	var a struct {
+		Topic  string          `json:"topic"`
+		Data   json.RawMessage `json:"data"`
+		Retain bool            `json:"retain"`
+	}
+	if err := json.Unmarshal(arg, &a); err != nil {
+		return errOut("bad arguments: %v", err)
+	}
+	if err := p.svc.Events.Publish(p.meta.ID, a.Topic, a.Data, a.Retain); err != nil {
+		if errors.Is(err, events.ErrRate) {
+			p.log.Warn("events: rate limit exceeded, event dropped", "topic", a.Topic)
+		}
+		return errOut("%v", err)
 	}
 	return jsonOut(map[string]any{})
 }

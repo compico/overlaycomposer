@@ -87,6 +87,7 @@ export function createWasmModel(api: Api): WasmModel {
 
 const PERMISSION_TEXT: Record<string, string> = {
   storage: "Keep its own data (queue, settings) in Overlay Composer",
+  "events.publish": "Send live events (player state, commands) to widgets and connected apps",
   "net.http": "Make requests to the internet (never to your local network)",
   "twitch.redemption": "See channel point redemptions and mark them fulfilled or cancelled",
   timer: "Run on a timer in the background",

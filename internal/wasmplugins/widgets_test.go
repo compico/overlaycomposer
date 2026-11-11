@@ -121,3 +121,18 @@ func TestSettingsPageValidate(t *testing.T) {
 		}
 	}
 }
+
+func TestEventsMetaValidate(t *testing.T) {
+	with := func(ev ...EventDecl) error { m := baseMeta("x"); m.Events = ev; return m.Validate() }
+	if err := with(EventDecl{ID: "now", Name: "Сейчас играет"}, EventDecl{ID: "queue.changes"}); err != nil {
+		t.Fatalf("корректные события: %v", err)
+	}
+	for name, ev := range map[string][]EventDecl{
+		"плохое имя": {{ID: "Now"}}, "пустое": {{ID: ""}}, "дубликат": {{ID: "a"}, {ID: "a"}},
+		"длинное описание": {{ID: "a", Description: strings.Repeat("я", 301)}},
+	} {
+		if with(ev...) == nil {
+			t.Errorf("%s должно отклоняться", name)
+		}
+	}
+}

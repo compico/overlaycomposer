@@ -32,6 +32,7 @@ const (
 	PermNetHTTP = "net.http"
 	PermRedeem  = "twitch.redemption"
 	PermTimer   = "timer"
+	PermPublish = "events.publish"
 )
 
 const (
@@ -55,6 +56,15 @@ type Meta struct {
 	Widgets []Widget `json:"widgets,omitempty"`
 	// Settings — путь HTML-страницы настроек в статике (секция oc.assets). Редактор показывает её в окне «Plugins → Settings».
 	Settings string `json:"settings,omitempty"`
+	// Events — топики, которые плагин публикует через Publish. Публиковать можно только объявленные.
+	Events []EventDecl `json:"events,omitempty"`
+}
+
+// EventDecl — объявление публикуемого топика: id (`a-z0-9._-`, до 64 символов), название и описание для редакторов.
+type EventDecl struct {
+	ID          string `json:"id"`
+	Name        string `json:"name,omitempty"`
+	Description string `json:"description,omitempty"`
 }
 
 // Widget — виджет плагина, который пользователь добавляет на сцену. Width/Height — размер по умолчанию (0 — 400×300).
