@@ -152,11 +152,11 @@ func TestRenderServerSide(t *testing.T) {
 	}
 	// группа 1: x=0.5, ширина 5; группа 2: x=0.5+5+0.6=6.1; полоса: 6.1+1+0.5=7.6
 	for _, want := range []string{
-		`data-rev="3"`, `data-id="a"`, `data-id="big"`, ` data-confirm="1"`, `class="gn">Main</div>`,
+		`data-rev="3"`, `data-id="a"`, `data-id="big"`, ` data-confirm="1"`, `class="gn"><span>Main</span></div>`,
 		`left:0.50em;width:5.00em`, `left:6.10em;width:1.00em`, `width:7.60em`,
-		`left:0em;top:0.50em;width:2em;height:1em`, // 2×1 в левом верхнем углу под заголовком
-		`left:3em;top:0.50em;width:2em;height:3em`, // крупная 2×3
-		`left:0em;top:1.50em;width:3em;height:1em`, // 3×1 во втором ряду
+		`left:0em;top:0.70em;width:2em;height:1em`, // 2×1 в левом верхнем углу под заголовком
+		`left:3em;top:0.70em;width:2em;height:3em`, // крупная 2×3
+		`left:0em;top:1.70em;width:3em;height:1em`, // 3×1 во втором ряду
 		`class="t c-steel"`,
 	} {
 		if !strings.Contains(s, want) {
