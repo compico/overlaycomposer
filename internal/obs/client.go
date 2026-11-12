@@ -389,11 +389,27 @@ func (c *Client) ListScenes() []string {
 	if !ok {
 		return nil
 	}
-	return scenesInUIOrder(r)
+	list := scenesInUIOrder(r)
+	slog.Debug("obs: scene list", "ui_order", list, "raw", rawScenes(r))
+	return list
 }
 
-// scenesInUIOrder разбирает ответ GetSceneList. obs-websocket отдаёт сцены в обратном порядке относительно списка в OBS, поэтому
-// сортируем по sceneIndex (0 — первая сверху); если индексов нет — переворачиваем массив.
+// rawScenes — «имя=индекс» в порядке массива OBS, для журнала: по нему видно, как OBS отдал сцены.
+func rawScenes(r map[string]any) []string {
+	arr, _ := r["scenes"].([]any)
+	out := make([]string, 0, len(arr))
+	for _, it := range arr {
+		if m, ok := it.(map[string]any); ok {
+			n, _ := m["sceneName"].(string)
+			i, _ := m["sceneIndex"].(float64)
+			out = append(out, fmt.Sprintf("%s=%d", n, int(i)))
+		}
+	}
+	return out
+}
+
+// scenesInUIOrder разбирает ответ GetSceneList. У OBS индекс 0 — нижняя сцена списка, а массив идёт от 0 вверх, то есть снизу вверх;
+// сверху вниз, как в OBS, — по убыванию sceneIndex. Без индексов оставляем порядок массива.
 func scenesInUIOrder(r map[string]any) []string {
 	arr, _ := r["scenes"].([]any)
 	type sc struct {
@@ -412,11 +428,7 @@ func scenesInUIOrder(r map[string]any) []string {
 		}
 	}
 	if indexed {
-		sort.SliceStable(list, func(i, j int) bool { return list[i].idx < list[j].idx })
-	} else {
-		for i, j := 0, len(list)-1; i < j; i, j = i+1, j-1 {
-			list[i], list[j] = list[j], list[i]
-		}
+		sort.SliceStable(list, func(i, j int) bool { return list[i].idx > list[j].idx })
 	}
 	out := make([]string, 0, len(list))
 	for _, x := range list {
