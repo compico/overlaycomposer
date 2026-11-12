@@ -73,7 +73,8 @@ export function mountDeck(refs: DeckRefs, model: DeckModel, ports: DeckPorts): v
   }
 
   function groupEl(st: DeckState, g: DeckGroup, current: boolean): HTMLElement {
-    const cols = Math.min(st.grid.maxGroupCols, groupWidth(g) + 3);
+    // ширина холста группы: занятые столбцы + один запасной (чтобы было куда перенести плитку), но не меньше 4 — группа не «ползёт» при каждом движении
+    const cols = Math.min(st.grid.maxGroupCols, Math.max(groupWidth(g) + 1, 4));
     const grid = el("div", {
       style: `position:relative;width:${cols * STEP - GAP}px;height:${st.grid.rows * STEP - GAP}px;`
         + `background-image:linear-gradient(90deg,transparent ${CELL}px,rgba(0,0,0,.45) ${CELL}px),linear-gradient(180deg,transparent ${CELL}px,rgba(0,0,0,.45) ${CELL}px);`
@@ -118,9 +119,18 @@ export function mountDeck(refs: DeckRefs, model: DeckModel, ports: DeckPorts): v
     const label = el("input", { type: "text", value: t.label ?? "", maxLength: MAX_LABEL, style: "width:100%" });
     label.addEventListener("change", () => model.updateTile(t.id, { label: label.value }));
 
-    const scenes = !t.action.scene || st.scenes.includes(t.action.scene) ? st.scenes : [t.action.scene, ...st.scenes];
-    const scene = el("select", { style: "width:100%" }, ...scenes.map((s) => el("option", { value: s, selected: s === t.action.scene }, s)));
+    // Список сцен приходит из OBS. Нет соединения с OBS — списка нет, и сцену вводят вручную (при нажатии сервер проверит, что она есть в OBS).
+    let scene: HTMLInputElement | HTMLSelectElement;
+    if (st.scenes.length === 0) {
+      scene = el("input", { type: "text", value: t.action.scene ?? "", placeholder: "Scene name", style: "width:100%" });
+    } else {
+      const scenes = !t.action.scene || st.scenes.includes(t.action.scene) ? st.scenes : [t.action.scene, ...st.scenes];
+      scene = el("select", { style: "width:100%" },
+        ...(t.action.scene ? [] : [el("option", { value: "", selected: true }, "— choose a scene —")]),
+        ...scenes.map((s) => el("option", { value: s, selected: s === t.action.scene }, s)));
+    }
     scene.addEventListener("change", () => model.updateTile(t.id, { scene: scene.value }));
+    const sceneHint = st.scenes.length === 0 ? el("div", { class: "hint" }, "The scene list is unavailable (OBS is not connected?). Type the scene name exactly as in OBS.") : "";
 
     const colors = el("div", { class: "row", style: "flex-wrap:wrap" });
     for (const [name, hex] of Object.entries(st.palette)) {
@@ -155,7 +165,7 @@ export function mountDeck(refs: DeckRefs, model: DeckModel, ports: DeckPorts): v
       el("h3", {}, "Tile"),
       el("label", {}, "Title"), label,
       el("h3", {}, "Function"),
-      el("label", {}, "Switch OBS scene to"), scene,
+      el("label", {}, "Switch OBS scene to"), scene, sceneHint,
       el("label", { class: "chk", style: "display:flex;gap:6px;align-items:center;margin-top:8px" }, confirmBox, "Ask for a second tap (risky scenes)"),
       el("h3", {}, "Look"),
       el("label", {}, "Size"), sizes,
