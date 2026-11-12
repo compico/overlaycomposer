@@ -37,6 +37,8 @@ import { createTwitchModel } from "./features/twitch/model.ts";
 import { mountTwitch, mountTwitchBadge } from "./features/twitch/view.ts";
 import { createWasmModel } from "./features/wasmplugins/model.ts";
 import { mountWasmPlugins } from "./features/wasmplugins/view.ts";
+import { createDeckModel } from "./features/deck/model.ts";
+import { mountDeck } from "./features/deck/view.ts";
 import { createDevicesModel } from "./features/devices/model.ts";
 import { mountDevices } from "./features/devices/view.ts";
 import { createObsImportModel } from "./features/obs-import/model.ts";
@@ -271,6 +273,12 @@ mountWasmPlugins(
     settings: { dialog: $<HTMLDialogElement>("wasmSettingsDialog"), title: $("wasmSettingsTitle"), form: $("wasmSettingsForm"), frameBox: $("wasmSettingsFrame") } },
   wasmModel,
   { ui: { toast, fail }, openFolder: () => api("/api/app/open", "POST", { what: "plugins" }), host: pluginHost },
+);
+mountDeck(
+  { openBtn: $("deckBtn"), dialog: $<HTMLDialogElement>("deckDialog"), body: $("deckBody"), saveBtn: $<HTMLButtonElement>("deckSaveBtn"),
+    resetBtn: $("deckResetBtn"), addGroupBtn: $("deckAddGroupBtn"), closeBtn: $("deckCloseBtn"), status: $("deckStatus") },
+  createDeckModel(api),
+  { ui: { toast, fail } },
 );
 void wasmModel.load(); // показывает кнопку, только если сервер отдаёт раздел
 

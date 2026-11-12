@@ -188,13 +188,13 @@ func TestDeckLayoutSaveConflictAndReset(t *testing.T) {
 	}
 	_, b, _ := deckReq(t, s, "GET", "/api/deck/layout", "", false)
 	var got struct {
-		Saved  bool     `json:"saved"`
-		Scenes []string `json:"scenes"`
-		Colors []string `json:"colors"`
-		Icons  []string `json:"icons"`
+		Saved   bool              `json:"saved"`
+		Scenes  []string          `json:"scenes"`
+		Palette map[string]string `json:"palette"`
+		Icons   map[string]string `json:"icons"`
 	}
 	_ = json.Unmarshal([]byte(b), &got)
-	if !got.Saved || len(got.Scenes) != 2 || len(got.Colors) == 0 || len(got.Icons) == 0 {
+	if !got.Saved || len(got.Scenes) != 2 || len(got.Palette) == 0 || len(got.Icons) == 0 {
 		t.Fatalf("layout: %s", b)
 	}
 	// сброс: возвращается раскладка по умолчанию, а ревизия не откатывается назад
