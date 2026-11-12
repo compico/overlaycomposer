@@ -37,6 +37,7 @@ import { createTwitchModel } from "./features/twitch/model.ts";
 import { mountTwitch, mountTwitchBadge } from "./features/twitch/view.ts";
 import { createWasmModel } from "./features/wasmplugins/model.ts";
 import { mountWasmPlugins } from "./features/wasmplugins/view.ts";
+import { mountTabs } from "./lib/tabs.ts";
 import { createDeckModel } from "./features/deck/model.ts";
 import { mountDeck } from "./features/deck/view.ts";
 import { createDevicesModel } from "./features/devices/model.ts";
@@ -274,6 +275,7 @@ mountWasmPlugins(
   wasmModel,
   { ui: { toast, fail }, openFolder: () => api("/api/app/open", "POST", { what: "plugins" }), host: pluginHost },
 );
+mountTabs($("settingsDialog"));
 mountDeck(
   { openBtn: $("deckBtn"), editorMain: document.querySelector("main:not(#deckMain)") as HTMLElement, deckMain: $("deckMain"),
     hideInDeck: [$("saveBtn"), $("dirtyBadge"), $("sceneBadge"), $("canvasSize")],

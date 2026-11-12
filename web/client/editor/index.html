@@ -80,6 +80,19 @@
     .handle.rot { border-radius: 50%; background: var(--accent); cursor: grab; }
     .rotline { position: absolute; width: 1px; background: var(--accent); transform: translateX(-50%); }
     dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 16px; width: 380px; }
+    #settingsDialog { width: 900px; max-width: 96vw; height: 640px; max-height: 94vh; padding: 0; }
+    #settingsDialog[open] { display: block; }
+    #settingsDialog form { display: grid; grid-template-rows: auto 1fr auto; height: 100%; min-height: 0; }
+    #settingsDialog .shead { padding: 14px 18px 10px; border-bottom: 1px solid var(--line); }
+    #settingsDialog .sbody { display: grid; grid-template-columns: 170px 1fr; min-height: 0; }
+    #settingsDialog .snav { display: flex; flex-direction: column; gap: 2px; padding: 10px; border-right: 1px solid var(--line); background: var(--bg); }
+    #settingsDialog .stab { text-align: left; background: none; border: none; border-left: 3px solid transparent; border-radius: 0 6px 6px 0; padding: 8px 12px; color: var(--muted); }
+    #settingsDialog .stab:hover { background: var(--panel2); }
+    #settingsDialog .stab.sel { color: var(--text); background: var(--panel2); border-left-color: var(--accent); }
+    #settingsDialog .scontent { overflow: auto; padding: 4px 20px 16px; min-height: 0; }
+    #settingsDialog .spane[hidden] { display: none; }
+    #settingsDialog #twOnlyLocal:has(+ #twBox:not([hidden])) { display: none; }
+    #settingsDialog .sfoot { justify-content: flex-end; margin: 0; padding: 10px 18px; border-top: 1px solid var(--line); }
     dialog::backdrop { background: rgba(0,0,0,.55); }
     dialog label { display: block; margin: 8px 0 2px; color: var(--muted); font-size: 11px; }
     label.chk, dialog label.chk { display: flex; flex-direction: row; gap: 6px; align-items: center; margin: 8px 0 2px; color: var(--text); font-size: 12px; }
@@ -343,9 +356,16 @@
   </dialog>
   <dialog id="settingsDialog">
     <form method="dialog">
-      <strong>Settings</strong>
-      <div class="hint">Saved to <code>config.json</code> (see “Application” below for its location).</div>
-
+      <div class="shead"><strong>Settings</strong> <span class="hint">Saved to <code>config.json</code> (location: Application tab).</span></div>
+      <div class="sbody">
+        <nav class="snav" role="tablist" aria-orientation="vertical">
+          <button type="button" class="stab sel" role="tab" data-stab="obs">OBS</button>
+          <button type="button" class="stab" role="tab" data-stab="network">Network</button>
+          <button type="button" class="stab" role="tab" data-stab="twitch">Twitch</button>
+          <button type="button" class="stab" role="tab" data-stab="app">Application</button>
+        </nav>
+        <div class="scontent">
+        <section class="spane" data-spane="obs" role="tabpanel">
       <strong style="font-size:12px">OBS</strong>
       <div class="hint" id="cfgStatus"></div>
       <div class="hint">In OBS add a <b>Browser Source</b> with URL <code id="cfgOverlayUrl"></code> — that is where the layouts are drawn.</div>
@@ -363,7 +383,6 @@
         <div class="row"><button type="button" id="cfgReconnectBtn">Reconnect now</button></div>
         <div class="hint" id="cfgWsStatus"></div>
       </div>
-
       <hr style="border-color:var(--line)">
       <strong style="font-size:12px">Import from OBS</strong>
       <div class="row">
@@ -373,12 +392,8 @@
       <label class="chk"><input type="checkbox" id="impBind" checked> Bind the new layout to this scene (if it is free)</label>
       <div class="hint" id="impHint"></div>
       <div class="hint" id="impResult" style="white-space:pre-wrap"></div>
-
-      <hr style="border-color:var(--line)">
-      <label class="chk"><input type="checkbox" id="cfgDebugProxy"> Log proxy traffic to the server console (debug)</label>
-      <div class="hint">Prints every proxied request and WebSocket frame (tokens are masked). Handy when a proxied widget doesn’t react.</div>
-
-      <hr style="border-color:var(--line)">
+        </section>
+        <section class="spane" data-spane="network" role="tabpanel" hidden>
       <div class="grid2">
         <label>Listen on
           <select id="cfgHost" style="width:100%"></select>
@@ -387,7 +402,6 @@
       </div>
       <div class="hint warn" id="cfgHostWarn" hidden>Other devices on your network will be able to reach this server, but only after pairing with a code (see “Remote devices” just below). This computer stays open without a code.</div>
       <div class="hint">Listen address and port are applied after restarting the server.</div>
-
       <div id="devBox" hidden style="margin-top:6px;padding:8px 10px;border:1px solid var(--line);border-radius:8px">
         <strong style="font-size:12px">Remote devices</strong>
         <div class="hint" id="devHint"></div>
@@ -400,9 +414,13 @@
         </div>
         <div id="devList"></div>
       </div>
-
+      <hr style="border-color:var(--line)">
+      <label class="chk"><input type="checkbox" id="cfgDebugProxy"> Log proxy traffic to the server console (debug)</label>
+      <div class="hint">Prints every proxied request and WebSocket frame (tokens are masked). Handy when a proxied widget doesn’t react.</div>
+        </section>
+        <section class="spane" data-spane="twitch" role="tabpanel" hidden>
+        <div class="hint" id="twOnlyLocal">Twitch accounts are managed only from this computer.</div>
       <div id="twBox" hidden>
-        <hr style="border-color:var(--line)">
         <strong style="font-size:12px">Twitch accounts</strong>
         <div class="hint">Create an application at <b>dev.twitch.tv/console</b> (Category: Chat Bot, Client Type: <b>Confidential</b>) and add this OAuth Redirect URL exactly:</div>
         <code id="twRedirect" style="word-break:break-all;user-select:all"></code>
@@ -418,8 +436,8 @@
           Press the <b>copy</b> icon next to an account: the authorization link goes to the clipboard — open it in a browser (or private window) where
           <i>that</i> Twitch account is signed in. Tokens are stored encrypted only on this computer and are never given to plugins.</div>
       </div>
-
-      <hr style="border-color:var(--line)">
+        </section>
+        <section class="spane" data-spane="app" role="tabpanel" hidden>
       <strong style="font-size:12px">Application</strong>
       <div class="hint" id="cfgVersion"></div>
       <div class="hint" id="cfgPaths" style="white-space:pre-wrap;word-break:break-all"></div>
@@ -431,8 +449,10 @@
       <div class="hint" id="cfgAutostartHint"></div>
       <div class="hint" id="cfgTrayHint"></div>
       <div class="row"><button type="button" id="cfgQuit">Quit Overlay Composer</button></div>
-
-      <div class="row" style="justify-content:flex-end;margin-top:12px">
+        </section>
+        </div>
+      </div>
+      <div class="row sfoot">
         <button value="cancel">Cancel</button>
         <button type="button" class="primary" id="cfgSaveBtn">Save</button>
       </div>
