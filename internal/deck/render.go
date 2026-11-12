@@ -42,9 +42,12 @@ type view struct {
 
 var page = template.Must(template.New("deck").Parse(pageHTML))
 
-// Размеры в клетках (em от размера клетки, который выставляет скрипт): заголовок группы, отступ слева и промежуток между группами.
+// Размеры в клетках (em от размера клетки, который выставляет скрипт): отступ сверху, заголовок группы, отступ слева и промежуток
+// между группами. Скрипт делит высоту экрана на topCells+titleCells+Rows+bottomCells.
 const (
+	topCells   = 0.2
 	titleCells = 0.5
+	_          = 0.1 // bottomCells: нижний отступ, учтён только в делителе скрипта (ROWS)
 	padCells   = 0.5
 	gapCells   = 0.6
 )
@@ -62,7 +65,7 @@ func Render(v ViewData) ([]byte, error) {
 		for _, t := range g.Tiles {
 			tv := tileView{
 				ID: t.ID, Label: t.Label, Color: t.Color, Icon: Icons[t.Icon], Confirm: t.Confirm,
-				Style: template.CSS(fmt.Sprintf("left:%dem;top:%.2fem;width:%dem;height:%dem", t.X, titleCells+float64(t.Y), t.W, t.H)),
+				Style: template.CSS(fmt.Sprintf("left:%dem;top:%.2fem;width:%dem;height:%dem", t.X, topCells+titleCells+float64(t.Y), t.W, t.H)),
 				Scene: t.Action.Scene,
 			}
 			if tv.Color == "" {
@@ -109,7 +112,8 @@ html,body{margin:0;height:100%;background:#111;color:#fff;font-family:"Segoe UI"
 #scroll{position:absolute;left:0;right:0;top:0;bottom:0;overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;font-size:22vh}
 #strip{position:relative;height:100%}
 .g{position:absolute;top:0;bottom:0}
-.gn{position:absolute;left:.03em;right:0;top:0;height:.5em;line-height:.5em;font-size:.14em;font-weight:300;color:#aaa;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-top:.0em}
+.gn{position:absolute;left:.03em;right:0;top:.2em;height:.5em}
+.gn span{position:absolute;left:0;right:0;bottom:.04em;font-size:.15em;line-height:1.3;font-weight:300;color:#aaa;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .t{position:absolute;display:block;color:#fff;text-decoration:none;-webkit-transition:-webkit-transform .08s;transition:transform .08s}
 .t i{position:absolute;left:.03em;right:.03em;top:.03em;bottom:.03em;font-style:normal;overflow:hidden;box-sizing:border-box;border:.025em solid transparent}
 .t b{position:absolute;left:.08em;right:.08em;bottom:.06em;font-size:.15em;font-weight:300;line-height:1.15;max-height:3.5em;overflow:hidden;word-wrap:break-word}
@@ -126,7 +130,7 @@ body.off #dot{background:#e51400}
 {{.Palette}}
 </style></head>
 <body class="{{if not .Online}}off{{end}}" data-rev="{{.Rev}}">
-<div id="scroll"><div id="strip" style="{{.Strip}}">{{range .Groups}}<div class="g" style="{{.Style}}"><div class="gn">{{.Name}}</div>{{range .Tiles}}<div class="t c-{{.Color}}{{if .On}} on{{end}}" style="{{.Style}}" data-id="{{.ID}}" data-scene="{{.Scene}}"{{if .Confirm}} data-confirm="1"{{end}}><i>{{if .Icon}}<em>{{.Icon}}</em>{{end}}<b>{{.Label}}</b></i></div>{{end}}</div>{{end}}</div></div>
+<div id="scroll"><div id="strip" style="{{.Strip}}">{{range .Groups}}<div class="g" style="{{.Style}}"><div class="gn"><span>{{.Name}}</span></div>{{range .Tiles}}<div class="t c-{{.Color}}{{if .On}} on{{end}}" style="{{.Style}}" data-id="{{.ID}}" data-scene="{{.Scene}}"{{if .Confirm}} data-confirm="1"{{end}}><i>{{if .Icon}}<em>{{.Icon}}</em>{{end}}<b>{{.Label}}</b></i></div>{{end}}</div>{{end}}</div></div>
 <span id="dot"></span>
 <div id="msg"></div>
 <script>{{.Script}}</script>
@@ -136,7 +140,7 @@ body.off #dot{background:#e51400}
 // взводятся первым касанием и выполняются вторым (3 секунды), сервер повторно проверяет это (409 → взвести). Размер клетки — высота
 // экрана / (ряды + строка заголовка): считается при загрузке и повороте, всё остальное в em от него.
 const clientJS = `(function(){
-var ROWS=4.5;
+var ROWS=4.8;
 var body=document.body,sc=document.getElementById("scroll"),rev=body.getAttribute("data-rev"),armed=null,armTimer=0,msgTimer=0,msg=document.getElementById("msg");
 function fit(){sc.style.fontSize=(sc.clientHeight/ROWS)+"px";}
 fit();
