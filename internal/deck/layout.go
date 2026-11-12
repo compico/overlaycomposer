@@ -1,5 +1,9 @@
 // Package deck — раскладка панели управления для старых устройств (iPad/Safari 9): модель, проверка и отрисовка на сервере.
 // Пакет не знает ни про OBS, ни про HTTP: сервер подставляет сцены и состояние, а клиент получает готовый HTML.
+//
+// Раскладка в духе начального экрана Windows 8: квадратная клетка, плитки кратных размеров, плитки собраны в группы с заголовками,
+// группы идут слева направо, длинная раскладка прокручивается вправо. Рядов всегда Rows: высота экрана делится на ряды, поэтому
+// поворот устройства меняет только размер клетки и количество видимых колонок, а не саму раскладку.
 package deck
 
 import (
@@ -12,22 +16,38 @@ import (
 	"unicode/utf8"
 )
 
-// Сетка и пределы. Сетка рассчитана на iPad 3 (1024×768 CSS px) в альбомной ориентации.
+// Пределы.
 const (
-	Cols         = 8
-	Rows         = 6
-	MaxPages     = 8
-	MaxTilesPage = Cols * Rows
+	Rows         = 4  // рядов клеток; по ним делится высота экрана
+	MaxGroupCols = 16 // колонок в одной группе
+	MaxGroups    = 16
 	MaxTiles     = 200
 	MaxLabel     = 40
 	MaxName      = 24
 	maxBytes     = 256 << 10
 )
 
+// Size — допустимый размер плитки в клетках (ширина × высота). 1×1 — обычная, 2×1 и 3×1 — широкие (название трека, длинные подписи),
+// 2×3 — крупная для редких случаев.
+type Size struct {
+	W int `json:"w"`
+	H int `json:"h"`
+}
+
+var Sizes = []Size{{W: 1, H: 1}, {W: 2, H: 1}, {W: 3, H: 1}, {W: 2, H: 3}}
+
+func sizeOK(w, h int) bool {
+	for _, s := range Sizes {
+		if s.W == w && s.H == h {
+			return true
+		}
+	}
+	return false
+}
+
 // Типы действий плитки. Действие определяет сервер по сохранённой раскладке; клиент присылает только id плитки.
 const (
 	ActionScene = "scene" // сменить сцену OBS (Scene)
-	ActionPage  = "page"  // перейти на страницу раскладки (Page)
 )
 
 var idRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
@@ -40,24 +60,25 @@ var Palette = map[string]string{
 
 // Icons — глифы, которые умеют показывать и старые устройства (обычные символы Unicode, без шрифтов и картинок).
 var Icons = map[string]string{
-	"scene": "▣", "page": "»", "home": "⌂", "play": "▶", "pause": "❚❚", "next": "▶▶", "ban": "⊘", "mic": "●",
+	"scene": "▣", "home": "⌂", "play": "▶", "pause": "❚❚", "next": "▶▶", "ban": "⊘", "mic": "●",
 }
 
 type Layout struct {
 	// Rev растёт при каждом сохранении; устройство сравнивает его со своим и перерисовывается.
-	Rev   int    `json:"rev"`
-	Pages []Page `json:"pages"`
+	Rev    int     `json:"rev"`
+	Groups []Group `json:"groups"`
 }
 
-type Page struct {
+// Group — набор плиток с заголовком. Плитки лежат на сетке группы: x от 0 вправо (ширина группы — по самой правой плитке), y от 0 вниз до Rows.
+type Group struct {
 	ID    string `json:"id"`
-	Name  string `json:"name"`
+	Name  string `json:"name,omitempty"`
 	Tiles []Tile `json:"tiles"`
 }
 
 type Tile struct {
 	ID    string `json:"id"` // уникален во всей раскладке: нажатие приходит с одним id
-	X     int    `json:"x"`  // клетки, с 0
+	X     int    `json:"x"`  // клетки внутри группы, с 0
 	Y     int    `json:"y"`
 	W     int    `json:"w"`
 	H     int    `json:"h"`
@@ -72,7 +93,17 @@ type Tile struct {
 type Action struct {
 	Type  string `json:"type"`
 	Scene string `json:"scene,omitempty"`
-	Page  string `json:"page,omitempty"`
+}
+
+// Width — ширина группы в клетках (минимум 1, чтобы пустая группа оставалась видимой и её можно было наполнить).
+func (g Group) Width() int {
+	w := 1
+	for _, t := range g.Tiles {
+		if t.X+t.W > w {
+			w = t.X + t.W
+		}
+	}
+	return w
 }
 
 // Parse читает раскладку из JSON и проверяет её (неизвестные поля — ошибка: опечатка не должна молча терять настройку).
@@ -91,26 +122,20 @@ func Parse(raw []byte) (Layout, error) {
 
 // Validate проверяет границы, уникальность id, пересечения плиток и допустимые значения.
 func (l *Layout) Validate() error {
-	if len(l.Pages) == 0 || len(l.Pages) > MaxPages {
-		return fmt.Errorf("pages: 1..%d", MaxPages)
+	if len(l.Groups) == 0 || len(l.Groups) > MaxGroups {
+		return fmt.Errorf("groups: 1..%d", MaxGroups)
 	}
-	pages := map[string]bool{}
-	for _, p := range l.Pages {
-		if !idRe.MatchString(p.ID) || pages[p.ID] {
-			return fmt.Errorf("page id %q: a-z, 0-9, -, up to 32 characters, unique", p.ID)
+	groups, tiles, total := map[string]bool{}, map[string]bool{}, 0
+	for _, g := range l.Groups {
+		if !idRe.MatchString(g.ID) || groups[g.ID] {
+			return fmt.Errorf("group id %q: a-z, 0-9, -, up to 32 characters, unique", g.ID)
 		}
-		pages[p.ID] = true
-		if n := utf8.RuneCountInString(p.Name); n == 0 || n > MaxName {
-			return fmt.Errorf("page %q: name 1..%d characters", p.ID, MaxName)
+		groups[g.ID] = true
+		if utf8.RuneCountInString(g.Name) > MaxName || strings.ContainsAny(g.Name, "\r\n\t") {
+			return fmt.Errorf("group %q: name up to %d characters, one line", g.ID, MaxName)
 		}
-	}
-	tiles, total := map[string]bool{}, 0
-	for _, p := range l.Pages {
-		if len(p.Tiles) > MaxTilesPage {
-			return fmt.Errorf("page %q: at most %d tiles", p.ID, MaxTilesPage)
-		}
-		var grid [Rows][Cols]bool
-		for _, t := range p.Tiles {
+		var grid [Rows][MaxGroupCols]bool
+		for _, t := range g.Tiles {
 			if total++; total > MaxTiles {
 				return fmt.Errorf("at most %d tiles", MaxTiles)
 			}
@@ -118,8 +143,11 @@ func (l *Layout) Validate() error {
 				return fmt.Errorf("tile id %q: a-z, 0-9, -, up to 32 characters, unique", t.ID)
 			}
 			tiles[t.ID] = true
-			if t.W < 1 || t.H < 1 || t.W > 4 || t.H > 4 || t.X < 0 || t.Y < 0 || t.X+t.W > Cols || t.Y+t.H > Rows {
-				return fmt.Errorf("tile %q: outside the %d×%d grid", t.ID, Cols, Rows)
+			if !sizeOK(t.W, t.H) {
+				return fmt.Errorf("tile %q: size %d×%d is not allowed (1×1, 2×1, 3×1, 2×3)", t.ID, t.W, t.H)
+			}
+			if t.X < 0 || t.Y < 0 || t.X+t.W > MaxGroupCols || t.Y+t.H > Rows {
+				return fmt.Errorf("tile %q: outside the group (up to %d columns, %d rows)", t.ID, MaxGroupCols, Rows)
 			}
 			for y := t.Y; y < t.Y+t.H; y++ {
 				for x := t.X; x < t.X+t.W; x++ {
@@ -138,19 +166,10 @@ func (l *Layout) Validate() error {
 			if t.Icon != "" && Icons[t.Icon] == "" {
 				return fmt.Errorf("tile %q: unknown icon %q", t.ID, t.Icon)
 			}
-		}
-	}
-	// действия проверяем после того, как известны все страницы
-	for _, p := range l.Pages {
-		for _, t := range p.Tiles {
 			switch t.Action.Type {
 			case ActionScene:
 				if n := utf8.RuneCountInString(t.Action.Scene); n == 0 || n > 200 {
 					return fmt.Errorf("tile %q: scene name 1..200 characters", t.ID)
-				}
-			case ActionPage:
-				if !pages[t.Action.Page] {
-					return fmt.Errorf("tile %q: page %q does not exist", t.ID, t.Action.Page)
 				}
 			default:
 				return fmt.Errorf("tile %q: unknown action %q", t.ID, t.Action.Type)
@@ -162,8 +181,8 @@ func (l *Layout) Validate() error {
 
 // Tile находит плитку по id во всей раскладке.
 func (l *Layout) Tile(id string) (Tile, bool) {
-	for _, p := range l.Pages {
-		for _, t := range p.Tiles {
+	for _, g := range l.Groups {
+		for _, t := range g.Tiles {
 			if t.ID == id {
 				return t, true
 			}
@@ -172,23 +191,13 @@ func (l *Layout) Tile(id string) (Tile, bool) {
 	return Tile{}, false
 }
 
-// Page находит страницу; пустой id — первая.
-func (l *Layout) Page(id string) (Page, bool) {
-	for _, p := range l.Pages {
-		if id == "" || p.ID == id {
-			return p, true
-		}
-	}
-	return Page{}, false
-}
-
-// Default — раскладка по умолчанию, пока пользователь ничего не сохранил: плитка 2×2 на каждую сцену OBS в порядке OBS, по 12 на странице
-// (4 в ряд, 3 ряда — вся сетка 8×6). Id плитки зависит от имени сцены, а не от порядка: после перестановки сцен нажатие на старой
+// Default — раскладка по умолчанию, пока пользователь ничего не сохранил: широкие плитки 2×1 на каждую сцену OBS в порядке OBS,
+// столбцами по Rows штук, группами по 8 сцен. Id плитки зависит от имени сцены, а не от порядка: после перестановки сцен нажатие на старой
 // странице не перепутает сцену.
 func Default(scenes []string) Layout {
-	const perPage = 12
-	colors := []string{"blue", "teal", "green", "orange", "purple", "magenta", "steel", "red", "cyan", "lime", "brown", "yellow"}
-	var pages []Page
+	const perGroup = 2 * Rows
+	colors := []string{"blue", "teal", "green", "orange", "purple", "magenta", "steel", "red"}
+	var groups []Group
 	seen := map[string]bool{}
 	n := 0
 	for _, name := range scenes {
@@ -197,25 +206,29 @@ func Default(scenes []string) Layout {
 			continue
 		}
 		seen[id] = true
-		if n/perPage >= MaxPages {
+		if n/perGroup >= MaxGroups {
 			break
 		}
-		if n%perPage == 0 {
-			k := n/perPage + 1
-			pages = append(pages, Page{ID: fmt.Sprintf("p%d", k), Name: fmt.Sprintf("Scenes %d", k)})
+		if n%perGroup == 0 {
+			k := n/perGroup + 1
+			title := "Scenes"
+			if k > 1 {
+				title = fmt.Sprintf("Scenes %d", k)
+			}
+			groups = append(groups, Group{ID: fmt.Sprintf("g%d", k), Name: title})
 		}
-		p := &pages[len(pages)-1]
-		k := n % perPage
-		p.Tiles = append(p.Tiles, Tile{
-			ID: id, X: k % 4 * 2, Y: k / 4 * 2, W: 2, H: 2, Label: trunc(name, MaxLabel), Color: colors[k],
+		g := &groups[len(groups)-1]
+		k := n % perGroup
+		g.Tiles = append(g.Tiles, Tile{
+			ID: id, X: k / Rows * 2, Y: k % Rows, W: 2, H: 1, Label: trunc(name, MaxLabel), Color: colors[k%len(colors)],
 			Action: Action{Type: ActionScene, Scene: name},
 		})
 		n++
 	}
-	if len(pages) == 0 {
-		pages = []Page{{ID: "p1", Name: "Scenes 1"}}
+	if len(groups) == 0 {
+		groups = []Group{{ID: "g1", Name: "Scenes"}}
 	}
-	return Layout{Pages: pages}
+	return Layout{Groups: groups}
 }
 
 func shortHash(s string) string {

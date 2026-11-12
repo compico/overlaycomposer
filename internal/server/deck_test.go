@@ -65,11 +65,10 @@ func deckReq(t *testing.T, s *Server, method, path, body string, hdr bool) (int,
 	return resp.StatusCode, string(b), resp.Header
 }
 
-const deckLayoutJSON = `{"rev":%d,"pages":[{"id":"main","name":"Main","tiles":[
- {"id":"game","x":0,"y":0,"w":2,"h":2,"label":"Game","color":"blue","action":{"type":"scene","scene":"Game"}},
- {"id":"chat","x":2,"y":0,"w":2,"h":2,"label":"Chat","confirm":true,"action":{"type":"scene","scene":"Chat"}},
- {"id":"gone","x":4,"y":0,"w":1,"h":1,"action":{"type":"scene","scene":"Deleted"}},
- {"id":"go2","x":5,"y":0,"w":1,"h":1,"action":{"type":"page","page":"two"}}]},{"id":"two","name":"Two","tiles":[]}]}`
+const deckLayoutJSON = `{"rev":%d,"groups":[{"id":"main","name":"Main","tiles":[
+ {"id":"game","x":0,"y":0,"w":2,"h":1,"label":"Game","color":"blue","action":{"type":"scene","scene":"Game"}},
+ {"id":"chat","x":0,"y":1,"w":2,"h":1,"label":"Chat","confirm":true,"action":{"type":"scene","scene":"Chat"}},
+ {"id":"gone","x":2,"y":0,"w":1,"h":1,"action":{"type":"scene","scene":"Deleted"}}]},{"id":"two","name":"Two","tiles":[]}]}`
 
 func saveDeck(t *testing.T, s *Server, rev int) {
 	t.Helper()
@@ -85,7 +84,7 @@ func TestDeckPageIsRenderedOnTheServerWithDefaultLayout(t *testing.T) {
 	if code != 200 || !strings.Contains(html, `data-scene="Game"`) || !strings.Contains(html, `data-scene="Chat"`) {
 		t.Fatalf("%d %s", code, html)
 	}
-	if !strings.Contains(html, "c-blue on") && !strings.Contains(html, "on\"") {
+	if !strings.Contains(html, "c-blue on") {
 		t.Fatalf("активная сцена должна подсвечиваться")
 	}
 	if !strings.Contains(h.Get("Content-Security-Policy"), "default-src 'none'") || h.Get("Cache-Control") != "no-store" {
@@ -124,10 +123,7 @@ func TestDeckPressRunsOnlyWhatTheSavedLayoutSays(t *testing.T) {
 	if c, _ := press(`{"tile":"chat","confirm":true}`, true); c != 200 || o.set[len(o.set)-1] != "Chat" {
 		t.Fatalf("confirmed: %v", o.set)
 	}
-	// плитка-страница не нажимается; сцена, которой уже нет в OBS, — 404; OBS не подключён — 503; ошибка OBS — 502
-	if c, _ := press(`{"tile":"go2"}`, true); c != 400 {
-		t.Fatalf("page tile: %d", c)
-	}
+	// сцена, которой уже нет в OBS, — 404; OBS не подключён — 503; ошибка OBS — 502
 	o.err = obs.ErrUnknownScene
 	if c, _ := press(`{"tile":"gone"}`, true); c != 404 {
 		t.Fatalf("unknown scene: %d", c)
@@ -184,7 +180,7 @@ func TestDeckLayoutSaveConflictAndReset(t *testing.T) {
 		t.Fatalf("конфликт: %d", c)
 	}
 	// плохая раскладка и сохранение без заголовка приложения
-	if c, _, _ := deckReq(t, s, "PUT", "/api/deck/layout", `{"rev":1,"pages":[]}`, true); c != 400 {
+	if c, _, _ := deckReq(t, s, "PUT", "/api/deck/layout", `{"rev":1,"groups":[]}`, true); c != 400 {
 		t.Fatalf("пустые страницы: %d", c)
 	}
 	if c, _, _ := deckReq(t, s, "PUT", "/api/deck/layout", strings.Replace(deckLayoutJSON, "%d", "1", 1), false); c != 400 {
