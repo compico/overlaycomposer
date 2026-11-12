@@ -86,6 +86,10 @@ type Server struct {
 	evPeers    map[*hub.Peer]*peerSubs
 	pluginAuth func(plugin, source string) string // подмена authorizePlugin в тестах
 
+	deckMu          sync.Mutex // сохранение раскладки deck
+	deckRate        deckBucket
+	deckObsOverride deckOBS // подмена OBS в тестах
+
 	deny *denyLimiter // отказы без токена по адресам (nil — без ограничения, как в тестах)
 
 	// Сайты источников проксируются на отдельном порту: другой origin, и JS чужого сайта не достаёт до API приложения.
@@ -159,6 +163,7 @@ func (s *Server) routes() {
 	s.authRoutes()
 	s.twitchRoutes()
 	s.storageRoutes()
+	s.deckRoutes()
 	s.marketRoutes()
 	s.notifyRoutes()
 	s.wasmRoutes()

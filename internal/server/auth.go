@@ -124,6 +124,9 @@ func (s *Server) authGuard(c fiber.Ctx) error {
 		return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{"error": "too many requests"})
 	}
 	if c.Method() == fiber.MethodGet && !strings.HasPrefix(p, "/api/") && p != "/ws" && strings.Contains(c.Get("Accept"), "text/html") {
+		if p == "/deck" {
+			return c.Redirect().To("/pair?next=/deck") // после сопряжения вернуть на панель, а не в редактор
+		}
 		return c.Redirect().To("/pair")
 	}
 	return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
@@ -247,13 +250,14 @@ button{font-size:16px;padding:10px 28px;border:0;border-radius:8px;background:#6
 <script>
 (function(){
 var inp=document.getElementById("code"),err=document.getElementById("err");
+var target=/[?&]next=\/deck(&|$)/.test(location.search)?"/deck":"/editor";
 function go(){
  var code=inp.value.replace(/\s/g,"");
  if(code.length!==6){err.textContent="Enter the 6-letter code";return;}
  err.textContent="";
  var x=new XMLHttpRequest();x.open("POST","/api/pair");x.setRequestHeader("Content-Type","application/json");
  x.onload=function(){
-  if(x.status===200){location.href="/editor";return;}
+  if(x.status===200){location.href=target;return;}
   var m="Error "+x.status;try{m=JSON.parse(x.responseText).error||m;}catch(e){}
   err.textContent=m;
  };
