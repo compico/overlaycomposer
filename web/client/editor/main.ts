@@ -275,8 +275,10 @@ mountWasmPlugins(
   { ui: { toast, fail }, openFolder: () => api("/api/app/open", "POST", { what: "plugins" }), host: pluginHost },
 );
 mountDeck(
-  { openBtn: $("deckBtn"), dialog: $<HTMLDialogElement>("deckDialog"), body: $("deckBody"), saveBtn: $<HTMLButtonElement>("deckSaveBtn"),
-    resetBtn: $("deckResetBtn"), addGroupBtn: $("deckAddGroupBtn"), closeBtn: $("deckCloseBtn"), status: $("deckStatus") },
+  { openBtn: $("deckBtn"), editorMain: document.querySelector("main:not(#deckMain)") as HTMLElement, deckMain: $("deckMain"),
+    hideInDeck: [$("saveBtn"), $("dirtyBadge"), $("sceneBadge"), $("canvasSize")],
+    groupList: $("deckGroupList"), addGroupBtn: $("deckAddGroupBtn"), sizeBtns: $("deckSizeBtns"), tileList: $("deckTileList"),
+    canvas: $("deckCanvas"), props: $("deckProps"), saveBtn: $<HTMLButtonElement>("deckSaveBtn"), resetBtn: $("deckResetBtn"), status: $("deckStatus") },
   createDeckModel(api),
   { ui: { toast, fail } },
 );

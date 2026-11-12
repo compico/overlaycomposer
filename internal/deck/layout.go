@@ -117,6 +117,11 @@ func Parse(raw []byte) (Layout, error) {
 	if err := dec.Decode(&l); err != nil {
 		return l, fmt.Errorf("bad layout: %v", err)
 	}
+	for i := range l.Groups {
+		if l.Groups[i].Tiles == nil {
+			l.Groups[i].Tiles = []Tile{} // в JSON — [], а не null: клиенту не нужно проверять
+		}
+	}
 	return l, l.Validate()
 }
 
