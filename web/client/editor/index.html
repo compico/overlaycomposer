@@ -147,6 +147,7 @@
       <button id="deckBtn" title="Edit the /deck control screen (tablet)">▦ Deck</button>
       <button id="settingsBtn" title="Settings">⚙ Settings</button>
       <button class="primary" id="saveBtn">Save (Ctrl+S)</button>
+      <button class="primary" id="deckSaveBtn" disabled hidden>Save deck</button>
     </header>
     <main>
       <aside class="left">
@@ -197,7 +198,6 @@
           <span class="hint" id="deckStatus"></span>
           <span style="flex:1"></span>
           <span class="hint">/deck on the tablet · drag tiles to move them</span>
-          <button id="deckSaveBtn" class="primary" disabled>Save</button>
         </div>
         <div id="deckCanvas" style="overflow:auto;padding:20px;min-height:0"></div>
       </div>

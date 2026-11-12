@@ -213,6 +213,7 @@ export function mountDeck(refs: DeckRefs, model: DeckModel, ports: DeckPorts): v
     refs.deckMain.hidden = !on;
     refs.editorMain.hidden = on;
     for (const n of refs.hideInDeck) n.hidden = on;
+    refs.saveBtn.hidden = !on; // кнопка сохранения deck — в шапке справа, на месте Save раскладок
     refs.openBtn.textContent = on ? "← Overlay editor" : "▦ Deck";
   }
 
