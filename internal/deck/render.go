@@ -88,7 +88,7 @@ func paletteCSS() string {
 	sort.Strings(names)
 	var sb strings.Builder
 	for _, n := range names {
-		fmt.Fprintf(&sb, ".c-%s{background:%s}", n, Palette[n])
+		fmt.Fprintf(&sb, ".c-%s i{background:%s}", n, Palette[n]) // цвет на внутреннем блоке: между плитками остаётся зазор
 	}
 	return sb.String()
 }
@@ -111,9 +111,9 @@ html,body{margin:0;height:100%;background:#111;color:#fff;font-family:"Segoe UI"
 body.off #dot{background:#e51400}
 #grid{position:absolute;left:0;right:0;top:52px;bottom:0}
 .t{position:absolute;display:block;color:#fff;text-decoration:none;-webkit-transition:-webkit-transform .08s;transition:transform .08s}
-.t i{position:absolute;left:5px;right:5px;top:5px;bottom:5px;font-style:normal;overflow:hidden;box-sizing:border-box;border:3px solid transparent}
-.t b{position:absolute;left:10px;right:10px;bottom:8px;font-size:20px;font-weight:400;line-height:22px;max-height:44px;overflow:hidden;word-wrap:break-word}
-.t em{position:absolute;left:10px;top:6px;font-size:34px;font-style:normal;opacity:.85}
+.t i{position:absolute;left:4px;right:4px;top:4px;bottom:4px;font-style:normal;overflow:hidden;box-sizing:border-box;border:4px solid transparent}
+.t b{position:absolute;left:12px;right:12px;bottom:10px;font-size:26px;font-weight:300;line-height:30px;max-height:90px;overflow:hidden;word-wrap:break-word}
+.t em{position:absolute;left:12px;top:8px;font-size:40px;font-style:normal;opacity:.9}
 .t.on i{border-color:#fff}
 .t.arm i{border-color:#e3c800;background-image:-webkit-linear-gradient(135deg,rgba(0,0,0,.25) 25%,transparent 25%,transparent 50%,rgba(0,0,0,.25) 50%,rgba(0,0,0,.25) 75%,transparent 75%);background-size:24px 24px}
 .t.busy{opacity:.6}

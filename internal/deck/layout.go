@@ -182,32 +182,35 @@ func (l *Layout) Page(id string) (Page, bool) {
 	return Page{}, false
 }
 
-// Default — раскладка по умолчанию, пока пользователь ничего не сохранил: по плитке 2×2 на каждую сцену OBS, всё на страницах по 8.
-// Id плитки зависит от имени сцены, а не от порядка: после перестановки сцен нажатие на старой странице не перепутает сцену.
+// Default — раскладка по умолчанию, пока пользователь ничего не сохранил: плитка 2×2 на каждую сцену OBS в порядке OBS, по 12 на странице
+// (4 в ряд, 3 ряда — вся сетка 8×6). Id плитки зависит от имени сцены, а не от порядка: после перестановки сцен нажатие на старой
+// странице не перепутает сцену.
 func Default(scenes []string) Layout {
-	const perPage = 8 // 4 плитки в ряд × 2 ряда по 2×2 в сетке 8×6 — оставляет место под подпись и крупные пальцы
+	const perPage = 12
+	colors := []string{"blue", "teal", "green", "orange", "purple", "magenta", "steel", "red", "cyan", "lime", "brown", "yellow"}
 	var pages []Page
-	colors := []string{"blue", "teal", "green", "orange", "purple", "magenta", "steel", "red"}
 	seen := map[string]bool{}
-	for i, name := range scenes {
+	n := 0
+	for _, name := range scenes {
 		id := "scene-" + shortHash(name)
 		if seen[id] {
 			continue
 		}
 		seen[id] = true
-		if i/perPage >= MaxPages {
+		if n/perPage >= MaxPages {
 			break
 		}
-		if i%perPage == 0 {
-			n := i/perPage + 1
-			pages = append(pages, Page{ID: fmt.Sprintf("p%d", n), Name: fmt.Sprintf("Scenes %d", n)})
+		if n%perPage == 0 {
+			k := n/perPage + 1
+			pages = append(pages, Page{ID: fmt.Sprintf("p%d", k), Name: fmt.Sprintf("Scenes %d", k)})
 		}
 		p := &pages[len(pages)-1]
-		k := len(p.Tiles)
+		k := n % perPage
 		p.Tiles = append(p.Tiles, Tile{
-			ID: id, X: k % 4 * 2, Y: k / 4 * 2, W: 2, H: 2, Label: trunc(name, MaxLabel), Color: colors[k%len(colors)], Icon: "scene",
+			ID: id, X: k % 4 * 2, Y: k / 4 * 2, W: 2, H: 2, Label: trunc(name, MaxLabel), Color: colors[k],
 			Action: Action{Type: ActionScene, Scene: name},
 		})
+		n++
 	}
 	if len(pages) == 0 {
 		pages = []Page{{ID: "p1", Name: "Scenes 1"}}

@@ -80,8 +80,12 @@ func TestDefaultLayoutOneTilePerScene(t *testing.T) {
 	if err := l.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	if len(l.Pages) != 3 || len(l.Pages[0].Tiles) != 8 || len(l.Pages[2].Tiles) != 4 {
+	if len(l.Pages) != 2 || len(l.Pages[0].Tiles) != 12 || len(l.Pages[1].Tiles) != 8 {
 		t.Fatalf("страницы: %d", len(l.Pages))
+	}
+	// порядок как в OBS, плитки занимают всю сетку: 4 в ряд, 3 ряда
+	if l.Pages[0].Tiles[0].Action.Scene != "Scene 0" || l.Pages[0].Tiles[11].X != 6 || l.Pages[0].Tiles[11].Y != 4 {
+		t.Fatalf("порядок или позиции: %+v", l.Pages[0].Tiles[11])
 	}
 	// id зависит от имени, а не от места: после перестановки сцен плитка указывает на ту же сцену
 	a := Default([]string{"A", "B"})
