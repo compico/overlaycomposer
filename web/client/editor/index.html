@@ -147,6 +147,7 @@
       <button id="deckBtn" title="Edit the /deck control screen (tablet)">▦ Deck</button>
       <button id="settingsBtn" title="Settings">⚙ Settings</button>
       <button class="primary" id="saveBtn">Save (Ctrl+S)</button>
+      <button class="primary" id="deckSaveBtn" disabled hidden>Save deck</button>
     </header>
     <main>
       <aside class="left">
@@ -192,11 +193,10 @@
       </aside>
       <div class="center">
         <div id="canvasBar" role="toolbar" aria-label="Deck tools">
-          <button id="deckSaveBtn" class="primary" disabled>Save</button>
           <button id="deckResetBtn" title="One tile per OBS scene">Reset to default</button>
           <span class="sep"></span>
           <span class="hint" id="deckStatus"></span>
-          <span class="spacer"></span>
+          <span style="flex:1"></span>
           <span class="hint">/deck on the tablet · drag tiles to move them</span>
         </div>
         <div id="deckCanvas" style="overflow:auto;padding:20px;min-height:0"></div>
