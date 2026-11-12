@@ -400,6 +400,27 @@ func (c *Client) ListScenes() []string {
 	return out
 }
 
+// ErrUnknownScene — такой сцены нет в списке OBS.
+var ErrUnknownScene = errors.New("unknown scene")
+
+// SetScene переключает программную сцену OBS. Имя должно быть в списке известных сцен: произвольные имена в OBS не уходят.
+func (c *Client) SetScene(name string) error {
+	known := false
+	for _, s := range c.Scenes() {
+		if s == name {
+			known = true
+			break
+		}
+	}
+	if !known {
+		return ErrUnknownScene
+	}
+	if _, ok := c.Request("SetCurrentProgramScene", map[string]any{"sceneName": name}); !ok {
+		return errors.New("OBS did not confirm the scene change")
+	}
+	return nil
+}
+
 // RefreshScenes обновляет кэш списка сцен и уведомляет, если он изменился.
 func (c *Client) RefreshScenes() {
 	list := c.ListScenes()
