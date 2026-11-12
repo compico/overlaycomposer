@@ -105,7 +105,7 @@ func (s *Server) deckLayout() (l deck.Layout, saved bool) {
 
 func (s *Server) deckPage(c fiber.Ctx) error {
 	l, _ := s.deckLayout()
-	v := deck.ViewData{Layout: l, PageID: c.Query("page")}
+	v := deck.ViewData{Layout: l}
 	if o := s.deckObs(); o != nil {
 		v.Online, v.Scene = o.Connected(), o.CurrentScene()
 	}
@@ -185,7 +185,7 @@ func (s *Server) deckGetLayout(c fiber.Ctx) error {
 	sort.Strings(icons)
 	return c.JSON(fiber.Map{
 		"layout": l, "saved": saved, "scenes": scenes, "colors": colors, "icons": icons,
-		"grid": fiber.Map{"cols": deck.Cols, "rows": deck.Rows},
+		"grid": fiber.Map{"rows": deck.Rows, "maxGroupCols": deck.MaxGroupCols, "sizes": deck.Sizes},
 	})
 }
 

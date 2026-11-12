@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -382,20 +383,44 @@ func (c *Client) Request(typ string, data map[string]any) (map[string]any, bool)
 	}
 }
 
-// ListScenes запрашивает у OBS список сцен (в порядке, который отдаёт OBS).
+// ListScenes запрашивает у OBS список сцен в том порядке, в котором их показывает OBS.
 func (c *Client) ListScenes() []string {
 	r, ok := c.Request("GetSceneList", nil)
 	if !ok {
 		return nil
 	}
+	return scenesInUIOrder(r)
+}
+
+// scenesInUIOrder разбирает ответ GetSceneList. obs-websocket отдаёт сцены в обратном порядке относительно списка в OBS, поэтому
+// сортируем по sceneIndex (0 — первая сверху); если индексов нет — переворачиваем массив.
+func scenesInUIOrder(r map[string]any) []string {
 	arr, _ := r["scenes"].([]any)
-	out := make([]string, 0, len(arr))
+	type sc struct {
+		name string
+		idx  float64
+	}
+	list := make([]sc, 0, len(arr))
+	indexed := true
 	for _, it := range arr {
 		if m, ok := it.(map[string]any); ok {
 			if n, _ := m["sceneName"].(string); n != "" {
-				out = append(out, n)
+				x, has := m["sceneIndex"].(float64)
+				indexed = indexed && has
+				list = append(list, sc{n, x})
 			}
 		}
+	}
+	if indexed {
+		sort.SliceStable(list, func(i, j int) bool { return list[i].idx < list[j].idx })
+	} else {
+		for i, j := 0, len(list)-1; i < j; i, j = i+1, j-1 {
+			list[i], list[j] = list[j], list[i]
+		}
+	}
+	out := make([]string, 0, len(list))
+	for _, x := range list {
+		out = append(out, x.name)
 	}
 	return out
 }
