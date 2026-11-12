@@ -136,7 +136,7 @@ func (s *Server) deckPress(c fiber.Ctx) error {
 		Confirm bool   `json:"confirm"`
 	}
 	if !body(c, &b) {
-		return nil
+		return bad(c, "invalid json body")
 	}
 	if !s.deckRate.allow(time.Now()) {
 		c.Set("Retry-After", "1")
