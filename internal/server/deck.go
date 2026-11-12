@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -174,17 +173,8 @@ func (s *Server) deckGetLayout(c fiber.Ctx) error {
 	if o := s.deckObs(); o != nil {
 		scenes = o.Scenes()
 	}
-	colors, icons := make([]string, 0, len(deck.Palette)), make([]string, 0, len(deck.Icons))
-	for n := range deck.Palette {
-		colors = append(colors, n)
-	}
-	for n := range deck.Icons {
-		icons = append(icons, n)
-	}
-	sort.Strings(colors)
-	sort.Strings(icons)
 	return c.JSON(fiber.Map{
-		"layout": l, "saved": saved, "scenes": scenes, "colors": colors, "icons": icons,
+		"layout": l, "saved": saved, "scenes": scenes, "palette": deck.Palette, "icons": deck.Icons,
 		"grid": fiber.Map{"rows": deck.Rows, "maxGroupCols": deck.MaxGroupCols, "sizes": deck.Sizes},
 	})
 }

@@ -141,6 +141,7 @@
       <span class="badge" id="dirtyBadge"></span>
       <button id="bellBtn" title="Notifications" aria-label="Notifications">🔔<span class="bellcount" id="bellCount" hidden></span></button>
       <button id="pluginsBtn" title="Plugins: permissions and settings" hidden>🧩 Plugins</button>
+      <button id="deckBtn" title="Edit the /deck control screen (tablet)">▦ Deck</button>
       <button id="settingsBtn" title="Settings">⚙ Settings</button>
       <button class="primary" id="saveBtn">Save (Ctrl+S)</button>
     </header>
@@ -290,6 +291,21 @@
       <div id="wasmBody" style="max-height:60vh;overflow:auto"></div>
       <div class="row" style="justify-content:flex-end;margin-top:12px"><button value="close">Close</button></div>
     </form>
+  </dialog>
+  <dialog id="deckDialog" style="width:960px;max-width:96vw">
+    <div>
+      <strong>Deck</strong>
+      <span class="hint">Control screen for a tablet: <code>/deck</code>. Scene buttons only for now.</span>
+      <div class="row" style="margin:6px 0;gap:6px">
+        <button type="button" id="deckAddGroupBtn">+ Group</button>
+        <button type="button" id="deckResetBtn" title="One tile per OBS scene">Reset to default</button>
+        <span class="spacer"></span>
+        <span class="hint" id="deckStatus"></span>
+        <button type="button" class="primary" id="deckSaveBtn" disabled>Save</button>
+        <button type="button" id="deckCloseBtn">Close</button>
+      </div>
+      <div id="deckBody" style="max-height:70vh;overflow:auto"></div>
+    </div>
   </dialog>
   <div id="notifPanel" popover="auto"></div>
   <div id="historyPanel" popover="auto"></div>
