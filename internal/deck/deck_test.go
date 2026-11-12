@@ -1,6 +1,7 @@
 package deck
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -198,5 +199,16 @@ func TestClientScriptIsES5(t *testing.T) {
 		if strings.Contains(css, bad) {
 			t.Errorf("Safari 9 не умеет: %q", bad)
 		}
+	}
+}
+
+func TestParseEmptyGroupHasNoNullTiles(t *testing.T) {
+	l, err := Parse([]byte(`{"rev":1,"groups":[{"id":"g1","name":"A"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(l)
+	if !strings.Contains(string(raw), `"tiles":[]`) {
+		t.Fatalf("tiles должен быть [], а не null: %s", raw)
 	}
 }
