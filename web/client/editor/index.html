@@ -21,6 +21,9 @@
     #obsBadge, #twitchBadge { cursor: pointer; }
     .badge.ok { color: var(--ok); }
     .badge.bad { color: var(--danger); }
+    main[hidden] { display: none; }
+    .deckTile.sel { outline: 2px solid #fff; outline-offset: 1px; }
+    .deckGroup.cur .gname { color: var(--text); }
     main { display: grid; grid-template-columns: 260px 1fr 280px; min-height: 0; }
     aside { background: var(--panel); overflow: auto; padding: 10px; }
     aside.left { border-right: 1px solid var(--line); }
@@ -177,6 +180,29 @@
       </div>
       <aside class="right" id="props"></aside>
     </main>
+    <main id="deckMain" hidden>
+      <aside class="left">
+        <h3>Groups</h3>
+        <div class="list" id="deckGroupList"></div>
+        <div class="row"><button id="deckAddGroupBtn">+ Group</button></div>
+        <h3>Add tile to the group</h3>
+        <div class="row" id="deckSizeBtns" style="flex-wrap:wrap"></div>
+        <h3>Tiles in the group</h3>
+        <div class="list" id="deckTileList"></div>
+      </aside>
+      <div class="center">
+        <div id="canvasBar" role="toolbar" aria-label="Deck tools">
+          <button id="deckSaveBtn" class="primary" disabled>Save</button>
+          <button id="deckResetBtn" title="One tile per OBS scene">Reset to default</button>
+          <span class="sep"></span>
+          <span class="hint" id="deckStatus"></span>
+          <span class="spacer"></span>
+          <span class="hint">/deck on the tablet · drag tiles to move them</span>
+        </div>
+        <div id="deckCanvas" style="overflow:auto;padding:20px;min-height:0"></div>
+      </div>
+      <aside class="right" id="deckProps"></aside>
+    </main>
   </div>
 
   <dialog id="addDialog" style="width:480px;max-width:94vw">
@@ -291,21 +317,6 @@
       <div id="wasmBody" style="max-height:60vh;overflow:auto"></div>
       <div class="row" style="justify-content:flex-end;margin-top:12px"><button value="close">Close</button></div>
     </form>
-  </dialog>
-  <dialog id="deckDialog" style="width:960px;max-width:96vw">
-    <div>
-      <strong>Deck</strong>
-      <span class="hint">Control screen for a tablet: <code>/deck</code>. Scene buttons only for now.</span>
-      <div class="row" style="margin:6px 0;gap:6px">
-        <button type="button" id="deckAddGroupBtn">+ Group</button>
-        <button type="button" id="deckResetBtn" title="One tile per OBS scene">Reset to default</button>
-        <span class="spacer"></span>
-        <span class="hint" id="deckStatus"></span>
-        <button type="button" class="primary" id="deckSaveBtn" disabled>Save</button>
-        <button type="button" id="deckCloseBtn">Close</button>
-      </div>
-      <div id="deckBody" style="max-height:70vh;overflow:auto"></div>
-    </div>
   </dialog>
   <div id="notifPanel" popover="auto"></div>
   <div id="historyPanel" popover="auto"></div>

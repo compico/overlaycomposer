@@ -71,6 +71,7 @@ export function createDeckModel(api: Api): DeckModel {
   async function load() {
     try {
       const r = await api<LayoutResponse>("/api/deck/layout");
+      for (const g of r.layout.groups) g.tiles ??= []; // страховка: старый сервер отдавал null для пустой группы
       store.set({
         loaded: true, layout: r.layout, saved: r.saved, dirty: false, scenes: r.scenes ?? [], palette: r.palette ?? {}, icons: r.icons ?? {},
         grid: { ...r.grid, sizes: r.grid.sizes ?? s().grid.sizes }, selected: null, error: "",
