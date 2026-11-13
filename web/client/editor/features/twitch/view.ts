@@ -11,12 +11,55 @@ export interface TwitchRefs {
   appHint: HTMLElement;
   accounts: HTMLElement;
   saveApp: HTMLElement;
+  resetApp: HTMLElement;
+  advanced: HTMLDetailsElement;
+  deviceHint: HTMLElement;
+  codeHint: HTMLElement;
 }
 
 const ROLES: [TwitchRole, string][] = [["streamer", "Streamer"], ["bot", "Bot"]];
 
 export function mountTwitch(refs: TwitchRefs, model: TwitchModel, ui: Ui) {
   let formFilled = false;
+  // Идущее подключение по коду на роль: показываем код и опрашиваем сервер, пока Twitch не подтвердит.
+  const pending = new Map<string, { url: string; userCode: string; flow: string; timer: number; error?: string }>();
+
+  const stop = (role: string) => {
+    const p = pending.get(role);
+    if (p) clearInterval(p.timer);
+    pending.delete(role);
+  };
+
+  async function startDevice(role: TwitchRole) {
+    stop(role);
+    const r = await model.connect(role);
+    if (r.mode !== "device" || !r.flow || !r.userCode) { // сервер в режиме «по ссылке»
+      await copyLink(role, r.url);
+      return;
+    }
+    const flow = r.flow;
+    const p = { url: r.url, userCode: r.userCode, flow, timer: 0 as number, error: undefined as string | undefined };
+    p.timer = window.setInterval(async () => {
+      const st = await model.deviceStatus(flow);
+      if (!st) { stop(role); await model.load(); return; }
+      if (st.status === "pending") return;
+      clearInterval(p.timer);
+      if (st.status === "done") { pending.delete(role); ui.toast(`Twitch account “${st.login}” connected`); } else p.error = st.error || "connection failed";
+      await model.load();
+    }, 2000);
+    pending.set(role, p);
+    window.open(r.url, "_blank", "noopener");
+    await model.load();
+  }
+
+  async function copyLink(role: TwitchRole, url: string) {
+    const title = ROLES.find(([r]) => r === role)![1];
+    const ok = await copyText(url);
+    ui.toast(ok
+      ? `${title} link copied. Open it in a browser where the ${title.toLowerCase()} Twitch account is signed in (a private window works). It is valid for 10 minutes.`
+      : "Could not access the clipboard — copy the link from the prompt");
+    if (!ok) prompt("Authorization link (Ctrl+C):", url);
+  }
 
   model.subscribe((v) => {
     refs.box.hidden = !v;
@@ -27,34 +70,39 @@ export function mountTwitch(refs: TwitchRefs, model: TwitchModel, ui: Ui) {
       refs.clientSecret.placeholder = v.hasSecret ? "saved — leave empty to keep" : "client secret";
       formFilled = true;
     }
-    refs.appHint.textContent = v.clientId && v.hasSecret ? "" : "Enter Client ID and Client Secret, then connect accounts.";
-    const ready = !!v.clientId && v.hasSecret;
+    const device = v.mode === "device";
+    const ready = v.mode === "device" || v.mode === "code";
+    refs.deviceHint.hidden = !device;
+    refs.codeHint.hidden = device;
+    refs.resetApp.hidden = !v.clientId || !v.builtIn;
+    if (!ready) refs.advanced.open = true; // встроенного приложения нет: сразу показываем поля
+    refs.appHint.textContent = ready ? "" : "This build has no built-in Twitch application: open “Use my own Twitch application” below and enter its Client ID.";
     refs.accounts.replaceChildren(...ROLES.map(([role, title]) => {
       const acc = v.accounts.find((a) => a.role === role);
       const problem = acc ? accountProblem(acc) : "";
+      const wait = pending.get(role);
       const info = el("span", {
         class: problem ? "hint warn" : "hint",
         textContent: acc ? `${title}: ${acc.login}${problem ? ` — ${problem}` : ""}` : `${title}: not connected`,
       });
-      // Два аккаунта в одном браузере не подключить (Twitch помнит вход), поэтому вместо перехода — ссылка в буфер обмена:
-      // её можно открыть в другом браузере/профиле/приватном окне, где выполнен вход нужным аккаунтом.
-      const connect = el("button", {
-        type: "button", class: "iconbtn", disabled: !ready,
-        title: acc ? `Copy a link to reconnect the ${title.toLowerCase()} account` : `Copy the authorization link for the ${title.toLowerCase()} account`,
-      });
-      connect.setAttribute("aria-label", connect.title);
-      connect.innerHTML = COPY_ICON; // статическая разметка без пользовательских данных
-      connect.addEventListener("click", async () => {
-        try {
-          const url = await model.connectLink(role);
-          const ok = await copyText(url);
-          ui.toast(ok
-            ? `${title} link copied. Open it in a browser where the ${title.toLowerCase()} Twitch account is signed in (a private window works). It is valid for 10 minutes.`
-            : "Could not access the clipboard — copy the link from the prompt");
-          if (!ok) prompt("Authorization link (Ctrl+C):", url);
-        } catch (e) { ui.fail(e); }
-      });
-      const btns = el("span", { class: "row" }, connect);
+      const btns = el("span", { class: "row" });
+      if (device) {
+        const connect = el("button", { type: "button", disabled: !ready, textContent: acc ? "Reconnect" : "Connect" });
+        connect.addEventListener("click", async () => { try { await startDevice(role); } catch (e) { ui.fail(e); } });
+        btns.append(connect);
+      } else {
+        // Два аккаунта в одном браузере не подключить (Twitch помнит вход), поэтому вместо перехода — ссылка в буфер обмена.
+        const connect = el("button", {
+          type: "button", class: "iconbtn", disabled: !ready,
+          title: acc ? `Copy a link to reconnect the ${title.toLowerCase()} account` : `Copy the authorization link for the ${title.toLowerCase()} account`,
+        });
+        connect.setAttribute("aria-label", connect.title);
+        connect.innerHTML = COPY_ICON; // статическая разметка без пользовательских данных
+        connect.addEventListener("click", async () => {
+          try { await copyLink(role, await model.connectLink(role)); } catch (e) { ui.fail(e); }
+        });
+        btns.append(connect);
+      }
       if (acc) {
         const off = el("button", { type: "button", textContent: "Disconnect" });
         off.addEventListener("click", async () => {
@@ -63,7 +111,18 @@ export function mountTwitch(refs: TwitchRefs, model: TwitchModel, ui: Ui) {
         });
         btns.append(off);
       }
-      return el("div", { class: "row", style: "justify-content:space-between" }, info, btns);
+      const row = el("div", { class: "row", style: "justify-content:space-between" }, info, btns);
+      if (!wait) return row;
+      const box = el("div", { class: "hint" });
+      if (wait.error) {
+        box.classList.add("warn");
+        box.textContent = `${title}: ${wait.error}`;
+      } else {
+        const link = el("a", { href: wait.url, target: "_blank", rel: "noopener noreferrer", textContent: "twitch.tv/activate" });
+        box.append(`Open `, link, ` and confirm the code `, el("b", { textContent: wait.userCode, style: "user-select:all;letter-spacing:.1em" }),
+          ` — signed in as the ${title.toLowerCase()} account. Waiting for Twitch…`);
+      }
+      return el("div", {}, row, box);
     }));
   });
 
@@ -74,6 +133,16 @@ export function mountTwitch(refs: TwitchRefs, model: TwitchModel, ui: Ui) {
       formFilled = false;
       await model.load(); // заново заполнить поля из сохранённого
       ui.toast("Twitch application saved");
+    } catch (e) { ui.fail(e); }
+  });
+
+  refs.resetApp.addEventListener("click", async () => {
+    if (!confirm("Forget your Twitch application and use the built-in one? Connected accounts will be disconnected.")) return;
+    try {
+      await model.resetApp();
+      formFilled = false;
+      await model.load();
+      ui.toast("Using the built-in Twitch application");
     } catch (e) { ui.fail(e); }
   });
 
