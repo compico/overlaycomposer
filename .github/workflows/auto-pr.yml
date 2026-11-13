@@ -1,0 +1,54 @@
+name: Auto PR
+
+# Запушили ветку — PR откроется сам. Это страховка от «запушил и забыл открыть PR» и от пуша в ветку со смерженным PR
+# (тогда новые коммиты остались бы вне основной ветки): в таком случае откроется новый PR только с этими коммитами.
+# Номера issue берутся из сообщений коммитов и названия ветки (#N, ветка вида тип/N-кратко) и попадают в тело как «Closes #N».
+#
+# PR, созданный через GITHUB_TOKEN, не запускает workflow на pull_request. Чтобы CI стартовал сразу, добавьте секрет PR_TOKEN
+# (PAT с правами на pull requests) — тогда используется он.
+on:
+  push:
+    branches-ignore: [main, dev, gh-pages, 'dependabot/**']
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  open-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Открыть PR, если его нет
+        env:
+          GH_TOKEN: ${{ secrets.PR_TOKEN || github.token }}
+          BASE: ${{ github.event.repository.default_branch }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          open=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$open" ]; then
+            echo "PR #$open уже открыт"
+            exit 0
+          fi
+          git fetch origin "$BASE"
+          if [ "$(git rev-list --count "origin/$BASE..HEAD")" = "0" ]; then
+            echo "В ветке нет новых коммитов относительно $BASE"
+            exit 0
+          fi
+          # Заголовок — тема первого коммита ветки; в тело — список коммитов и Closes #N для найденных issue.
+          title=$(git log --reverse --no-merges --format=%s "origin/$BASE..HEAD" | head -1)
+          commits=$(git log --reverse --no-merges --format='- %s' "origin/$BASE..HEAD" | head -50)
+          nums=$( { git log --no-merges --format='%B' "origin/$BASE..HEAD"; printf '%s\n' "$BRANCH" | sed -E 's#^[^/]+/([0-9]+)([^0-9].*)?$#\#\1#'; } \
+                  | grep -oE '#[0-9]+' | sort -un -k1.2 | head -10 || true)
+          {
+            printf '## Коммиты\n\n%s\n\n' "$commits"
+            if [ -n "$nums" ]; then
+              for n in $nums; do printf 'Closes %s\n' "$n"; done
+            else
+              printf '⚠ В коммитах и названии ветки нет номера issue. Заведите issue и добавьте `Closes #N` сюда.\n'
+            fi
+          } > "$RUNNER_TEMP/body.md"
+          gh pr create --base "$BASE" --head "$BRANCH" --title "$title" --body-file "$RUNNER_TEMP/body.md"
