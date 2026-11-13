@@ -423,19 +423,25 @@
         <div class="hint" id="twOnlyLocal">Twitch accounts are managed only from this computer.</div>
       <div id="twBox" hidden>
         <strong style="font-size:12px">Twitch accounts</strong>
-        <div class="hint">Create an application at <b>dev.twitch.tv/console</b> (Category: Chat Bot, Client Type: <b>Confidential</b>) and add this OAuth Redirect URL exactly:</div>
-        <code id="twRedirect" style="word-break:break-all;user-select:all"></code>
-        <div class="grid2">
-          <label>Client ID<input type="text" id="twClientId" autocomplete="off" spellcheck="false"></label>
-          <label>Client Secret<input type="password" id="twClientSecret" autocomplete="off"></label>
-        </div>
-        <div class="row"><button type="button" id="twSaveApp">Save application</button></div>
-        <div class="hint">Changing the Client ID disconnects the connected accounts (their tokens belong to the old application).</div>
         <div class="hint" id="twAppHint"></div>
         <div id="twAccounts"></div>
-        <div class="hint">Streamer account is the channel owner; the bot account (optional) is used to write to chat on behalf of a bot.
-          Press the <b>copy</b> icon next to an account: the authorization link goes to the clipboard — open it in a browser (or private window) where
-          <i>that</i> Twitch account is signed in. Tokens are stored encrypted only on this computer and are never given to plugins.</div>
+        <div class="hint" id="twDeviceHint">Streamer account is the channel owner; the bot account (optional) writes to chat on behalf of a bot.
+          Press <b>Connect</b>, open the link and enter the code on Twitch — sign in with <i>that</i> account (use another browser or a private window for the second one).
+          Tokens are stored encrypted only on this computer and are never given to plugins.</div>
+        <div class="hint" id="twCodeHint" hidden>Press the <b>copy</b> icon next to an account: the authorization link goes to the clipboard — open it in a browser (or private window)
+          where <i>that</i> Twitch account is signed in. Tokens are stored encrypted only on this computer and are never given to plugins.</div>
+        <details id="twAdvanced">
+          <summary>Use my own Twitch application (advanced)</summary>
+          <div class="hint">Create an application at <b>dev.twitch.tv/console</b> (Category: Chat Bot). With <b>Client Type: Confidential</b> add this OAuth Redirect URL exactly
+            (connection by link); with <b>Public</b> no secret is needed (connection by code):</div>
+          <code id="twRedirect" style="word-break:break-all;user-select:all"></code>
+          <div class="grid2">
+            <label>Client ID<input type="text" id="twClientId" autocomplete="off" spellcheck="false"></label>
+            <label>Client Secret (Confidential only)<input type="password" id="twClientSecret" autocomplete="off"></label>
+          </div>
+          <div class="row"><button type="button" id="twSaveApp">Save application</button><button type="button" id="twResetApp" hidden>Use the built-in application</button></div>
+          <div class="hint">Changing the application disconnects the connected accounts (their tokens belong to the old one).</div>
+        </details>
       </div>
         </section>
         <section class="spane" data-spane="app" role="tabpanel" hidden>

@@ -22,6 +22,17 @@ func (s *Server) twitchRoutes() {
 	app.Post("/api/twitch/connect/:role", s.localOnly, s.appGuard, s.twitchConnect)
 	app.Delete("/api/twitch/accounts/:role", s.localOnly, s.appGuard, s.twitchDisconnect)
 	app.Get("/auth/twitch/callback", s.localOnly, s.twitchCallback)
+	app.Get("/api/twitch/device/:flow", s.localOnly, s.twitchDeviceStatus)
+	app.Delete("/api/twitch/app", s.localOnly, s.appGuard, s.twitchResetApp)
+	if s.d.Twitch != nil { // подключение по коду завершается в фоне: чат и уведомления обновляем по готовности
+		s.d.Twitch.OnConnect(func(a twitch.Account) {
+			slog.Info("twitch: аккаунт подключён по коду", "role", a.Role, "login", a.Login)
+			if s.d.Chat != nil {
+				s.d.Chat.Reload()
+			}
+			s.SyncTwitchNotifications()
+		})
+	}
 }
 
 // twitchRedirectURI — Twitch разрешает http только для localhost, поэтому имя именно localhost (а не 127.0.0.1).
@@ -56,8 +67,14 @@ func (s *Server) twitchStatus(c fiber.Ctx) error {
 	if accs == nil {
 		accs = []twitch.Account{}
 	}
+	mode, err := s.d.Twitch.Mode()
+	if err != nil {
+		return serverErr(c, err)
+	}
 	return c.JSON(fiber.Map{
-		"clientId":    id,
+		"mode":        mode, // device — встроенное/Public-приложение (подключение по коду), code — своё приложение с секретом, "" — не настроено
+		"builtIn":     s.d.Twitch.BuiltIn(),
+		"clientId":    id, // только своё приложение
 		"hasSecret":   hasSecret,
 		"redirectUri": s.twitchRedirectURI(),
 		"accounts":    accs,
@@ -79,14 +96,50 @@ func (s *Server) twitchSetApp(c fiber.Ctx) error {
 }
 
 func (s *Server) twitchConnect(c fiber.Ctx) error {
-	u, err := s.d.Twitch.AuthURL(c.Params("role"), s.twitchRedirectURI())
+	role := strings.Clone(c.Params("role")) // Fiber переиспользует буферы запроса
+	mode, err := s.d.Twitch.Mode()
+	if err != nil {
+		return serverErr(c, err)
+	}
+	if mode == "device" {
+		d, err := s.d.Twitch.StartDevice(c.Context(), role)
+		switch {
+		case err == nil:
+			return c.JSON(fiber.Map{"mode": "device", "url": d.VerificationURI, "userCode": d.UserCode, "flow": d.Flow, "expiresIn": d.ExpiresIn})
+		case errors.Is(err, twitch.ErrBadRole), errors.Is(err, twitch.ErrNotConfigured):
+			return bad(c, err.Error())
+		}
+		return serverErr(c, err)
+	}
+	u, err := s.d.Twitch.AuthURL(role, s.twitchRedirectURI())
 	switch {
 	case err == nil:
-		return c.JSON(fiber.Map{"url": u})
+		return c.JSON(fiber.Map{"mode": "code", "url": u})
 	case errors.Is(err, twitch.ErrBadRole), errors.Is(err, twitch.ErrNotConfigured):
 		return bad(c, err.Error())
 	}
 	return serverErr(c, err)
+}
+
+// twitchDeviceStatus — как идёт подключение по коду (клиент опрашивает, пока статус pending).
+func (s *Server) twitchDeviceStatus(c fiber.Ctx) error {
+	st, ok := s.d.Twitch.DeviceStatus(strings.Clone(c.Params("flow")))
+	if !ok {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "unknown or cancelled connection"})
+	}
+	return c.JSON(st)
+}
+
+// twitchResetApp забывает своё приложение (Client ID / Secret) и возвращает встроенное; аккаунты при этом отключаются.
+func (s *Server) twitchResetApp(c fiber.Ctx) error {
+	if err := s.d.Twitch.ResetApp(); err != nil {
+		return serverErr(c, err)
+	}
+	if s.d.Chat != nil {
+		s.d.Chat.Reload()
+	}
+	s.SyncTwitchNotifications()
+	return s.twitchStatus(c)
 }
 
 func (s *Server) twitchDisconnect(c fiber.Ctx) error {

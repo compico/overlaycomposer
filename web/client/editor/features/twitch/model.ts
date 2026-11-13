@@ -16,10 +16,31 @@ export interface TwitchAccount {
 }
 
 export interface TwitchInfo {
+  /** device — встроенное (Public) приложение, вход по коду; code — своё приложение с секретом, вход по ссылке; "" — не настроено. */
+  mode?: "device" | "code" | "";
+  /** В сборке есть встроенный Client ID. */
+  builtIn?: boolean;
+  /** Только своё приложение (встроенный ID наружу не отдаётся). */
   clientId: string;
   hasSecret: boolean;
   redirectUri: string;
   accounts: TwitchAccount[];
+}
+
+export interface ConnectResult {
+  mode: "device" | "code";
+  /** code: ссылка авторизации; device: страница twitch.tv/activate с уже подставленным кодом. */
+  url: string;
+  userCode?: string;
+  flow?: string;
+  expiresIn?: number;
+}
+
+export interface DeviceState {
+  role: string;
+  status: "pending" | "done" | "failed";
+  login?: string;
+  error?: string;
 }
 
 export interface TwitchModel extends Readable<TwitchInfo | null> {
@@ -29,6 +50,12 @@ export interface TwitchModel extends Readable<TwitchInfo | null> {
   /** Одноразовая ссылка авторизации аккаунта (действует 10 минут). */
   connectLink(role: TwitchRole): Promise<string>;
   disconnect(role: TwitchRole): Promise<void>;
+  /** Начать подключение: по коду (device) или по ссылке (code) — зависит от режима на сервере. */
+  connect(role: TwitchRole): Promise<ConnectResult>;
+  /** Ход подключения по коду; null — подключение отменено или неизвестно. */
+  deviceStatus(flow: string): Promise<DeviceState | null>;
+  /** Забыть своё приложение и вернуться к встроенному (аккаунты отключаются). */
+  resetApp(): Promise<void>;
 }
 
 export function createTwitchModel(api: Api): TwitchModel {
@@ -44,8 +71,17 @@ export function createTwitchModel(api: Api): TwitchModel {
       await model.load();
     },
     async connectLink(role) {
-      const r = await api<{ url: string }>(`/api/twitch/connect/${role}`, "POST", {});
-      return r.url;
+      return (await model.connect(role)).url;
+    },
+    connect(role) {
+      return api<ConnectResult>(`/api/twitch/connect/${role}`, "POST", {});
+    },
+    async deviceStatus(flow) {
+      try { return await api<DeviceState>(`/api/twitch/device/${encodeURIComponent(flow)}`); } catch { return null; }
+    },
+    async resetApp() {
+      await api("/api/twitch/app", "DELETE");
+      await model.load();
     },
     async disconnect(role) {
       await api(`/api/twitch/accounts/${role}`, "DELETE");

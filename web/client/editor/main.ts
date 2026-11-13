@@ -349,6 +349,7 @@ const twitchView = mountTwitch(
   {
     box: $("twBox"), redirect: $("twRedirect"), clientId: $<HTMLInputElement>("twClientId"), clientSecret: $<HTMLInputElement>("twClientSecret"),
     appHint: $("twAppHint"), accounts: $("twAccounts"), saveApp: $("twSaveApp"),
+    resetApp: $("twResetApp"), advanced: $<HTMLDetailsElement>("twAdvanced"), deviceHint: $("twDeviceHint"), codeHint: $("twCodeHint"),
   },
   twitchModel,
   { toast, fail },

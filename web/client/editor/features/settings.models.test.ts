@@ -118,6 +118,22 @@ test("twitch: бейдж — при ошибке токена и при нехв
   assert.match(both!.title, /Bot \(bot1\): reconnect required/);
 });
 
+test("twitch: connect по коду отдаёт код и flow; deviceStatus — null при ошибке; resetApp перечитывает", async () => {
+  const { api, calls } = fakeApi({
+    "GET /api/twitch": () => ({ mode: "device", builtIn: true, clientId: "", hasSecret: false, redirectUri: "r", accounts: [] }),
+    "POST /api/twitch/connect/streamer": () => ({ mode: "device", url: "https://www.twitch.tv/activate?device-code=ABCD", userCode: "ABCD", flow: "f1", expiresIn: 1800 }),
+    "GET /api/twitch/device/f1": () => ({ role: "streamer", status: "done", login: "me" }),
+    "DELETE /api/twitch/app": () => ({}),
+  });
+  const m = createTwitchModel(api);
+  const r = await m.connect("streamer");
+  assert.equal(r.userCode, "ABCD");
+  assert.equal((await m.deviceStatus("f1"))?.status, "done");
+  assert.equal(await m.deviceStatus("gone"), null);
+  await m.resetApp();
+  assert.equal(calls.filter((c) => c === "GET /api/twitch").length, 1);
+});
+
 test("twitch: accountProblem — ошибка важнее прав; пусто, когда всё хорошо", () => {
   assert.equal(accountProblem({ role: "bot", login: "b", scopes: [] }), "");
   assert.equal(accountProblem({ role: "bot", login: "b", scopes: [], error: "boom", missingScopes: ["x"] }), "boom");
