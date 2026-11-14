@@ -124,6 +124,9 @@ func (s *Server) authGuard(c fiber.Ctx) error {
 		return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{"error": "too many requests"})
 	}
 	if c.Method() == fiber.MethodGet && !strings.HasPrefix(p, "/api/") && p != "/ws" && strings.Contains(c.Get("Accept"), "text/html") {
+		if p == "/deck" {
+			return c.Redirect().To("/pair?next=/deck") // после сопряжения вернуть на панель, а не в редактор
+		}
 		return c.Redirect().To("/pair")
 	}
 	return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
@@ -231,6 +234,7 @@ func deviceNameFromUA(ua string) string {
 const pairPage = `<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Overlay Composer — connect</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 256 256%27%3E%3Crect x=%276%27 y=%276%27 width=%27244%27 height=%27244%27 rx=%2756%27 fill=%27%231a1a2e%27/%3E%3Cg stroke=%27%23fff%27 stroke-width=%274%27 stroke-linejoin=%27round%27%3E%3Crect x=%2740%27 y=%2744%27 width=%27122%27 height=%2796%27 rx=%2716%27 fill=%27%238037e8%27/%3E%3Crect x=%2782%27 y=%2788%27 width=%27118%27 height=%2792%27 rx=%2716%27 fill=%27%2306b6d4%27/%3E%3Crect x=%2758%27 y=%27132%27 width=%27108%27 height=%2772%27 rx=%2716%27 fill=%27%23fb923c%27/%3E%3C/g%3E%3C/svg%3E">
 <style>
 body{margin:0;background:#15171c;color:#e6e8ee;font-family:-apple-system,Helvetica,Arial,sans-serif;text-align:center;padding:48px 16px}
 h1{font-size:20px;font-weight:600}p{color:#9aa3b2;font-size:14px;line-height:1.4}
@@ -247,13 +251,14 @@ button{font-size:16px;padding:10px 28px;border:0;border-radius:8px;background:#6
 <script>
 (function(){
 var inp=document.getElementById("code"),err=document.getElementById("err");
+var target=/[?&]next=\/deck(&|$)/.test(location.search)?"/deck":"/editor";
 function go(){
  var code=inp.value.replace(/\s/g,"");
  if(code.length!==6){err.textContent="Enter the 6-letter code";return;}
  err.textContent="";
  var x=new XMLHttpRequest();x.open("POST","/api/pair");x.setRequestHeader("Content-Type","application/json");
  x.onload=function(){
-  if(x.status===200){location.href="/editor";return;}
+  if(x.status===200){location.href=target;return;}
   var m="Error "+x.status;try{m=JSON.parse(x.responseText).error||m;}catch(e){}
   err.textContent=m;
  };

@@ -28,6 +28,9 @@ func (s *Server) originGuard(c fiber.Ctx) error {
 	if o == "" {
 		return c.Next()
 	}
+	if t, _ := c.Locals(pluginOriginTrusted).(bool); t {
+		return c.Next() // доверенная страница на маршруте плагина (см. pluginAPIOrigin)
+	}
 	u, err := url.Parse(o)
 	if err != nil || !strings.EqualFold(u.Host, c.Get("Host")) {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "cross-origin request"})

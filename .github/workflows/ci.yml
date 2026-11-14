@@ -50,15 +50,61 @@ jobs:
             grep -E '^(--- FAIL|FAIL|panic:|WARNING: DATA RACE)|_test\.go:[0-9]+:|\.go:[0-9]+ \+0x' test.log | head -40 | while IFS= read -r l; do echo "::error::$l"; done
           fi
           exit $code
+      - name: SDK плагинов (pkg/ocplugin — отдельный модуль, в ./... не входит)
+        working-directory: pkg/ocplugin
+        run: |
+          go vet .
+          go test -race -count=1 ./...
+          GOOS=wasip1 GOARCH=wasm go build ./...
       - name: tsc (клиент и SDK)
         run: npm run check
         working-directory: web
       - name: Тесты клиентской логики (TS)
-        run: node --experimental-strip-types --test web/shared/geometry.test.ts web/shared/history.test.ts web/shared/snap.test.ts web/shared/gestures.test.ts web/client/editor/lib/store.test.ts web/client/editor/features/notifications/model.test.ts web/client/editor/features/store/model.test.ts web/client/editor/features/scene-binding/model.test.ts web/client/editor/features/obs-import/model.test.ts web/client/editor/features/settings.models.test.ts web/client/editor/features/editor/model.test.ts web/client/editor/features/panels.models.test.ts web/client/editor/features/keyboard/model.test.ts web/client/editor/features/live/model.test.ts web/client/editor/features/copy/model.test.ts web/client/editor/features/add-source/model.test.ts web/client/editor/features/plugin-settings/model.test.ts web/client/editor/features/properties/model.test.ts web/client/editor/features/view-prefs/model.test.ts web/client/editor/features/obs-status/model.test.ts web/client/editor/features/history/model.test.ts web/client/shared/proxybase.test.ts
+        run: node --experimental-strip-types --test web/shared/geometry.test.ts web/shared/history.test.ts web/shared/snap.test.ts web/shared/gestures.test.ts web/client/editor/lib/store.test.ts web/client/editor/features/notifications/model.test.ts web/client/editor/features/store/model.test.ts web/client/editor/features/scene-binding/model.test.ts web/client/editor/features/obs-import/model.test.ts web/client/editor/features/settings.models.test.ts web/client/editor/features/editor/model.test.ts web/client/editor/features/panels.models.test.ts web/client/editor/features/keyboard/model.test.ts web/client/editor/features/live/model.test.ts web/client/editor/features/copy/model.test.ts web/client/editor/features/add-source/model.test.ts web/client/editor/features/plugin-settings/model.test.ts web/client/editor/features/properties/model.test.ts web/client/editor/features/view-prefs/model.test.ts web/client/editor/features/obs-status/model.test.ts web/client/editor/features/history/model.test.ts web/client/editor/features/wasmplugins/model.test.ts web/client/shared/pluginkey.test.ts web/client/shared/pluginhost.test.ts web/client/shared/proxybase.test.ts
       - name: Кросс-сборка (без cgo, как в релизе)
         run: |
           CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -o /dev/null ./cmd/overlay-composer
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o /dev/null ./cmd/overlay-composer
+
+  # Действие actions/ocpack: проверяем его на настоящем (минимальном) модуле, как его будут вызывать из чужих репозиториев.
+  ocpack-action:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Фикстура
+        run: |
+          mkdir -p "$RUNNER_TEMP/ui/js"
+          printf '\000asm\001\000\000\000' > "$RUNNER_TEMP/plugin.wasm"
+          echo '<p>hello</p>' > "$RUNNER_TEMP/ui/index.html"
+          echo '1' > "$RUNNER_TEMP/ui/js/app.js"
+          echo junk > "$RUNNER_TEMP/ui/.DS_Store"
+      - name: Упаковка (на месте)
+        id: inplace
+        uses: ./actions/ocpack
+        with:
+          wasm: ${{ runner.temp }}/plugin.wasm
+          ui: ${{ runner.temp }}/ui
+      - name: Упаковка (в другой файл, повторно)
+        id: copy
+        uses: ./actions/ocpack
+        with:
+          wasm: ${{ steps.inplace.outputs.file }}
+          ui: ${{ runner.temp }}/ui
+          output: ${{ runner.temp }}/out.wasm
+      - name: Проверка результата
+        run: |
+          set -euo pipefail
+          test "${{ steps.copy.outputs.file }}" = "${{ runner.temp }}/out.wasm"
+          go build -o "$RUNNER_TEMP/ocpack-check" ./cmd/ocpack
+          for f in plugin.wasm out.wasm; do
+            "$RUNNER_TEMP/ocpack-check" list "$RUNNER_TEMP/$f" | tee list.txt
+            grep -q "2 files" list.txt
+            grep -q "index.html" list.txt
+            ! grep -q "DS_Store" list.txt
+          done
+      - name: Плохой вход отклоняется
+        run: |
+          ! "$RUNNER_TEMP/ocpack-check" pack "$GITHUB_WORKSPACE/README.md" "$RUNNER_TEMP/ui"
 
   # Windows: код под windows (DPAPI для secret.key, трей, автозапуск) на Linux не выполняется — гоняем тесты там.
   # continue-on-error: пока не было ни одного зелёного прогона на Windows, красный результат не блокирует PR;

@@ -22,6 +22,8 @@ export interface Source {
     router?: RouterMode;
     /** type "plugin": id плагина-виджета и его настройки (передаются виджету в query-параметрах) */
     plugin?: string;
+    /** type "plugin": виджет автономного (wasm) плагина; нет — обычный HTML-плагин */
+    widget?: string;
     settings?: Record<string, string | number | boolean>;
     /** type "plugin": разрешения, выданные виджету (подмножество permissions манифеста) */
     granted?: string[];
@@ -55,6 +57,9 @@ export interface PluginManifest {
   /** что плагин просит у OC: "chat.read" | "chat.send" */
   permissions?: string[];
   builtin: boolean;
+  /** виджет автономного плагина: id виджета (id плагина — в `id`) */
+  widget?: string;
+  wasm?: boolean;
 }
 
 export interface Transform {

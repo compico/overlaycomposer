@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { PluginManifest, Source } from "../../../../shared/types.ts";
 import { fakeApi } from "../../lib/fakeapi.test-helper.ts";
-import { createAddSourceModel, existingMeta, maskUrl, pickSelection, pluginHint, uniqueName, urlView } from "./model.ts";
+import { createAddSourceModel, defaultWidgetName, existingMeta, stripCommonRoot, maskUrl, pickSelection, pluginHint, pluginTitle, uniqueName, urlView } from "./model.ts";
 
 test("maskUrl прячет всё после ? и #", () => {
   assert.equal(maskUrl("http://a/b"), "http://a/b");
@@ -106,4 +106,78 @@ test("usePlugin, sad path: неизвестный плагин; useExisting с �
   assert.equal(added.length, 0);
   model.useExisting("s1");
   assert.equal(added.length, 1);
+});
+
+const pick = (path: string, data = "x") => ({ path, file: new Blob([data]) });
+
+test("stripCommonRoot: папка, выбранная целиком, кладётся в корень виджета", () => {
+  assert.deepEqual(stripCommonRoot([pick("w/index.html"), pick("w/css/a.css")]).map((f) => f.path), ["index.html", "css/a.css"]);
+  // одиночные файлы и разные корни не трогаем
+  assert.deepEqual(stripCommonRoot([pick("a.html"), pick("b.css")]).map((f) => f.path), ["a.html", "b.css"]);
+  assert.deepEqual(stripCommonRoot([pick("a/x.html"), pick("b/y.css")]).map((f) => f.path), ["a/x.html", "b/y.css"]);
+  assert.deepEqual(stripCommonRoot([]), []);
+});
+
+test("defaultWidgetName: имя файла без расширения; для index.html — папка", () => {
+  assert.equal(defaultWidgetName([pick("alert.html"), pick("a.css")]), "alert");
+  assert.equal(defaultWidgetName([pick("index.html"), pick("other.htm")]), "other");
+  assert.equal(defaultWidgetName([pick("index.html")], "my-folder"), "my-folder");
+  assert.equal(defaultWidgetName([pick("index.html")]), "index");
+  assert.equal(defaultWidgetName([pick("css/a.css")]), "");
+});
+
+test("createLocalHtml: загружает файлы с путями, перечитывает плагины и ставит виджет", async () => {
+  const p = { id: "local-alert", name: "Alert", defaultSize: { width: 640, height: 360 } } as unknown as PluginManifest;
+  const added: unknown[][] = [];
+  const g = fakeApi({ "POST /api/plugins/local": () => ({ id: "local-alert" }), "POST /api/sources": () => ({}) });
+  const m2 = createAddSourceModel({
+    api: g.api,
+    editor: { get: () => ({ sources: [], plugins: [p] }), loadSources: async () => {}, loadPlugins: async () => {}, addObject: (...a) => { added.push(a); return null; } },
+    confirmPermissions: () => false,
+  });
+  assert.equal(await m2.createLocalHtml({ name: " Alert ", files: [pick("alert.html"), pick("css/a.css")] }), true);
+  const form = g.bodies[0] as FormData;
+  assert.ok(form instanceof FormData);
+  assert.equal(form.get("name"), "Alert");
+  assert.deepEqual(form.getAll("paths"), ["alert.html", "css/a.css"]);
+  assert.equal(form.getAll("files").length, 2);
+  assert.deepEqual(g.calls, ["POST /api/plugins/local", "POST /api/sources"]);
+  assert.deepEqual(added[0].slice(1), [640, 360]);
+});
+
+test("createLocalHtml, sad path: без имени или файлов ничего не отправляется", async () => {
+  const { model, f } = setup();
+  assert.equal(await model.createLocalHtml({ name: " ", files: [pick("a.html")] }), false);
+  assert.equal(await model.createLocalHtml({ name: "A", files: [] }), false);
+  assert.deepEqual(f.calls, []);
+});
+
+test("usePlugin: у автономного плагина несколько виджетов — выбирается именно тот, чей ключ передан", async () => {
+  const a = { id: "music", widget: "queue", wasm: true, name: "Queue", defaultSize: { width: 400, height: 300 } } as unknown as PluginManifest;
+  const b = { id: "music", widget: "now", wasm: true, name: "Now playing", defaultSize: { width: 500, height: 120 } } as unknown as PluginManifest;
+  const { model, f, added } = setup([a, b], [], false);
+  assert.equal(await model.usePlugin("music/now"), true);
+  const body = f.bodies[0] as { name: string; data: { plugin: string; widget?: string; granted: string[] } };
+  assert.equal(body.name, "Now playing");
+  assert.equal(body.data.plugin, "music");
+  assert.equal(body.data.widget, "now");
+  assert.deepEqual(body.data.granted, []);
+  assert.deepEqual(added[0].slice(1), [500, 120]);
+  // ключ без виджета у такого плагина не находит ничего: «music» — не то же, что «music/now»
+  assert.equal(await model.usePlugin("music"), false);
+});
+
+test("usePlugin: у обычного плагина в запросе нет поля widget", async () => {
+  const p = { id: "p", name: "P", defaultSize: { width: 1, height: 1 } } as unknown as PluginManifest;
+  const { model, f } = setup([p], [], false);
+  await model.usePlugin("p");
+  assert.equal("widget" in (f.bodies[0] as { data: object }).data, false);
+});
+
+test("pluginTitle/pluginHint/existingMeta различают автономные плагины", () => {
+  assert.match(pluginTitle({ name: "Queue", version: "0.1.0", builtin: false, wasm: true }), /\(plugin\)/);
+  assert.doesNotMatch(pluginTitle({ name: "X", builtin: true }), /plugin|custom/);
+  assert.match(pluginHint({ wasm: true }), /of a plugin/);
+  assert.equal(existingMeta({ type: "plugin", data: { plugin: "music", widget: "queue" } }), "plugin · music/queue");
+  assert.equal(existingMeta({ type: "plugin", data: { plugin: "demo" } }), "plugin · demo");
 });

@@ -1,6 +1,7 @@
 import type { PluginManifest, Source } from "../../../../shared/types.ts";
+import { pluginKey } from "../../../shared/pluginkey.ts";
 import { el } from "../../lib/dom.ts";
-import { type AddSourceModel, existingMeta, pickSelection, pluginHint, pluginTitle } from "./model.ts";
+import { type AddSourceModel, defaultWidgetName, existingMeta, type PickedFile, pickSelection, pluginHint, pluginTitle, stripCommonRoot } from "./model.ts";
 
 export interface AddSourceRefs {
   dialog: HTMLDialogElement;
@@ -19,9 +20,16 @@ export interface AddSourceRefs {
   pluginHint: HTMLElement;
   usePluginBtn: HTMLElement;
   openBtn: HTMLElement;
+  htmlFiles: HTMLInputElement;
+  htmlFolder: HTMLInputElement;
+  htmlPickFilesBtn: HTMLElement;
+  htmlPickFolderBtn: HTMLElement;
+  htmlPicked: HTMLElement;
+  htmlName: HTMLInputElement;
+  htmlCreateBtn: HTMLElement;
 }
 
-export type AddTab = "iframe" | "existing" | "plugin";
+export type AddTab = "iframe" | "existing" | "plugin" | "html";
 
 export interface AddSourcePorts {
   sources(): Source[];
@@ -72,16 +80,16 @@ export function mountAddSource(refs: AddSourceRefs, model: AddSourceModel, ports
 
   function renderPlugins() {
     const plugins = ports.plugins();
-    selectedPluginId = pickSelection(plugins.map((x) => x.id), selectedPluginId);
+    selectedPluginId = pickSelection(plugins.map(pluginKey), selectedPluginId);
     refs.pluginList.replaceChildren(...plugins.map((p) => pickItem(
-      p.id === selectedPluginId, pluginTitle(p), p.description ?? "",
-      () => { selectedPluginId = p.id; renderPlugins(); },
+      pluginKey(p) === selectedPluginId, pluginTitle(p), p.description ?? "",
+      () => { selectedPluginId = pluginKey(p); renderPlugins(); },
       () => refs.usePluginBtn.click(),
     )));
     if (plugins.length === 0) {
-      refs.pluginList.replaceChildren(el("div", { class: "empty", textContent: "No plugins installed yet. Open the Plugin store to install some, or put a plugin folder (with plugin.json) into the plugins folder." }));
+      refs.pluginList.replaceChildren(el("div", { class: "empty", textContent: "No widgets installed yet. Open the Widget store to install some, or put a widget folder (with plugin.json) into the widgets folder." }));
     }
-    const p = plugins.find((x) => x.id === selectedPluginId);
+    const p = plugins.find((x) => pluginKey(x) === selectedPluginId);
     refs.pluginHint.textContent = pluginHint(p);
     refs.usePluginBtn.toggleAttribute("disabled", !p);
   }
@@ -105,6 +113,42 @@ export function mountAddSource(refs: AddSourceRefs, model: AddSourceModel, ports
 
   refs.usePluginBtn.addEventListener("click", async () => {
     try { if (await model.usePlugin(selectedPluginId)) refs.dialog.close(); } catch (e) { ports.fail(e); }
+  });
+
+  // ---------- HTML-файл ----------
+  let picked: PickedFile[] = [];
+  /** Только имя папки/файла сверху: для имени по умолчанию. */
+  let pickedFolder = "";
+
+  function showPicked() {
+    const bytes = picked.reduce((n, f) => n + f.file.size, 0);
+    refs.htmlPicked.textContent = picked.length === 0
+      ? "Nothing selected."
+      : `${picked.length} file${picked.length === 1 ? "" : "s"}, ${bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(bytes < 10240 ? 1 : 0)} KB`}`;
+  }
+  function takeFiles(input: HTMLInputElement, folder: boolean) {
+    const list = [...(input.files ?? [])];
+    input.value = ""; // тот же выбор можно повторить
+    if (list.length === 0) return;
+    const raw = list.map((f) => ({ path: folder ? (f.webkitRelativePath || f.name) : f.name, file: f as Blob }));
+    pickedFolder = folder ? (raw[0].path.split("/")[0] ?? "") : "";
+    picked = folder ? stripCommonRoot(raw) : raw;
+    if (!refs.htmlName.value.trim()) refs.htmlName.value = defaultWidgetName(picked, pickedFolder);
+    showPicked();
+  }
+  refs.htmlPickFilesBtn.addEventListener("click", () => refs.htmlFiles.click());
+  refs.htmlPickFolderBtn.addEventListener("click", () => refs.htmlFolder.click());
+  refs.htmlFiles.addEventListener("change", () => takeFiles(refs.htmlFiles, false));
+  refs.htmlFolder.addEventListener("change", () => takeFiles(refs.htmlFolder, true));
+  refs.htmlCreateBtn.addEventListener("click", async () => {
+    try {
+      const ok = await model.createLocalHtml({ name: refs.htmlName.value, files: picked });
+      if (!ok) return ports.toast("Choose a file and enter a name");
+      refs.dialog.close();
+      picked = [];
+      refs.htmlName.value = "";
+      showPicked();
+    } catch (e) { ports.fail(e); }
   });
 
   refs.createBtn.addEventListener("click", async () => {

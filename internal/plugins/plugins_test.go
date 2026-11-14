@@ -191,3 +191,24 @@ func TestNetLocalManifest(t *testing.T) {
 		t.Error("netLocal без разрешения net.local")
 	}
 }
+
+// widget/wasm заполняет только сервер для автономных плагинов: HTML-плагин не может выдать себя за них через plugin.json.
+func TestManifestCannotClaimWasmWidget(t *testing.T) {
+	r := New(nil, mfs(map[string]string{
+		"sly/plugin.json": `{"id":"sly","name":"Sly","widget":"main","wasm":true}`,
+		"sly/index.html":  "x",
+	}))
+	var got *Manifest
+	for _, m := range r.List() {
+		if m.ID == "sly" {
+			m := m
+			got = &m
+		}
+	}
+	if got == nil {
+		t.Fatal("плагин должен загрузиться")
+	}
+	if got.Widget != "" || got.Wasm {
+		t.Fatalf("поля хоста пришли из plugin.json: %+v", got)
+	}
+}

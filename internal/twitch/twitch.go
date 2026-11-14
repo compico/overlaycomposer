@@ -28,14 +28,16 @@ const (
 	refreshMargin = 5 * time.Minute
 )
 
-// Scopes — права по ролям. Чат читается и пишется через IRC (chat:read / chat:edit); больше не просим.
+// Scopes — права по ролям. Чат читается и пишется через IRC (chat:read / chat:edit); стримеру — ещё награды за баллы канала
+// (заявки на треки): читать погашения через EventSub и управлять наградами.
 var Scopes = map[string][]string{
-	RoleStreamer: {"chat:read", "chat:edit"},
+	RoleStreamer: {"chat:read", "chat:edit", ScopeReadRedemptions, ScopeManageRedemptions},
 	RoleBot:      {"chat:read", "chat:edit"},
 }
 
 var (
-	ErrNotConfigured = errors.New("twitch app is not configured (client id / secret)")
+	ErrNotConfigured = errors.New("twitch app is not configured (no built-in Client ID: set your own in Settings → Twitch)")
+	ErrUseAuthLink   = errors.New("this application has a client secret: connect through the authorization link")
 	ErrNoAccount     = errors.New("account is not connected")
 	ErrBadRole       = errors.New("unknown role")
 	ErrBadState      = errors.New("unknown or expired state, start the connection again")
@@ -74,38 +76,90 @@ type pending struct {
 }
 
 type Manager struct {
-	st     Storage
-	http   *http.Client
-	idBase string // https://id.twitch.tv (в тестах — локальный сервер)
-	now    func() time.Time
+	st      Storage
+	http    *http.Client
+	idBase  string // https://id.twitch.tv (в тестах — локальный сервер)
+	apiBase string // https://api.twitch.tv (Helix)
+	now     func() time.Time
 
 	mu      sync.Mutex
 	pending map[string]pending // state → роль
 	refresh sync.Mutex         // обновление токена — по одному
+
+	dev       deviceStore   // подключения по коду (Device Code Grant Flow)
+	pollMin   time.Duration // не чаще этого опрашиваем токен (в тестах короче)
+	onConnect func(Account)
 }
 
 func New(st Storage) *Manager {
 	return &Manager{
-		st: st, http: &http.Client{Timeout: 15 * time.Second}, idBase: "https://id.twitch.tv",
-		now: time.Now, pending: map[string]pending{},
+		st: st, http: &http.Client{Timeout: 15 * time.Second}, idBase: "https://id.twitch.tv", apiBase: "https://api.twitch.tv",
+		now: time.Now, pending: map[string]pending{}, pollMin: time.Second,
 	}
 }
 
 // ---- приложение (Client ID / Secret) ----
 
+// app возвращает приложение Twitch: своё (из настроек), а если не задано — встроенное (DefaultClientID, без секрета).
+// Секрет пуст у Public-приложения: тогда токены получаются и обновляются без него (Device Code Grant Flow).
 func (m *Manager) app() (id, secret string, err error) {
 	id, _, err = m.st.Setting(keyClientID)
 	if err != nil {
 		return
 	}
 	secret, _, err = m.st.Setting(keyClientSecret)
+	if err != nil {
+		return
+	}
+	if id == "" {
+		id, secret = DefaultClientID, ""
+	}
 	return
+}
+
+// Mode — как подключаются аккаунты: "device" (Public-приложение, без секрета) или "code" (своё приложение с секретом,
+// Authorization Code Flow с редиректом на localhost). Пусто — приложение не настроено.
+func (m *Manager) Mode() (string, error) {
+	id, secret, err := m.app()
+	switch {
+	case err != nil:
+		return "", err
+	case id == "":
+		return "", nil
+	case secret != "":
+		return "code", nil
+	}
+	return "device", nil
 }
 
 // AppInfo — что известно о приложении Twitch (секрет не возвращается).
 func (m *Manager) AppInfo() (clientID string, hasSecret bool, err error) {
-	id, secret, err := m.app()
+	id, _, err := m.st.Setting(keyClientID) // только своё приложение: встроенный Client ID в настройках не показываем
+	if err != nil {
+		return "", false, err
+	}
+	secret, _, err := m.st.Setting(keyClientSecret)
 	return id, secret != "", err
+}
+
+// BuiltIn — есть ли встроенное приложение (и оно используется, пока не задано своё).
+func (m *Manager) BuiltIn() bool { return DefaultClientID != "" }
+
+// ResetApp возвращает встроенное приложение: свой Client ID / Secret забываются, аккаунты отключаются (токены выданы другому приложению).
+func (m *Manager) ResetApp() error {
+	accs, err := m.st.ListAccounts()
+	if err != nil {
+		return err
+	}
+	for _, a := range accs {
+		if err := m.st.DeleteAccount(a.Role); err != nil {
+			return err
+		}
+	}
+	if err := m.st.SetSetting(keyClientSecret, ""); err != nil {
+		return err
+	}
+	return m.st.SetSetting(keyClientID, "")
 }
 
 // SetApp сохраняет Client ID и (если не пустой) Client Secret. Смена Client ID отключает аккаунты: их токены выданы другому приложению.
@@ -193,7 +247,7 @@ func (m *Manager) AuthURL(role, redirectURI string) (string, error) {
 		return "", err
 	}
 	if id == "" || secret == "" {
-		return "", ErrNotConfigured
+		return "", ErrNotConfigured // Authorization Code Flow — только для своего приложения с секретом; без секрета — StartDevice
 	}
 	state := randHex(16)
 	m.mu.Lock()
@@ -304,10 +358,11 @@ func (m *Manager) Token(ctx context.Context, role string) (token, login string, 
 	if err != nil {
 		return "", "", err
 	}
-	tok, err := m.tokenRequest(ctx, url.Values{
-		"client_id": {id}, "client_secret": {secret},
-		"grant_type": {"refresh_token"}, "refresh_token": {acc.RefreshToken},
-	})
+	form := url.Values{"client_id": {id}, "grant_type": {"refresh_token"}, "refresh_token": {acc.RefreshToken}}
+	if secret != "" { // Public-приложение обновляет токен без секрета
+		form.Set("client_secret", secret)
+	}
+	tok, err := m.tokenRequest(ctx, form)
 	if err != nil {
 		var he *httpError
 		if errors.As(err, &he) && (he.status == 400 || he.status == 401) {

@@ -35,6 +35,11 @@ import { createConfigModel } from "./features/config/model.ts";
 import { mountConfig } from "./features/config/view.ts";
 import { createTwitchModel } from "./features/twitch/model.ts";
 import { mountTwitch, mountTwitchBadge } from "./features/twitch/view.ts";
+import { createWasmModel } from "./features/wasmplugins/model.ts";
+import { mountWasmPlugins } from "./features/wasmplugins/view.ts";
+import { mountTabs } from "./lib/tabs.ts";
+import { createDeckModel } from "./features/deck/model.ts";
+import { mountDeck } from "./features/deck/view.ts";
 import { createDevicesModel } from "./features/devices/model.ts";
 import { mountDevices } from "./features/devices/view.ts";
 import { createObsImportModel } from "./features/obs-import/model.ts";
@@ -219,13 +224,16 @@ const addSource = mountAddSource(
   {
     dialog: $<HTMLDialogElement>("addDialog"),
     tabs: [...document.querySelectorAll<HTMLButtonElement>("#addDialog .tab")],
-    panes: { iframe: $("pane-iframe"), existing: $("pane-existing"), plugin: $("pane-plugin") },
+    panes: { iframe: $("pane-iframe"), existing: $("pane-existing"), plugin: $("pane-plugin"), html: $("pane-html") },
     tabExisting: $("tabExisting"),
     newName: $<HTMLInputElement>("newName"), newUrl: $<HTMLInputElement>("newUrl"), newProxy: $<HTMLInputElement>("newProxy"),
     newW: $<HTMLInputElement>("newW"), newH: $<HTMLInputElement>("newH"), createBtn: $("createBtn"),
     existingList: $("existingList"), useExistingBtn: $("useExistingBtn"),
     pluginList: $("pluginList"), pluginHint: $("pluginHint"), usePluginBtn: $("usePluginBtn"),
     openBtn: $("addObjBtn"),
+    htmlFiles: $<HTMLInputElement>("htmlFiles"), htmlFolder: $<HTMLInputElement>("htmlFolder"),
+    htmlPickFilesBtn: $("htmlPickFilesBtn"), htmlPickFolderBtn: $("htmlPickFolderBtn"),
+    htmlPicked: $("htmlPicked"), htmlName: $<HTMLInputElement>("htmlName"), htmlCreateBtn: $("htmlCreateBtn"),
   },
   addSourceModel,
   { sources: () => sources, plugins: () => plugins, refreshPlugins: () => loadPlugins().catch(fail), toast, fail },
@@ -259,6 +267,24 @@ const pluginStore = mountStore(
     openPluginsFolder: () => api("/api/app/open", "POST", { what: "plugins" }),
   },
 );
+
+const wasmModel = createWasmModel(api);
+mountWasmPlugins(
+  { openBtn: $("pluginsBtn"), dialog: $<HTMLDialogElement>("wasmDialog"), body: $("wasmBody"), reloadBtn: $("wasmReloadBtn"), folderBtn: $("wasmFolderBtn"), status: $("wasmStatus"),
+    settings: { dialog: $<HTMLDialogElement>("wasmSettingsDialog"), title: $("wasmSettingsTitle"), form: $("wasmSettingsForm"), frameBox: $("wasmSettingsFrame") } },
+  wasmModel,
+  { ui: { toast, fail }, openFolder: () => api("/api/app/open", "POST", { what: "plugins" }), host: pluginHost },
+);
+mountTabs($("settingsDialog"));
+mountDeck(
+  { openBtn: $("deckBtn"), editorMain: document.querySelector("main:not(#deckMain)") as HTMLElement, deckMain: $("deckMain"),
+    hideInDeck: [$("saveBtn"), $("dirtyBadge"), $("sceneBadge"), $("canvasSize")],
+    groupList: $("deckGroupList"), addGroupBtn: $("deckAddGroupBtn"), sizeBtns: $("deckSizeBtns"), tileList: $("deckTileList"),
+    canvas: $("deckCanvas"), props: $("deckProps"), saveBtn: $<HTMLButtonElement>("deckSaveBtn"), resetBtn: $("deckResetBtn"), status: $("deckStatus") },
+  createDeckModel(api),
+  { ui: { toast, fail } },
+);
+void wasmModel.load(); // показывает кнопку, только если сервер отдаёт раздел
 
 // ---------- properties panel (features/properties) и форма настроек плагина (features/plugin-settings) ----------
 
@@ -323,6 +349,7 @@ const twitchView = mountTwitch(
   {
     box: $("twBox"), redirect: $("twRedirect"), clientId: $<HTMLInputElement>("twClientId"), clientSecret: $<HTMLInputElement>("twClientSecret"),
     appHint: $("twAppHint"), accounts: $("twAccounts"), saveApp: $("twSaveApp"),
+    resetApp: $("twResetApp"), advanced: $<HTMLDetailsElement>("twAdvanced"), deviceHint: $("twDeviceHint"), codeHint: $("twCodeHint"),
   },
   twitchModel,
   { toast, fail },

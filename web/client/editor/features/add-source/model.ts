@@ -2,6 +2,7 @@
 import type { LayoutObject, PluginManifest, Source } from "../../../../shared/types.ts";
 import { uid } from "../../../../shared/types.ts";
 import type { Api } from "../../lib/api.ts";
+import { pluginKey, sourcePluginKey } from "../../../shared/pluginkey.ts";
 import { PERM_TEXT } from "../../lib/permissions.ts";
 import { MIN_SIZE } from "../properties/model.ts";
 
@@ -48,17 +49,44 @@ export function pickSelection(ids: string[], selected: string): string {
 }
 
 export const existingMeta = (s: Pick<Source, "type" | "data">): string =>
-  s.type === "plugin" ? `plugin · ${s.data.plugin}` : maskUrl(s.data.url ?? "iframe");
+  s.type === "plugin" ? `plugin · ${sourcePluginKey(s.data)}` : maskUrl(s.data.url ?? "iframe");
 
-export const pluginTitle = (p: Pick<PluginManifest, "name" | "version" | "builtin">): string =>
-  `${p.name}${p.version ? ` ${p.version}` : ""}${p.builtin ? "" : " (custom)"}`;
+export const pluginTitle = (p: Pick<PluginManifest, "name" | "version" | "builtin" | "wasm">): string =>
+  `${p.name}${p.version ? ` ${p.version}` : ""}${p.wasm ? " (plugin)" : p.builtin ? "" : " (custom)"}`;
 
 /** Подсказка под списком плагинов. */
-export function pluginHint(p: Pick<PluginManifest, "permissions"> | undefined): string {
+export function pluginHint(p: Pick<PluginManifest, "permissions" | "wasm"> | undefined): string {
   if (!p) return "";
+  if (p.wasm) return "Widget of a plugin: it talks only to its own plugin. The plugin’s own permissions are in the Plugins button.";
   return p.permissions?.length
     ? `Asks for: ${p.permissions.map((x) => PERM_TEXT[x] ?? x).join("; ")}. You confirm this when placing it.`
     : "Asks for no permissions.";
+}
+
+/** Файл, выбранный для виджета: path — относительный, с «/». */
+export interface PickedFile {
+  path: string;
+  file: Blob;
+}
+
+/** Выбор папки даёт пути вида «папка/index.html»: общую верхнюю папку убираем, чтобы index.html лежал в корне виджета. */
+export function stripCommonRoot(files: PickedFile[]): PickedFile[] {
+  if (files.length === 0 || !files.every((f) => f.path.includes("/"))) return files;
+  const root = files[0].path.split("/")[0];
+  if (!files.every((f) => f.path.startsWith(root + "/"))) return files;
+  return files.map((f) => ({ ...f, path: f.path.slice(root.length + 1) }));
+}
+
+/** Имя по умолчанию: имя главного .html без расширения (index.html — тогда имя папки, если оно известно). */
+export function defaultWidgetName(files: PickedFile[], folder = ""): string {
+  const htmls = files.filter((f) => !f.path.includes("/") && /\.html?$/i.test(f.path)).map((f) => f.path.replace(/\.html?$/i, ""));
+  const main = htmls.find((n) => n.toLowerCase() !== "index") ?? htmls[0] ?? "";
+  return (main.toLowerCase() === "index" && folder ? folder : main).trim();
+}
+
+export interface LocalHtmlInput {
+  name: string;
+  files: PickedFile[];
 }
 
 export interface IframeInput {
@@ -84,13 +112,27 @@ export interface AddSourceDeps {
 export interface AddSourceModel {
   /** false — не хватает имени или адреса. */
   createIframe(input: IframeInput): Promise<boolean>;
+  /** Загружает HTML-файл(ы) как виджет и ставит на layout. false — нет имени или файлов. */
+  createLocalHtml(input: LocalHtmlInput): Promise<boolean>;
   useExisting(id: string): void;
   /** false — такого плагина нет. */
-  usePlugin(pluginId: string): Promise<boolean>;
+  usePlugin(key: string): Promise<boolean>;
 }
 
 export function createAddSourceModel(deps: AddSourceDeps): AddSourceModel {
   const { api, editor } = deps;
+  /** key — pluginKey(): id обычного плагина или `id/виджет` автономного. */
+  async function usePlugin(key: string): Promise<boolean> {
+    const p = editor.get().plugins.find((x) => pluginKey(x) === key);
+    if (!p) return false;
+    const granted = p.permissions?.length && deps.confirmPermissions(p, p.permissions) ? p.permissions : [];
+    const name = uniqueName(p.name, editor.get().sources.map((x) => x.name));
+    const id = uid("src");
+    await api("/api/sources", "POST", { id, name, type: "plugin", data: { plugin: p.id, ...(p.widget ? { widget: p.widget } : {}), settings: {}, granted } });
+    await editor.loadSources();
+    editor.addObject(id, p.defaultSize.width, p.defaultSize.height);
+    return true;
+  }
   return {
     async createIframe(i) {
       const name = i.name.trim(), url = i.url.trim();
@@ -101,19 +143,22 @@ export function createAddSourceModel(deps: AddSourceDeps): AddSourceModel {
       editor.addObject(id, Math.max(MIN_SIZE, i.w || 400), Math.max(MIN_SIZE, i.h || 300));
       return true;
     },
+    async createLocalHtml(i) {
+      const name = i.name.trim();
+      if (!name || i.files.length === 0) return false;
+      const form = new FormData();
+      form.append("name", name);
+      for (const f of i.files) {
+        form.append("files", f.file, f.path.split("/").pop() || "file");
+        form.append("paths", f.path);
+      }
+      const m = await api<{ id: string }>("/api/plugins/local", "POST", form);
+      await editor.loadPlugins();
+      return usePlugin(m.id);
+    },
     useExisting(id) {
       if (id) editor.addObject(id);
     },
-    async usePlugin(pluginId) {
-      const p = editor.get().plugins.find((x) => x.id === pluginId);
-      if (!p) return false;
-      const granted = p.permissions?.length && deps.confirmPermissions(p, p.permissions) ? p.permissions : [];
-      const name = uniqueName(p.name, editor.get().sources.map((x) => x.name));
-      const id = uid("src");
-      await api("/api/sources", "POST", { id, name, type: "plugin", data: { plugin: p.id, settings: {}, granted } });
-      await editor.loadSources();
-      editor.addObject(id, p.defaultSize.width, p.defaultSize.height);
-      return true;
-    },
+    usePlugin,
   };
 }

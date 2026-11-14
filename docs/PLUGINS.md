@@ -16,6 +16,9 @@ plugins/
     app.js
 ```
 
+**Быстрый путь для одного файла.** В диалоге Add Source есть вкладка **HTML file**: выберите `.html` (и файлы рядом) или папку — приложение
+создаст `plugins/local-<имя>/` с минимальным `plugin.json` (без разрешений и настроек) и добавит виджет. Дальше это обычный плагин: файлы можно править на месте.
+
 ## plugin.json
 
 ```json
@@ -93,6 +96,7 @@ await oc.chat.subscribe();                       // канал аккаунта 
 | `oc.chat.say(text, {channel?, as?, replyTo?})` | `chat.send` | написать в чат от имени бота (`as: "bot"`, по умолчанию) или стримера |
 
 | `oc.net.localGet(target, path)` | `net.local` | GET к программе на этом компьютере (`127.0.0.1:порт`) → `{status, body}`; запрос делает сервер OC, поэтому он без `Origin` (из sandbox-iframe браузер шлёт `Origin: null`, и, например, tosu такие запросы блокирует) |
+| `oc.plugin.call(method, path, {query, body})`, `oc.plugin.get/post` | — | только виджеты автономных (wasm) плагинов: вызвать маршрут своего плагина (см. `docs/WASM_PLUGINS.md`) |
 | `oc.storage.get/set/delete/list(prefix)` | `storage` | JSON-данные плагина по ключам (SQLite на этом компьютере) |
 | `oc.storage.update(key, fn)` | `storage` | безопасное «прочитал → изменил → записал», даже если ключ меняет другая копия виджета |
 | `oc.storage.onChange(fn)` | `storage` | уведомление, когда данные плагина изменила любая копия (оверлей, предпросмотр) |

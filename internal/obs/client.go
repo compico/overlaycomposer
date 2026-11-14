@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -382,22 +383,79 @@ func (c *Client) Request(typ string, data map[string]any) (map[string]any, bool)
 	}
 }
 
-// ListScenes запрашивает у OBS список сцен (в порядке, который отдаёт OBS).
+// ListScenes запрашивает у OBS список сцен в том порядке, в котором их показывает OBS.
 func (c *Client) ListScenes() []string {
 	r, ok := c.Request("GetSceneList", nil)
 	if !ok {
 		return nil
 	}
+	list := scenesInUIOrder(r)
+	slog.Debug("obs: scene list", "ui_order", list, "raw", rawScenes(r))
+	return list
+}
+
+// rawScenes — «имя=индекс» в порядке массива OBS, для журнала: по нему видно, как OBS отдал сцены.
+func rawScenes(r map[string]any) []string {
 	arr, _ := r["scenes"].([]any)
 	out := make([]string, 0, len(arr))
 	for _, it := range arr {
 		if m, ok := it.(map[string]any); ok {
-			if n, _ := m["sceneName"].(string); n != "" {
-				out = append(out, n)
-			}
+			n, _ := m["sceneName"].(string)
+			i, _ := m["sceneIndex"].(float64)
+			out = append(out, fmt.Sprintf("%s=%d", n, int(i)))
 		}
 	}
 	return out
+}
+
+// scenesInUIOrder разбирает ответ GetSceneList. У OBS индекс 0 — нижняя сцена списка, а массив идёт от 0 вверх, то есть снизу вверх;
+// сверху вниз, как в OBS, — по убыванию sceneIndex. Без индексов оставляем порядок массива.
+func scenesInUIOrder(r map[string]any) []string {
+	arr, _ := r["scenes"].([]any)
+	type sc struct {
+		name string
+		idx  float64
+	}
+	list := make([]sc, 0, len(arr))
+	indexed := true
+	for _, it := range arr {
+		if m, ok := it.(map[string]any); ok {
+			if n, _ := m["sceneName"].(string); n != "" {
+				x, has := m["sceneIndex"].(float64)
+				indexed = indexed && has
+				list = append(list, sc{n, x})
+			}
+		}
+	}
+	if indexed {
+		sort.SliceStable(list, func(i, j int) bool { return list[i].idx > list[j].idx })
+	}
+	out := make([]string, 0, len(list))
+	for _, x := range list {
+		out = append(out, x.name)
+	}
+	return out
+}
+
+// ErrUnknownScene — такой сцены нет в списке OBS.
+var ErrUnknownScene = errors.New("unknown scene")
+
+// SetScene переключает программную сцену OBS. Имя должно быть в списке известных сцен: произвольные имена в OBS не уходят.
+func (c *Client) SetScene(name string) error {
+	known := false
+	for _, s := range c.Scenes() {
+		if s == name {
+			known = true
+			break
+		}
+	}
+	if !known {
+		return ErrUnknownScene
+	}
+	if _, ok := c.Request("SetCurrentProgramScene", map[string]any{"sceneName": name}); !ok {
+		return errors.New("OBS did not confirm the scene change")
+	}
+	return nil
 }
 
 // RefreshScenes обновляет кэш списка сцен и уведомляет, если он изменился.

@@ -79,6 +79,10 @@ type Manifest struct {
 	// (нужно разрешение net.local). Без правил запросы отклоняются.
 	NetLocal []localnet.Rule `json:"netLocal,omitempty"`
 	Builtin  bool            `json:"builtin"` // заполняется загрузчиком
+	// Widget и Wasm заполняет сервер для виджетов автономных (wasm) плагинов: id виджета и признак. Из plugin.json
+	// они не читаются (Validate их обнуляет), чтобы HTML-плагин не мог выдать себя за автономный.
+	Widget string `json:"widget,omitempty"`
+	Wasm   bool   `json:"wasm,omitempty"`
 }
 
 // Известные разрешения плагинов.
@@ -109,6 +113,7 @@ var settingKeyRe = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]{0,31}$`)
 
 // Validate проверяет и нормализует манифест.
 func (m *Manifest) Validate() error {
+	m.Widget, m.Wasm = "", false
 	if !model.IsValidID(m.ID) {
 		return errors.New("invalid id")
 	}

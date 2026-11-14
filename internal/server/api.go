@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"runtime"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/compico/overlaycomposer/internal/config"
 	"github.com/compico/overlaycomposer/internal/model"
+	"github.com/compico/overlaycomposer/internal/plugins"
 	"github.com/compico/overlaycomposer/internal/store"
 )
 
@@ -64,7 +66,8 @@ func (s *Server) api() {
 	app.Put("/api/layouts/:id", s.putLayout)
 	app.Delete("/api/layouts/:id", s.deleteLayout)
 
-	app.Get("/api/plugins", func(c fiber.Ctx) error { return c.JSON(s.d.Plugins.List()) })
+	app.Get("/api/plugins", func(c fiber.Ctx) error { return c.JSON(append(s.d.Plugins.List(), s.wasmManifests()...)) })
+	app.Post("/api/plugins/local", s.installLocalWidget)
 	app.Get("/api/sources", s.listSources)
 	app.Post("/api/sources", s.createSource)
 	app.Put("/api/sources/:id", s.putSource)
@@ -327,7 +330,7 @@ func (s *Server) createSource(c fiber.Ctx) error {
 		return bad(c, "invalid source (type: iframe | plugin)")
 	}
 	if b.Type == "plugin" {
-		p, ok := s.d.Plugins.Get(b.Data.Plugin)
+		p, ok := s.sourceManifest(b.Data.Plugin, b.Data.Widget)
 		if !ok {
 			return bad(c, "unknown plugin")
 		}
@@ -339,7 +342,7 @@ func (s *Server) createSource(c fiber.Ctx) error {
 		if err != nil {
 			return bad(c, err.Error())
 		}
-		b.Data = model.SourceData{Plugin: p.ID, Settings: settings, Granted: granted} // URL, proxy и router у плагина не бывает
+		b.Data = model.SourceData{Plugin: p.ID, Widget: p.Widget, Settings: settings, Granted: granted} // URL, proxy и router у плагина не бывает
 	} else {
 		if !model.SafeURL(b.Data.URL) {
 			return bad(c, "invalid url (only http/https or /path)")
@@ -350,7 +353,7 @@ func (s *Server) createSource(c fiber.Ctx) error {
 		if !model.ValidRouter(b.Data.Router) {
 			return bad(c, `invalid router (use "", "on" or "off")`)
 		}
-		b.Data.Plugin, b.Data.Settings, b.Data.Granted = "", nil, nil
+		b.Data.Plugin, b.Data.Widget, b.Data.Settings, b.Data.Granted = "", "", nil, nil
 	}
 	if old, err := s.d.Store.GetSource(b.ID); err != nil {
 		return serverErr(c, err)
@@ -402,7 +405,7 @@ func (s *Server) putSource(c fiber.Ctx) error {
 			cur.Data.Router = *b.Data.Router
 		}
 		if b.Data.Settings != nil {
-			p, ok := s.d.Plugins.Get(cur.Data.Plugin)
+			p, ok := s.sourceManifest(cur.Data.Plugin, cur.Data.Widget)
 			if cur.Type != "plugin" || !ok {
 				return bad(c, "source is not a known plugin widget")
 			}
@@ -413,7 +416,7 @@ func (s *Server) putSource(c fiber.Ctx) error {
 			cur.Data.Settings = settings
 		}
 		if b.Data.Granted != nil {
-			p, ok := s.d.Plugins.Get(cur.Data.Plugin)
+			p, ok := s.sourceManifest(cur.Data.Plugin, cur.Data.Widget)
 			if cur.Type != "plugin" || !ok {
 				return bad(c, "source is not a known plugin widget")
 			}
@@ -566,4 +569,54 @@ func (s *Server) clientLogAllowed() bool {
 	}
 	s.logCount++
 	return s.logCount <= 120
+}
+
+// installLocalWidget: виджет из загруженного HTML-файла (и файлов рядом). multipart: name, files (повторяется) и paths —
+// относительные пути в том же порядке (имя в самой части multipart Go обрезает до последнего сегмента).
+// Сохраняется как обычный плагин без разрешений в папке плагинов; в ответе — его манифест.
+func (s *Server) installLocalWidget(c fiber.Ctx) error {
+	form, err := c.MultipartForm()
+	if err != nil {
+		return bad(c, "multipart form expected")
+	}
+	name := ""
+	if v := form.Value["name"]; len(v) > 0 {
+		name = v[0]
+	}
+	headers := form.File["files"]
+	paths := form.Value["paths"]
+	if len(headers) > plugins.MaxLocalFiles {
+		return bad(c, "too many files")
+	}
+	if len(paths) != 0 && len(paths) != len(headers) {
+		return bad(c, "paths must match files")
+	}
+	files := make([]plugins.LocalFile, 0, len(headers))
+	total := int64(0)
+	for i, h := range headers {
+		total += h.Size
+		if total > plugins.MaxLocalBytes {
+			return bad(c, "upload is too large")
+		}
+		f, err := h.Open()
+		if err != nil {
+			return serverErr(c, err)
+		}
+		data, err := io.ReadAll(io.LimitReader(f, plugins.MaxLocalBytes+1))
+		f.Close()
+		if err != nil {
+			return serverErr(c, err)
+		}
+		p := h.Filename
+		if len(paths) > 0 {
+			p = paths[i]
+		}
+		files = append(files, plugins.LocalFile{Path: p, Data: data})
+	}
+	m, err := plugins.InstallLocal(s.d.Paths.PluginsDir, s.d.Plugins, name, files)
+	if err != nil {
+		return bad(c, err.Error())
+	}
+	s.d.Plugins.Scan()
+	return c.JSON(m)
 }

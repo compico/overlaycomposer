@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Overlay Composer — Editor</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 256 256%27%3E%3Crect x=%276%27 y=%276%27 width=%27244%27 height=%27244%27 rx=%2756%27 fill=%27%231a1a2e%27/%3E%3Cg stroke=%27%23fff%27 stroke-width=%274%27 stroke-linejoin=%27round%27%3E%3Crect x=%2740%27 y=%2744%27 width=%27122%27 height=%2796%27 rx=%2716%27 fill=%27%238037e8%27/%3E%3Crect x=%2782%27 y=%2788%27 width=%27118%27 height=%2792%27 rx=%2716%27 fill=%27%2306b6d4%27/%3E%3Crect x=%2758%27 y=%27132%27 width=%27108%27 height=%2772%27 rx=%2716%27 fill=%27%23fb923c%27/%3E%3C/g%3E%3C/svg%3E">
   <style>
     :root {
       --bg: #14151a; --panel: #1b1d24; --panel2: #23262f; --line: #2e323d;
@@ -21,6 +22,9 @@
     #obsBadge, #twitchBadge { cursor: pointer; }
     .badge.ok { color: var(--ok); }
     .badge.bad { color: var(--danger); }
+    main[hidden] { display: none; }
+    .deckTile.sel { outline: 2px solid #fff; outline-offset: 1px; }
+    .deckGroup.cur .gname { color: var(--text); }
     main { display: grid; grid-template-columns: 260px 1fr 280px; min-height: 0; }
     aside { background: var(--panel); overflow: auto; padding: 10px; }
     aside.left { border-right: 1px solid var(--line); }
@@ -51,6 +55,10 @@
     .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 8px; }
     .grid2 label { display: flex; flex-direction: column; gap: 2px; color: var(--muted); font-size: 11px; }
     .empty { color: var(--muted); padding: 6px; }
+    .center { display: grid; grid-template-rows: 36px 1fr; min-width: 0; min-height: 0; }
+    #canvasBar { display: flex; align-items: center; gap: 6px; padding: 0 10px; background: var(--panel); border-bottom: 1px solid var(--line); }
+    #canvasBar .sep { width: 1px; height: 18px; background: var(--line); margin: 0 4px; }
+    button.attn { border-color: #e0a030; color: #e0a030; }
     #viewport { position: relative; overflow: hidden; background:
       repeating-conic-gradient(#1a1c22 0% 25%, #16181d 0% 50%) 0 0 / 24px 24px; }
     #canvasFrame { position: absolute; outline: 1px solid #4a4f60; background: rgba(0,0,0,.35); }
@@ -73,6 +81,19 @@
     .handle.rot { border-radius: 50%; background: var(--accent); cursor: grab; }
     .rotline { position: absolute; width: 1px; background: var(--accent); transform: translateX(-50%); }
     dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 16px; width: 380px; }
+    #settingsDialog { width: 900px; max-width: 96vw; height: 640px; max-height: 94vh; padding: 0; }
+    #settingsDialog[open] { display: block; }
+    #settingsDialog form { display: grid; grid-template-rows: auto 1fr auto; height: 100%; min-height: 0; }
+    #settingsDialog .shead { padding: 14px 18px 10px; border-bottom: 1px solid var(--line); }
+    #settingsDialog .sbody { display: grid; grid-template-columns: 170px 1fr; min-height: 0; }
+    #settingsDialog .snav { display: flex; flex-direction: column; gap: 2px; padding: 10px; border-right: 1px solid var(--line); background: var(--bg); }
+    #settingsDialog .stab { text-align: left; background: none; border: none; border-left: 3px solid transparent; border-radius: 0 6px 6px 0; padding: 8px 12px; color: var(--muted); }
+    #settingsDialog .stab:hover { background: var(--panel2); }
+    #settingsDialog .stab.sel { color: var(--text); background: var(--panel2); border-left-color: var(--accent); }
+    #settingsDialog .scontent { overflow: auto; padding: 4px 20px 16px; min-height: 0; }
+    #settingsDialog .spane[hidden] { display: none; }
+    #settingsDialog #twOnlyLocal:has(+ #twBox:not([hidden])) { display: none; }
+    #settingsDialog .sfoot { justify-content: flex-end; margin: 0; padding: 10px 18px; border-top: 1px solid var(--line); }
     dialog::backdrop { background: rgba(0,0,0,.55); }
     dialog label { display: block; margin: 8px 0 2px; color: var(--muted); font-size: 11px; }
     label.chk, dialog label.chk { display: flex; flex-direction: row; gap: 6px; align-items: center; margin: 8px 0 2px; color: var(--text); font-size: 12px; }
@@ -135,14 +156,12 @@
       <span class="badge bad" id="twitchBadge" hidden></span>
       <span class="badge" id="sceneBadge"></span>
       <span class="badge" id="dirtyBadge"></span>
-      <button id="undoBtn" title="Undo (Ctrl+Z)" aria-label="Undo" disabled>↶</button>
-      <button id="redoBtn" title="Redo (Ctrl+Shift+Z / Ctrl+Y)" aria-label="Redo" disabled>↷</button>
-      <button id="historyBtn" title="History" aria-label="History">🕘</button>
-      <button id="composeBtn" title="Layout mode: outlines and names of all widgets (L)" aria-pressed="false">▦ Layout</button>
-      <button id="snapBtn" title="Snap to other widgets and canvas edges (hold Ctrl to bypass)" aria-pressed="true">🧲 Snap</button>
       <button id="bellBtn" title="Notifications" aria-label="Notifications">🔔<span class="bellcount" id="bellCount" hidden></span></button>
+      <button id="pluginsBtn" title="Plugins: permissions and settings" hidden>🧩 Plugins</button>
+      <button id="deckBtn" title="Edit the /deck control screen (tablet)">▦ Deck</button>
       <button id="settingsBtn" title="Settings">⚙ Settings</button>
       <button class="primary" id="saveBtn">Save (Ctrl+S)</button>
+      <button class="primary" id="deckSaveBtn" disabled hidden>Save deck</button>
     </header>
     <main>
       <aside class="left">
@@ -157,14 +176,46 @@
         <div class="list" id="layerList"></div>
         <div class="row"><button id="addObjBtn">+ Add Source</button><button id="copyObjBtn" title="Copy the selected layer to another layout (Ctrl+C, then Ctrl+V in another layout does the same)">Copy to layout…</button></div>
       </aside>
-      <div id="viewport">
-        <div id="canvasFrame">
-          <div id="stage"></div>
-          <div id="overlayLayer"></div>
-          <div id="guideLayer"></div>
+      <div class="center">
+        <div id="canvasBar" role="toolbar" aria-label="Layout tools">
+          <button id="undoBtn" title="Undo (Ctrl+Z)" aria-label="Undo" disabled>↶</button>
+          <button id="redoBtn" title="Redo (Ctrl+Shift+Z / Ctrl+Y)" aria-label="Redo" disabled>↷</button>
+          <button id="historyBtn" title="History" aria-label="History">🕘</button>
+          <span class="sep"></span>
+          <button id="composeBtn" title="Layout mode: outlines and names of all widgets (L)" aria-pressed="false">▦ Layout</button>
+          <button id="snapBtn" title="Snap to other widgets and canvas edges (hold Ctrl to bypass)" aria-pressed="true">🧲 Snap</button>
+        </div>
+        <div id="viewport">
+          <div id="canvasFrame">
+            <div id="stage"></div>
+            <div id="overlayLayer"></div>
+            <div id="guideLayer"></div>
+          </div>
         </div>
       </div>
       <aside class="right" id="props"></aside>
+    </main>
+    <main id="deckMain" hidden>
+      <aside class="left">
+        <h3>Groups</h3>
+        <div class="list" id="deckGroupList"></div>
+        <div class="row"><button id="deckAddGroupBtn">+ Group</button></div>
+        <h3>Add tile to the group</h3>
+        <div class="row" id="deckSizeBtns" style="flex-wrap:wrap"></div>
+        <h3>Tiles in the group</h3>
+        <div class="list" id="deckTileList"></div>
+      </aside>
+      <div class="center">
+        <div id="canvasBar" role="toolbar" aria-label="Deck tools">
+          <button id="deckResetBtn" title="One tile per OBS scene">Reset to default</button>
+          <span class="sep"></span>
+          <span class="hint" id="deckStatus"></span>
+          <span style="flex:1"></span>
+          <span class="hint">/deck on the tablet · drag tiles to move them</span>
+        </div>
+        <div id="deckCanvas" style="overflow:auto;padding:20px;min-height:0"></div>
+      </div>
+      <aside class="right" id="deckProps"></aside>
     </main>
   </div>
 
@@ -174,7 +225,8 @@
       <div class="tabs" role="tablist">
         <button type="button" class="tab sel" role="tab" data-tab="iframe">Web page (iframe)</button>
         <button type="button" class="tab" role="tab" data-tab="existing" id="tabExisting">Existing source</button>
-        <button type="button" class="tab" role="tab" data-tab="plugin">Plugins</button>
+        <button type="button" class="tab" role="tab" data-tab="plugin">Widgets</button>
+        <button type="button" class="tab" role="tab" data-tab="html">HTML file</button>
       </div>
 
       <div class="tabpane" id="pane-iframe" role="tabpanel">
@@ -193,6 +245,22 @@
         </div>
       </div>
 
+      <div class="tabpane" id="pane-html" role="tabpanel" hidden>
+        <div class="hint">Your own widget as a file: pick an .html file (with its .css/.js/images next to it) or a whole folder. It is copied into the plugins folder and works like any plugin, with no permissions.</div>
+        <div class="row" style="margin:8px 0">
+          <button type="button" id="htmlPickFilesBtn">Choose file(s)…</button>
+          <button type="button" id="htmlPickFolderBtn">Choose folder…</button>
+        </div>
+        <input type="file" id="htmlFiles" multiple hidden>
+        <input type="file" id="htmlFolder" webkitdirectory hidden>
+        <div class="hint" id="htmlPicked">Nothing selected.</div>
+        <label>Name</label>
+        <input type="text" id="htmlName" placeholder="My alert">
+        <div class="row" style="justify-content:flex-end;margin-top:12px">
+          <button type="button" class="primary" id="htmlCreateBtn">Add &amp; place</button>
+        </div>
+      </div>
+
       <div class="tabpane" id="pane-existing" role="tabpanel" hidden>
         <div class="hint">A source you already created — for example to show the same widget on another layout.</div>
         <div class="list pick" id="existingList"></div>
@@ -207,10 +275,10 @@
         <div class="hint" id="pluginHint"></div>
         <div class="row" style="justify-content:space-between;margin-top:12px">
           <span class="row" style="margin:0">
-            <button type="button" id="openStoreBtn" title="Install plugins from GitHub repositories">Plugin store…</button>
-            <button type="button" id="openPluginsBtn" title="Folder for your own plugins">Plugins folder</button>
+            <button type="button" id="openStoreBtn" title="Install widgets from GitHub repositories">Widget store…</button>
+            <button type="button" id="openPluginsBtn" title="Folder for your own widgets">Widgets folder</button>
           </span>
-          <button type="button" class="primary" id="usePluginBtn">Create &amp; place plugin</button>
+          <button type="button" class="primary" id="usePluginBtn">Create &amp; place widget</button>
         </div>
       </div>
 
@@ -219,8 +287,8 @@
   </dialog>
   <dialog id="storeDialog" style="width:560px;max-width:94vw">
     <form method="dialog">
-      <strong>Plugin store</strong>
-      <div class="hint warn">Plugins are code written by other people. They run in a sandbox and get only the permissions you allow,
+      <strong>Widget store</strong>
+      <div class="hint warn">Widgets are code written by other people. They run in a sandbox and get only the permissions you allow,
         but still install them only from authors you trust — you are responsible for the sources you add.</div>
       <label>Sources — GitHub repositories with a <code>plugins/</code> folder</label>
       <div class="row">
@@ -239,6 +307,28 @@
         </div>
       </details>
       <div id="storeBody" style="max-height:60vh;overflow:auto"></div>
+      <div class="row" style="justify-content:flex-end;margin-top:12px"><button value="close">Close</button></div>
+    </form>
+  </dialog>
+  <dialog id="wasmSettingsDialog" style="width:720px;max-width:96vw">
+    <form method="dialog">
+      <strong id="wasmSettingsTitle"></strong>
+      <div id="wasmSettingsForm"></div>
+      <div id="wasmSettingsFrame" style="margin-top:8px"></div>
+      <div class="row" style="justify-content:flex-end;margin-top:12px"><button value="close">Close</button></div>
+    </form>
+  </dialog>
+  <dialog id="wasmDialog" style="width:620px;max-width:94vw">
+    <form method="dialog">
+      <strong>Plugins</strong>
+      <div class="hint warn">Plugins are programs written by other people. They run in a sandbox and get only the permissions you tick,
+        but install them only from authors you trust. Their widgets are in Add Source → Widgets.</div>
+      <div class="row" style="margin-top:6px">
+        <button type="button" id="wasmFolderBtn">Open folder</button>
+        <button type="button" id="wasmReloadBtn" title="Pick up new or changed .wasm files">Rescan</button>
+      </div>
+      <div class="hint" id="wasmStatus" style="white-space:pre-wrap"></div>
+      <div id="wasmBody" style="max-height:60vh;overflow:auto"></div>
       <div class="row" style="justify-content:flex-end;margin-top:12px"><button value="close">Close</button></div>
     </form>
   </dialog>
@@ -267,9 +357,16 @@
   </dialog>
   <dialog id="settingsDialog">
     <form method="dialog">
-      <strong>Settings</strong>
-      <div class="hint">Saved to <code>config.json</code> (see “Application” below for its location).</div>
-
+      <div class="shead"><strong>Settings</strong> <span class="hint">Saved to <code>config.json</code> (location: Application tab).</span></div>
+      <div class="sbody">
+        <nav class="snav" role="tablist" aria-orientation="vertical">
+          <button type="button" class="stab sel" role="tab" data-stab="obs">OBS</button>
+          <button type="button" class="stab" role="tab" data-stab="network">Network</button>
+          <button type="button" class="stab" role="tab" data-stab="twitch">Twitch</button>
+          <button type="button" class="stab" role="tab" data-stab="app">Application</button>
+        </nav>
+        <div class="scontent">
+        <section class="spane" data-spane="obs" role="tabpanel">
       <strong style="font-size:12px">OBS</strong>
       <div class="hint" id="cfgStatus"></div>
       <div class="hint">In OBS add a <b>Browser Source</b> with URL <code id="cfgOverlayUrl"></code> — that is where the layouts are drawn.</div>
@@ -287,7 +384,6 @@
         <div class="row"><button type="button" id="cfgReconnectBtn">Reconnect now</button></div>
         <div class="hint" id="cfgWsStatus"></div>
       </div>
-
       <hr style="border-color:var(--line)">
       <strong style="font-size:12px">Import from OBS</strong>
       <div class="row">
@@ -297,12 +393,8 @@
       <label class="chk"><input type="checkbox" id="impBind" checked> Bind the new layout to this scene (if it is free)</label>
       <div class="hint" id="impHint"></div>
       <div class="hint" id="impResult" style="white-space:pre-wrap"></div>
-
-      <hr style="border-color:var(--line)">
-      <label class="chk"><input type="checkbox" id="cfgDebugProxy"> Log proxy traffic to the server console (debug)</label>
-      <div class="hint">Prints every proxied request and WebSocket frame (tokens are masked). Handy when a proxied widget doesn’t react.</div>
-
-      <hr style="border-color:var(--line)">
+        </section>
+        <section class="spane" data-spane="network" role="tabpanel" hidden>
       <div class="grid2">
         <label>Listen on
           <select id="cfgHost" style="width:100%"></select>
@@ -311,7 +403,6 @@
       </div>
       <div class="hint warn" id="cfgHostWarn" hidden>Other devices on your network will be able to reach this server, but only after pairing with a code (see “Remote devices” just below). This computer stays open without a code.</div>
       <div class="hint">Listen address and port are applied after restarting the server.</div>
-
       <div id="devBox" hidden style="margin-top:6px;padding:8px 10px;border:1px solid var(--line);border-radius:8px">
         <strong style="font-size:12px">Remote devices</strong>
         <div class="hint" id="devHint"></div>
@@ -324,26 +415,36 @@
         </div>
         <div id="devList"></div>
       </div>
-
+      <hr style="border-color:var(--line)">
+      <label class="chk"><input type="checkbox" id="cfgDebugProxy"> Log proxy traffic to the server console (debug)</label>
+      <div class="hint">Prints every proxied request and WebSocket frame (tokens are masked). Handy when a proxied widget doesn’t react.</div>
+        </section>
+        <section class="spane" data-spane="twitch" role="tabpanel" hidden>
+        <div class="hint" id="twOnlyLocal">Twitch accounts are managed only from this computer.</div>
       <div id="twBox" hidden>
-        <hr style="border-color:var(--line)">
         <strong style="font-size:12px">Twitch accounts</strong>
-        <div class="hint">Create an application at <b>dev.twitch.tv/console</b> (Category: Chat Bot, Client Type: <b>Confidential</b>) and add this OAuth Redirect URL exactly:</div>
-        <code id="twRedirect" style="word-break:break-all;user-select:all"></code>
-        <div class="grid2">
-          <label>Client ID<input type="text" id="twClientId" autocomplete="off" spellcheck="false"></label>
-          <label>Client Secret<input type="password" id="twClientSecret" autocomplete="off"></label>
-        </div>
-        <div class="row"><button type="button" id="twSaveApp">Save application</button></div>
-        <div class="hint">Changing the Client ID disconnects the connected accounts (their tokens belong to the old application).</div>
         <div class="hint" id="twAppHint"></div>
         <div id="twAccounts"></div>
-        <div class="hint">Streamer account is the channel owner; the bot account (optional) is used to write to chat on behalf of a bot.
-          Press the <b>copy</b> icon next to an account: the authorization link goes to the clipboard — open it in a browser (or private window) where
-          <i>that</i> Twitch account is signed in. Tokens are stored encrypted only on this computer and are never given to plugins.</div>
+        <div class="hint" id="twDeviceHint">Streamer account is the channel owner; the bot account (optional) writes to chat on behalf of a bot.
+          Press <b>Connect</b>, open the link and enter the code on Twitch — sign in with <i>that</i> account (use another browser or a private window for the second one).
+          Tokens are stored encrypted only on this computer and are never given to plugins.</div>
+        <div class="hint" id="twCodeHint" hidden>Press the <b>copy</b> icon next to an account: the authorization link goes to the clipboard — open it in a browser (or private window)
+          where <i>that</i> Twitch account is signed in. Tokens are stored encrypted only on this computer and are never given to plugins.</div>
+        <details id="twAdvanced">
+          <summary>Use my own Twitch application (advanced)</summary>
+          <div class="hint">Create an application at <b>dev.twitch.tv/console</b> (Category: Chat Bot). With <b>Client Type: Confidential</b> add this OAuth Redirect URL exactly
+            (connection by link); with <b>Public</b> no secret is needed (connection by code):</div>
+          <code id="twRedirect" style="word-break:break-all;user-select:all"></code>
+          <div class="grid2">
+            <label>Client ID<input type="text" id="twClientId" autocomplete="off" spellcheck="false"></label>
+            <label>Client Secret (Confidential only)<input type="password" id="twClientSecret" autocomplete="off"></label>
+          </div>
+          <div class="row"><button type="button" id="twSaveApp">Save application</button><button type="button" id="twResetApp" hidden>Use the built-in application</button></div>
+          <div class="hint">Changing the application disconnects the connected accounts (their tokens belong to the old one).</div>
+        </details>
       </div>
-
-      <hr style="border-color:var(--line)">
+        </section>
+        <section class="spane" data-spane="app" role="tabpanel" hidden>
       <strong style="font-size:12px">Application</strong>
       <div class="hint" id="cfgVersion"></div>
       <div class="hint" id="cfgPaths" style="white-space:pre-wrap;word-break:break-all"></div>
@@ -355,8 +456,10 @@
       <div class="hint" id="cfgAutostartHint"></div>
       <div class="hint" id="cfgTrayHint"></div>
       <div class="row"><button type="button" id="cfgQuit">Quit Overlay Composer</button></div>
-
-      <div class="row" style="justify-content:flex-end;margin-top:12px">
+        </section>
+        </div>
+      </div>
+      <div class="row sfoot">
         <button value="cancel">Cancel</button>
         <button type="button" class="primary" id="cfgSaveBtn">Save</button>
       </div>
