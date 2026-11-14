@@ -48,7 +48,6 @@ export function mountTwitch(refs: TwitchRefs, model: TwitchModel, ui: Ui) {
       await model.load();
     }, 2000);
     pending.set(role, p);
-    window.open(r.url, "_blank", "noopener");
     await model.load();
   }
 
@@ -118,9 +117,16 @@ export function mountTwitch(refs: TwitchRefs, model: TwitchModel, ui: Ui) {
         box.classList.add("warn");
         box.textContent = `${title}: ${wait.error}`;
       } else {
-        const link = el("a", { href: wait.url, target: "_blank", rel: "noopener noreferrer", textContent: "twitch.tv/activate" });
-        box.append(`Open `, link, ` and confirm the code `, el("b", { textContent: wait.userCode, style: "user-select:all;letter-spacing:.1em" }),
-          ` — signed in as the ${title.toLowerCase()} account. Waiting for Twitch…`);
+        const copy = el("button", { type: "button", textContent: "Copy link", title: "Copy the link to open it in another browser or a private window" });
+        copy.addEventListener("click", async () => {
+          const ok = await copyText(wait.url);
+          if (ok) ui.toast(`${title} link copied. Open it in a browser where the ${title.toLowerCase()} Twitch account is signed in (a private window works).`);
+          else prompt("Link (Ctrl+C):", wait.url);
+        });
+        const open = el("button", { type: "button", textContent: "Open" });
+        open.addEventListener("click", () => window.open(wait.url, "_blank", "noopener,noreferrer"));
+        box.append(`Confirm the code `, el("b", { textContent: wait.userCode, style: "user-select:all;letter-spacing:.1em" }),
+          ` on twitch.tv/activate, signed in as the ${title.toLowerCase()} account. Waiting for Twitch… `, el("span", { class: "row" }, open, copy));
       }
       return el("div", {}, row, box);
     }));
