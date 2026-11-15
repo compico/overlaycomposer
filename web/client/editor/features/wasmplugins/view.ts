@@ -167,7 +167,7 @@ export function mountWasmPlugins(refs: WasmRefs, model: WasmModel, ports: WasmPo
           cb.disabled = true;
           try { await model.setGrants(m.id, toggleGrant(p, perm, cb.checked)); } catch (e) { ui.fail(e); render(model.get()); }
         });
-        kids.push(el("label", { class: "row", title: perm }, cb, el("span", { textContent: permissionText(perm) })));
+        kids.push(el("label", { class: "row", title: perm }, cb, el("span", { textContent: permissionText(perm, m) })));
       }
     }
     return el("div", { class: "migration", style: warn ? "" : "border-left-color:var(--line)" }, ...kids);

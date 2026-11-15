@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -58,7 +59,9 @@ type Services struct {
 	Redeem func(ctx context.Context, rewardID, redemptionID, status string) error
 	// Fetch — клиент для http.fetch; nil — клиент, закрытый от локальной сети.
 	Fetch *http.Client
-	Log   *slog.Logger
+	// FetchLocal — клиент для целей net.local; nil — только loopback, без редиректов.
+	FetchLocal *http.Client
+	Log        *slog.Logger
 	// Events — брокер событий для events.publish; nil — публикация недоступна.
 	Events EventBus
 	// Say пишет в чат канала стримера от имени бота (chat.send); nil — недоступно. Вызывается в отдельной горутине.
@@ -141,6 +144,7 @@ type Plugin struct {
 
 	infly chan struct{}
 	http  *http.Client
+	local *http.Client
 }
 
 func newPlugin(parent context.Context, svc Services, mod Module, meta Meta, file, sha string, cfg json.RawMessage, grants []string) *Plugin {
@@ -153,6 +157,10 @@ func newPlugin(parent context.Context, svc Services, mod Module, meta Meta, file
 	if cl == nil {
 		cl = newFetchClient(false)
 	}
+	loc := svc.FetchLocal
+	if loc == nil {
+		loc = newLocalClient()
+	}
 	p := &Plugin{
 		meta: meta, file: file, sha: sha, mod: mod, svc: svc, ctx: ctx, cancel: cancel,
 		log:    log.With("plugin", meta.ID),
@@ -164,6 +172,7 @@ func newPlugin(parent context.Context, svc Services, mod Module, meta Meta, file
 		timers: map[string]context.CancelFunc{},
 		infly:  make(chan struct{}, fetchMaxInfly),
 		http:   cl,
+		local:  loc,
 	}
 	p.setGrants(grants)
 	return p
@@ -465,7 +474,6 @@ func (p *Plugin) hostCall(ctx context.Context, op string, arg []byte) []byte {
 		"timer.set": PermTimer, "timer.clear": PermTimer,
 		"events.publish":           PermPublish,
 		"chat.send":                PermChat,
-		"http.fetch":               PermNetHTTP,
 		"twitch.redemption.update": PermRedeem,
 	}
 	if perm, ok := need[op]; ok && !p.granted(perm) {
@@ -719,6 +727,15 @@ func (p *Plugin) opFetch(arg []byte) []byte {
 	if err := a.validate(); err != nil {
 		return errOut("%v", err)
 	}
+	client, maxBody := p.http, int64(fetchMaxBody)
+	perm := PermNetHTTP
+	if p.isLocalTarget(a.URL) {
+		client, maxBody, perm = p.local, localMaxBody, PermNetLocal
+	}
+	if !p.granted(perm) {
+		p.log.Warn("operation denied: permission not granted", "op", "http.fetch", "permission", perm)
+		return errOut("permission denied: %s", perm)
+	}
 	select {
 	case p.infly <- struct{}{}:
 	default:
@@ -728,7 +745,7 @@ func (p *Plugin) opFetch(arg []byte) []byte {
 		defer func() { <-p.infly }()
 		ctx, cancel := context.WithTimeout(p.ctx, fetchTimeout)
 		defer cancel()
-		res := a.do(ctx, p.http)
+		res := a.do(ctx, client, maxBody)
 		if p.ctx.Err() == nil {
 			p.enqueue(EventHTTPResponse, res)
 		}
@@ -793,4 +810,46 @@ func (w *lineWriter) emit(line []byte) {
 	if s != "" {
 		w.log.Warn("stderr", "line", s)
 	}
+}
+
+// isLocalTarget — адрес запроса совпадает с целью net.local из метаданных (или с адресом из настройки плагина, которую цель называет).
+func (p *Plugin) isLocalTarget(raw string) bool {
+	want := urlHostPort(raw)
+	if want == "" || !strings.HasPrefix(strings.ToLower(raw), "http://") {
+		return false
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	var cfg map[string]any
+	_ = json.Unmarshal(p.cfg, &cfg)
+	for _, t := range p.meta.NetLocal {
+		target := t.Target
+		if t.Setting != "" {
+			if v, ok := cfg[t.Setting].(string); ok && strings.TrimSpace(v) != "" {
+				target = v // нерабочий адрес из настройки не пускает никуда: цель просто не совпадёт
+			}
+		}
+		if got, ok := normLocalTarget(target); ok && got == want && pathAllowed(u.Path, t.Paths) {
+			return true
+		}
+	}
+	return false
+}
+
+// pathAllowed — путь запроса начинается с одного из префиксов и не выходит из него через «..» (сегменты делятся по / и \).
+func pathAllowed(path string, prefixes []string) bool {
+	if len(prefixes) == 0 {
+		return true
+	}
+	if hasDotSegment(path) {
+		return false
+	}
+	for _, pr := range prefixes {
+		if strings.HasPrefix(path, pr) {
+			return true
+		}
+	}
+	return false
 }

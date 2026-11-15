@@ -58,6 +58,7 @@
   "id": "music", "name": "Music requests", "version": "0.1.0", "apiVersion": 1,
   "description": "…", "author": "…",
   "permissions": ["storage", "timer", "net.http", "twitch.redemption"],
+  "netLocal": [{"target": "127.0.0.1:24050", "setting": "tosuHost", "paths": ["/files/beatmap/"]}],
   "subscriptions": ["twitch.redemption"],
   "routes": [{"method": "GET", "path": "/next", "handler": "next"}],
   "configSchema": {"rewardId": {"type": "string", "title": "Награда"}}
@@ -97,7 +98,7 @@
 | `storage.delete` | `{"key"}` | `{}` | `storage` |
 | `timer.set` | `{"id","ms","repeat"}` — 50 мс…24 ч, до 16 таймеров, тот же `id` заменяет | `{}` | `timer` |
 | `timer.clear` | `{"id"}` | — | `timer` |
-| `http.fetch` | `{"id","method","url","body"}` — асинхронно, ответ придёт `http.response` | `{}` | `net.http` |
+| `http.fetch` | `{"id","method","url","body"}` — асинхронно, ответ придёт `http.response` | `{}` | `net.http`; для адреса из `netLocal` — `net.local` |
 | `twitch.redemption.update` | `{"rewardId","id","status":"FULFILLED"\|"CANCELED"}` | `{}` | `twitch.redemption` |
 | `events.publish` | `{"topic","data","retain"}` | `{}` | `events.publish` |
 | `chat.send` | `{"text"}` | `{}` | `chat.send` |
@@ -278,3 +279,20 @@ oc.plugin.subscribe("now", (e) => { /* e = { topic, data, seq, retained } */ });
 - Сервер раз в 20 с шлёт управляющий ping (браузер отвечает сам); соединение, из которого ничего не приходит 70 с, закрывается. Клиент без доступа к управляющим кадрам шлёт `{"t":"ping"}`.
 - Лимиты: 64 внешних соединения, 32 подписки на соединение, кадр клиента до 4 КБ, до 20 сообщений/с. Медленный клиент теряет события (смотрите `seq`), на плагин и других подписчиков это не влияет.
 - Нужен ли переподключаться: да, клиент сам; после `sub` retained-значение приходит снова, поэтому состояние восстанавливается.
+
+## Программа на этом компьютере (`net.local`)
+
+`http.fetch` с разрешением `net.http` ходит только в интернет: loopback, частные сети и link-local закрыты. Если плагину нужна программа на
+этом же компьютере (например, tosu отдаёт файлы карт на `127.0.0.1:24050`), он объявляет её в `oc_meta` и просит разрешение `net.local`:
+
+```json
+"permissions": ["net.local"],
+"netLocal": [{"target": "127.0.0.1:24050", "setting": "tosuHost", "paths": ["/files/beatmap/"]}]
+```
+
+- `target` — `host:port` на этом компьютере (`127.0.0.1`, `localhost` или `[::1]`); до 4 целей.
+- `setting` — необязательное имя строковой настройки: пользователь может заменить адрес (если порт нестандартный).
+- `paths` — необязательные префиксы пути; сегменты `.` и `..` в пути запрещены (разделители `/` и `\`).
+- `http.fetch` на объявленный адрес требует именно `net.local` (`net.http` его не заменяет). Идёт по `http`, без редиректов,
+  соединение принимается только с loopback, ответ может быть до 8 МиБ (в интернет — 1 МиБ).
+- Любой другой локальный адрес по-прежнему закрыт. Пользователь в «Standalone plugins…» видит, к каким адресам плагин получит доступ.

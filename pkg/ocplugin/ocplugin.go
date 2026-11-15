@@ -30,10 +30,12 @@ import (
 const (
 	PermStorage = "storage"
 	PermNetHTTP = "net.http"
-	PermRedeem  = "twitch.redemption"
-	PermTimer   = "timer"
-	PermPublish = "events.publish"
-	PermChat    = "chat.send" // писать в чат канала от имени бота
+	// PermNetLocal — Fetch к программе на этом компьютере по адресу из Meta.NetLocal (например, к tosu).
+	PermNetLocal = "net.local"
+	PermRedeem   = "twitch.redemption"
+	PermTimer    = "timer"
+	PermPublish  = "events.publish"
+	PermChat     = "chat.send" // писать в чат канала от имени бота
 )
 
 const (
@@ -51,6 +53,8 @@ type Meta struct {
 	Description string   `json:"description,omitempty"`
 	Author      string   `json:"author,omitempty"`
 	Permissions []string `json:"permissions,omitempty"`
+	// NetLocal — программы на этом компьютере, к которым плагин ходит через Fetch (нужно PermNetLocal).
+	NetLocal []NetLocalTarget `json:"netLocal,omitempty"`
 	// ConfigSchema — описание настроек для формы в интерфейсе (хост его не толкует).
 	ConfigSchema map[string]any `json:"configSchema,omitempty"`
 	// Widgets — виджеты плагина: HTML лежит в статике (секция oc.assets, её добавляет утилита ocpack), Entry — путь к нему.
@@ -59,6 +63,15 @@ type Meta struct {
 	Settings string `json:"settings,omitempty"`
 	// Events — топики, которые плагин публикует через Publish. Публиковать можно только объявленные.
 	Events []EventDecl `json:"events,omitempty"`
+}
+
+// NetLocalTarget — адрес программы на этом компьютере: Target — host:port (127.0.0.1, localhost или [::1]).
+// Setting — имя строковой настройки, которой пользователь заменяет адрес; Paths — допустимые префиксы пути
+// (пусто — любой). Fetch на объявленный адрес идёт по http, без редиректов, ответ до 8 МиБ.
+type NetLocalTarget struct {
+	Target  string   `json:"target"`
+	Setting string   `json:"setting,omitempty"`
+	Paths   []string `json:"paths,omitempty"`
 }
 
 // EventDecl — объявление публикуемого топика: id (`a-z0-9._-`, до 64 символов), название и описание для редакторов.
@@ -161,7 +174,7 @@ func (p *Plugin) OnRedemption(f func(Redemption)) { p.onRedeem = f }
 // OnTimer вызывается, когда сработал таймер с этим id (см. SetTimer). Нужно разрешение PermTimer.
 func (p *Plugin) OnTimer(id string, f func()) { p.timers[id] = f }
 
-// OnHTTPResponse принимает ответ на Fetch с этим id. Нужно разрешение PermNetHTTP.
+// OnHTTPResponse принимает ответ на Fetch с этим id. Нужно разрешение PermNetHTTP (или PermNetLocal для адреса из Meta.NetLocal).
 func (p *Plugin) OnHTTPResponse(id string, f func(HTTPResponse)) { p.fetches[id] = f }
 
 // Config разбирает настройки, которые пользователь задал для плагина (доступны с OnInit).
