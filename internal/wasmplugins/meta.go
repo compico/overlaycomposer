@@ -10,6 +10,7 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/compico/overlaycomposer/internal/events"
 	"github.com/compico/overlaycomposer/internal/wasmassets"
@@ -91,6 +92,18 @@ type NetLocalTarget struct {
 	Setting string `json:"setting,omitempty"`
 	// Paths — допустимые префиксы пути (например, "/files/beatmap/"); пусто — любой путь этой программы.
 	Paths []string `json:"paths,omitempty"`
+	// Streams — websocket-потоки программы, которые хост ретранслирует в события плагина (без вызовов wasm).
+	Streams []NetLocalStream `json:"streams,omitempty"`
+}
+
+// NetLocalStream — websocket-поток локальной программы. Хост сам подключается к ws://<target><path> (без Origin), пока у топика
+// есть подписчики, достаёт из каждого JSON-кадра поля Fields (имя → путь «a.b.c») и публикует объект из них в топик плагина.
+// Кадры чаще MinIntervalMs отбрасываются без разбора, неизменившиеся значения не публикуются.
+type NetLocalStream struct {
+	Path          string            `json:"path"`
+	Topic         string            `json:"topic"` // должен быть объявлен в events
+	Fields        map[string]string `json:"fields"`
+	MinIntervalMs int               `json:"minIntervalMs,omitempty"` // по умолчанию 250
 }
 
 // EventDecl — объявление публикуемого топика события.
@@ -288,7 +301,19 @@ func (m *Meta) Requests(perm string) bool {
 // KnownPermission сообщает, существует ли такое разрешение.
 func KnownPermission(p string) bool { return knownPerms[p] }
 
-const maxNetLocal = 4
+const (
+	maxNetLocal      = 4
+	maxStreams       = 2  // потоков на плагин
+	maxStreamFields  = 16 // полей в потоке
+	defaultStreamGap = 250
+	minStreamGap     = 100
+	maxStreamGap     = 60000
+)
+
+var (
+	fieldNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,31}$`)
+	fieldPathRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*){0,7}$`)
+)
 
 var settingKeyRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,63}$`)
 
@@ -302,6 +327,11 @@ func (m *Meta) validateNetLocal(granted bool) error {
 	if len(m.NetLocal) > maxNetLocal {
 		return fmt.Errorf("too many netLocal targets (max %d)", maxNetLocal)
 	}
+	topics := map[string]bool{}
+	for _, e := range m.Events {
+		topics[e.ID] = true
+	}
+	streams := 0
 	for _, t := range m.NetLocal {
 		if _, ok := normLocalTarget(t.Target); !ok {
 			return fmt.Errorf("netLocal target %q: host:port on this computer expected (127.0.0.1, localhost or [::1])", t.Target)
@@ -317,6 +347,14 @@ func (m *Meta) validateNetLocal(granted bool) error {
 				return fmt.Errorf("netLocal path %q: must start with / and have no . or .. segments", pr)
 			}
 		}
+		for _, s := range t.Streams {
+			if streams++; streams > maxStreams {
+				return fmt.Errorf("too many netLocal streams (max %d)", maxStreams)
+			}
+			if err := s.validate(topics); err != nil {
+				return fmt.Errorf("netLocal stream %q: %w", s.Path, err)
+			}
+		}
 	}
 	return nil
 }
@@ -329,4 +367,32 @@ func hasDotSegment(p string) bool {
 		}
 	}
 	return false
+}
+
+func (s NetLocalStream) validate(topics map[string]bool) error {
+	if !strings.HasPrefix(s.Path, "/") || len(s.Path) > 200 || hasDotSegment(s.Path) || strings.ContainsAny(s.Path, " ?#\x00") {
+		return fmt.Errorf("path must start with /, have no spaces, ?, # or . and .. segments")
+	}
+	if !topics[s.Topic] {
+		return fmt.Errorf("topic %q is not declared in events", s.Topic)
+	}
+	if len(s.Fields) == 0 || len(s.Fields) > maxStreamFields {
+		return fmt.Errorf("1..%d fields expected", maxStreamFields)
+	}
+	for name, path := range s.Fields {
+		if !fieldNameRe.MatchString(name) || !fieldPathRe.MatchString(path) {
+			return fmt.Errorf("field %q: bad name or path %q", name, path)
+		}
+	}
+	if s.MinIntervalMs != 0 && (s.MinIntervalMs < minStreamGap || s.MinIntervalMs > maxStreamGap) {
+		return fmt.Errorf("minIntervalMs must be %d..%d", minStreamGap, maxStreamGap)
+	}
+	return nil
+}
+
+func (s NetLocalStream) gap() time.Duration {
+	if s.MinIntervalMs == 0 {
+		return defaultStreamGap * time.Millisecond
+	}
+	return time.Duration(s.MinIntervalMs) * time.Millisecond
 }

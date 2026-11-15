@@ -282,3 +282,22 @@ func TestConcurrentUse(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestSubscribersCountsLiveSubs(t *testing.T) {
+	b := New(Options{})
+	_ = b.Declare("music", []string{"now", "queue"})
+	if b.Subscribers("music", "now") != 0 || b.Subscribers("none", "now") != 0 {
+		t.Fatal("подписчиков быть не должно")
+	}
+	a, _ := b.Subscribe("music", "now", 4)
+	c, _ := b.Subscribe("music", "now", 4)
+	_, _ = b.Subscribe("music", "queue", 4)
+	if n := b.Subscribers("music", "now"); n != 2 {
+		t.Fatalf("now: %d", n)
+	}
+	a.Close()
+	c.Close()
+	if n := b.Subscribers("music", "now"); n != 0 {
+		t.Fatalf("после Close: %d", n)
+	}
+}

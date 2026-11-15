@@ -213,6 +213,23 @@ func (b *Broker) Publish(plugin, topic string, data json.RawMessage, retain bool
 	return nil
 }
 
+// Subscribers — сколько живых подписок у топика плагина.
+func (b *Broker) Subscribers(plugin, topic string) int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	st := b.plugins[plugin]
+	if st == nil {
+		return 0
+	}
+	n := 0
+	for s := range st.subs {
+		if s.topic == topic {
+			n++
+		}
+	}
+	return n
+}
+
 // Sub — подписка на один топик. События читаются из C; Close вызывает подписчик, когда соединение закрылось.
 type Sub struct {
 	C <-chan Event

@@ -58,7 +58,8 @@
   "id": "music", "name": "Music requests", "version": "0.1.0", "apiVersion": 1,
   "description": "…", "author": "…",
   "permissions": ["storage", "timer", "net.http", "twitch.redemption"],
-  "netLocal": [{"target": "127.0.0.1:24050", "setting": "tosuHost", "paths": ["/files/beatmap/"]}],
+  "netLocal": [{"target": "127.0.0.1:24050", "setting": "tosuHost", "paths": ["/files/beatmap/"],
+               "streams": [{"path": "/websocket/v2", "topic": "live", "fields": {"file": "directPath.beatmapFile"}, "minIntervalMs": 250}]}],
   "subscriptions": ["twitch.redemption"],
   "routes": [{"method": "GET", "path": "/next", "handler": "next"}],
   "configSchema": {"rewardId": {"type": "string", "title": "Награда"}}
@@ -296,3 +297,18 @@ oc.plugin.subscribe("now", (e) => { /* e = { topic, data, seq, retained } */ });
 - `http.fetch` на объявленный адрес требует именно `net.local` (`net.http` его не заменяет). Идёт по `http`, без редиректов,
   соединение принимается только с loopback, ответ может быть до 8 МиБ (в интернет — 1 МиБ).
 - Любой другой локальный адрес по-прежнему закрыт. Пользователь в «Standalone plugins…» видит, к каким адресам плагин получит доступ.
+
+## Потоки net.local: ретранслятор websocket
+
+Локальные программы (tosu) не пускают websocket из виджета: iframe плагина в sandbox, браузер шлёт `Origin: null`. Опрос HTTP через `Fetch`
+будит wasm на каждый запрос и заметно грузит процессор. Поэтому плагин может объявить поток в `netLocal[].streams`:
+
+```json
+{"path": "/websocket/v2", "topic": "live", "fields": {"file": "directPath.beatmapFile", "time": "beatmap.time.live"}, "minIntervalMs": 250}
+```
+
+- хост сам подключается к `ws://<target><path>` (без `Origin`, только loopback, без прокси) и **только пока у топика есть подписчики**; при обрыве переподключается с паузой 1–15 с;
+- из каждого JSON-кадра берутся поля `fields` (имя → путь через точки; нет поля — `null`), объект публикуется в топик (`retain`: новый подписчик сразу получает последнее значение);
+- кадры чаще `minIntervalMs` (по умолчанию 250 мс, 100…60000) отбрасываются без разбора JSON; неизменившееся значение не публикуется;
+- топик обязан быть объявлен в `events`; нужно разрешение `net.local`; не больше 2 потоков на плагин и 16 полей на поток; кадр до 4 МиБ, событие до 64 КБ;
+- виджет получает данные через `oc.plugin.subscribe(topic, cb)`, wasm не вызывается.
