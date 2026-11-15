@@ -255,7 +255,7 @@ Events: []ocplugin.EventDecl{{ID: "now", Name: "Сейчас играет"}, {ID
 ### Подписка из виджета и страницы настроек
 
 ```js
-oc.plugin.subscribe("now", (e) => { /* e = { topic, data, seq, retained } */ });
+oc.plugin.subscribe("now", (data, meta) => { /* data — JSON события; meta = { topic, seq, retained } */ });
 ```
 
 Виджет плагина и его страница настроек могут подписаться на **объявленные** топики **своего** плагина. Если у топика есть
