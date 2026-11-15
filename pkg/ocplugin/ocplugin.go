@@ -30,10 +30,12 @@ import (
 const (
 	PermStorage = "storage"
 	PermNetHTTP = "net.http"
-	PermRedeem  = "twitch.redemption"
-	PermTimer   = "timer"
-	PermPublish = "events.publish"
-	PermChat    = "chat.send" // писать в чат канала от имени бота
+	// PermNetLocal — Fetch к программе на этом компьютере по адресу из Meta.NetLocal (например, к tosu).
+	PermNetLocal = "net.local"
+	PermRedeem   = "twitch.redemption"
+	PermTimer    = "timer"
+	PermPublish  = "events.publish"
+	PermChat     = "chat.send" // писать в чат канала от имени бота
 )
 
 const (
@@ -51,6 +53,8 @@ type Meta struct {
 	Description string   `json:"description,omitempty"`
 	Author      string   `json:"author,omitempty"`
 	Permissions []string `json:"permissions,omitempty"`
+	// NetLocal — программы на этом компьютере, к которым плагин ходит через Fetch (нужно PermNetLocal).
+	NetLocal []NetLocalTarget `json:"netLocal,omitempty"`
 	// ConfigSchema — описание настроек для формы в интерфейсе (хост его не толкует).
 	ConfigSchema map[string]any `json:"configSchema,omitempty"`
 	// Widgets — виджеты плагина: HTML лежит в статике (секция oc.assets, её добавляет утилита ocpack), Entry — путь к нему.
@@ -59,6 +63,27 @@ type Meta struct {
 	Settings string `json:"settings,omitempty"`
 	// Events — топики, которые плагин публикует через Publish. Публиковать можно только объявленные.
 	Events []EventDecl `json:"events,omitempty"`
+}
+
+// NetLocalTarget — адрес программы на этом компьютере: Target — host:port (127.0.0.1, localhost или [::1]).
+// Setting — имя строковой настройки, которой пользователь заменяет адрес; Paths — допустимые префиксы пути
+// (пусто — любой). Fetch на объявленный адрес идёт по http, без редиректов, ответ до 8 МиБ.
+type NetLocalTarget struct {
+	Target  string   `json:"target"`
+	Setting string   `json:"setting,omitempty"`
+	Paths   []string `json:"paths,omitempty"`
+	// Streams — websocket-потоки программы, которые хост ретранслирует в события плагина (wasm не вызывается).
+	Streams []NetLocalStream `json:"streams,omitempty"`
+}
+
+// NetLocalStream — websocket-поток: пока у топика есть подписчики, хост сам подключается к ws://<Target><Path> (без Origin),
+// берёт из каждого JSON-кадра поля Fields (имя → путь «a.b.c»), и публикует объект из них в топик Topic (объявите его в Meta.Events).
+// MinIntervalMs — не чаще (100..60000, по умолчанию 250): лишние кадры отбрасываются без разбора. Нужно PermNetLocal.
+type NetLocalStream struct {
+	Path          string            `json:"path"`
+	Topic         string            `json:"topic"`
+	Fields        map[string]string `json:"fields"`
+	MinIntervalMs int               `json:"minIntervalMs,omitempty"`
 }
 
 // EventDecl — объявление публикуемого топика: id (`a-z0-9._-`, до 64 символов), название и описание для редакторов.
@@ -75,6 +100,29 @@ type Widget struct {
 	Entry  string `json:"entry"`
 	Width  int    `json:"width,omitempty"`
 	Height int    `json:"height,omitempty"`
+	// Settings — настройки источника на сцене: редактор рисует по ним форму, значения приходят виджету как ?key=value (oc.param).
+	Settings []WidgetSetting `json:"settings,omitempty"`
+}
+
+// WidgetSetting — одна настройка виджета (как в plugin.json HTML-плагинов). Type: string, text, number, range, bool, color,
+// font, select (нужны Options). Default должен совпадать со значением по умолчанию в коде виджета.
+type WidgetSetting struct {
+	Key     string          `json:"key"`
+	Label   string          `json:"label"`
+	Type    string          `json:"type"`
+	Group   string          `json:"group,omitempty"`
+	Help    string          `json:"help,omitempty"`
+	Default any             `json:"default,omitempty"`
+	Options []SettingOption `json:"options,omitempty"`
+	Min     *float64        `json:"min,omitempty"`
+	Max     *float64        `json:"max,omitempty"`
+	Step    *float64        `json:"step,omitempty"`
+}
+
+// SettingOption — вариант списка (Type select).
+type SettingOption struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
 }
 
 // Handler обрабатывает запрос к маршруту. Возвращённая ошибка — это 500 без подробностей наружу (подробности — в лог плагина).
@@ -161,7 +209,7 @@ func (p *Plugin) OnRedemption(f func(Redemption)) { p.onRedeem = f }
 // OnTimer вызывается, когда сработал таймер с этим id (см. SetTimer). Нужно разрешение PermTimer.
 func (p *Plugin) OnTimer(id string, f func()) { p.timers[id] = f }
 
-// OnHTTPResponse принимает ответ на Fetch с этим id. Нужно разрешение PermNetHTTP.
+// OnHTTPResponse принимает ответ на Fetch с этим id. Нужно разрешение PermNetHTTP (или PermNetLocal для адреса из Meta.NetLocal).
 func (p *Plugin) OnHTTPResponse(id string, f func(HTTPResponse)) { p.fetches[id] = f }
 
 // Config разбирает настройки, которые пользователь задал для плагина (доступны с OnInit).

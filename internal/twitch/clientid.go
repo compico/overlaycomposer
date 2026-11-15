@@ -6,4 +6,4 @@ package twitch
 //
 // Пустое значение — встроенного приложения нет, нужно заполнить своё (Settings → Twitch → «Use my own Twitch application»).
 // Значение можно подставить и при сборке: -ldflags "-X github.com/compico/overlaycomposer/internal/twitch.DefaultClientID=...".
-var DefaultClientID = "7mdk9f1o7q92fuy6cu7br5a3ntd0dh"
+var DefaultClientID = "zzsfn3vbhvd9j9xm6uzd2c82x1ewjs"

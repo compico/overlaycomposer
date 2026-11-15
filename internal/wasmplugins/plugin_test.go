@@ -526,3 +526,6 @@ func TestChatSendUnavailableWithoutService(t *testing.T) {
 		t.Fatal("без сервиса чата операция недоступна")
 	}
 }
+
+// Subscribers — в этих тестах подписчиков нет: потоки net.local не запускаются.
+func (b *fakeBus) Subscribers(string, string) int { return 0 }

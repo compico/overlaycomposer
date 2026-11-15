@@ -7,9 +7,11 @@ package wasmplugins
 
 import (
 	"fmt"
+	"github.com/compico/overlaycomposer/internal/plugins"
 	"path"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/compico/overlaycomposer/internal/events"
 	"github.com/compico/overlaycomposer/internal/wasmassets"
@@ -20,18 +22,20 @@ const APIVersion = 1
 
 // Разрешения плагина. Плагин их запрашивает в oc_meta, пользователь выдаёт; без выдачи операция отклоняется.
 const (
-	PermStorage  = "storage"
-	PermNetHTTP  = "net.http"
-	PermRedeem   = "twitch.redemption"
-	PermTimer    = "timer"
-	PermPublish  = "events.publish" // публиковать события для подписчиков (виджеты, аддоны, deck)
-	PermChat     = "chat.send"      // писать в чат канала от имени бота
-	maxRoutes    = 64
-	maxMetaBytes = 64 << 10
-	maxWidgets   = 16
-	defWidgetW   = 400
-	defWidgetH   = 300
-	maxWidgetDim = 8192
+	PermStorage       = "storage"
+	PermNetHTTP       = "net.http"
+	PermNetLocal      = "net.local" // HTTP к программе на этом компьютере по адресу из Meta.NetLocal (например, tosu)
+	PermRedeem        = "twitch.redemption"
+	PermTimer         = "timer"
+	PermPublish       = "events.publish" // публиковать события для подписчиков (виджеты, аддоны, deck)
+	PermChat          = "chat.send"      // писать в чат канала от имени бота
+	maxRoutes         = 64
+	maxMetaBytes      = 64 << 10
+	maxWidgets        = 16
+	maxWidgetSettings = 32
+	defWidgetW        = 400
+	defWidgetH        = 300
+	maxWidgetDim      = 8192
 )
 
 // События, на которые плагин может подписаться.
@@ -48,7 +52,7 @@ var (
 	pathSegRe = regexp.MustCompile(`^[A-Za-z0-9._~-]+$`)
 )
 
-var knownPerms = map[string]bool{PermStorage: true, PermNetHTTP: true, PermRedeem: true, PermTimer: true, PermPublish: true, PermChat: true}
+var knownPerms = map[string]bool{PermStorage: true, PermNetHTTP: true, PermNetLocal: true, PermRedeem: true, PermTimer: true, PermPublish: true, PermChat: true}
 
 var knownEvents = map[string]bool{EventRedemption: true, EventTimer: true, EventHTTPResponse: true}
 
@@ -61,15 +65,17 @@ type Route struct {
 
 // Meta — то, что плагин сообщает о себе в oc_meta.
 type Meta struct {
-	ID            string   `json:"id"`
-	Name          string   `json:"name"`
-	Version       string   `json:"version"`
-	Description   string   `json:"description,omitempty"`
-	Author        string   `json:"author,omitempty"`
-	APIVersion    int      `json:"apiVersion"`
-	Permissions   []string `json:"permissions,omitempty"`
-	Routes        []Route  `json:"routes,omitempty"`
-	Subscriptions []string `json:"subscriptions,omitempty"`
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Version     string   `json:"version"`
+	Description string   `json:"description,omitempty"`
+	Author      string   `json:"author,omitempty"`
+	APIVersion  int      `json:"apiVersion"`
+	Permissions []string `json:"permissions,omitempty"`
+	// NetLocal — программы на этом компьютере, к которым плагин ходит через Fetch при выданном net.local.
+	NetLocal      []NetLocalTarget `json:"netLocal,omitempty"`
+	Routes        []Route          `json:"routes,omitempty"`
+	Subscriptions []string         `json:"subscriptions,omitempty"`
 	// ConfigSchema — необязательное описание настроек (JSON Schema-подобное), UI строит по нему форму. Хост его не толкует.
 	ConfigSchema map[string]any `json:"configSchema,omitempty"`
 	// Widgets — виджеты плагина (iframe с HTML из секции oc.assets); пользователь добавляет их на сцену как обычные виджеты.
@@ -79,6 +85,27 @@ type Meta struct {
 	Settings string `json:"settings,omitempty"`
 	// Events — топики, которые плагин публикует (events.publish): id, название и описание. Хост пересылает только объявленные.
 	Events []EventDecl `json:"events,omitempty"`
+}
+
+// NetLocalTarget — адрес программы на этом компьютере (host:port; host — 127.0.0.1, localhost или [::1]).
+// Setting — необязательное имя строковой настройки плагина, которой пользователь заменяет адрес.
+type NetLocalTarget struct {
+	Target  string `json:"target"`
+	Setting string `json:"setting,omitempty"`
+	// Paths — допустимые префиксы пути (например, "/files/beatmap/"); пусто — любой путь этой программы.
+	Paths []string `json:"paths,omitempty"`
+	// Streams — websocket-потоки программы, которые хост ретранслирует в события плагина (без вызовов wasm).
+	Streams []NetLocalStream `json:"streams,omitempty"`
+}
+
+// NetLocalStream — websocket-поток локальной программы. Хост сам подключается к ws://<target><path> (без Origin), пока у топика
+// есть подписчики, достаёт из каждого JSON-кадра поля Fields (имя → путь «a.b.c») и публикует объект из них в топик плагина.
+// Кадры чаще MinIntervalMs отбрасываются без разбора, неизменившиеся значения не публикуются.
+type NetLocalStream struct {
+	Path          string            `json:"path"`
+	Topic         string            `json:"topic"` // должен быть объявлен в events
+	Fields        map[string]string `json:"fields"`
+	MinIntervalMs int               `json:"minIntervalMs,omitempty"` // по умолчанию 250
 }
 
 // EventDecl — объявление публикуемого топика события.
@@ -104,6 +131,9 @@ type Widget struct {
 	Entry  string `json:"entry"`
 	Width  int    `json:"width,omitempty"`
 	Height int    `json:"height,omitempty"`
+	// Settings — настройки источника на сцене (формат как в plugin.json HTML-плагинов): редактор строит по ним форму,
+	// значения уходят виджету как ?key=value (читайте через oc.param). У каждого источника на сцене они свои.
+	Settings []plugins.Setting `json:"settings,omitempty"`
 }
 
 // Validate проверяет метаданные, чтобы кривой плагин не попал в маршруты и интерфейс.
@@ -129,6 +159,9 @@ func (m *Meta) Validate() error {
 			return fmt.Errorf("duplicate permission %q", p)
 		}
 		perms[p] = true
+	}
+	if err := m.validateNetLocal(perms[PermNetLocal]); err != nil {
+		return err
 	}
 	if len(m.Routes) > maxRoutes {
 		return fmt.Errorf("too many routes (max %d)", maxRoutes)
@@ -222,6 +255,13 @@ func (m *Meta) validateWidgets() error {
 		if ext := strings.ToLower(path.Ext(w.Entry)); ext != ".html" && ext != ".htm" {
 			return fmt.Errorf("widget %q: entry must be an HTML file", w.ID)
 		}
+		if len(w.Settings) > maxWidgetSettings {
+			return fmt.Errorf("widget %q: too many settings (max %d)", w.ID, maxWidgetSettings)
+		}
+		// Схему настроек проверяет тот же код, что и у HTML-плагинов (ключи, типы, options у select; пустые подписи заполняются).
+		if err := (&plugins.Manifest{ID: "widget", Name: w.Name, Settings: w.Settings}).Validate(); err != nil {
+			return fmt.Errorf("widget %q: %w", w.ID, err)
+		}
 		if w.Width == 0 {
 			w.Width = defWidgetW
 		}
@@ -272,3 +312,99 @@ func (m *Meta) Requests(perm string) bool {
 
 // KnownPermission сообщает, существует ли такое разрешение.
 func KnownPermission(p string) bool { return knownPerms[p] }
+
+const (
+	maxNetLocal      = 4
+	maxStreams       = 2  // потоков на плагин
+	maxStreamFields  = 16 // полей в потоке
+	defaultStreamGap = 250
+	minStreamGap     = 100
+	maxStreamGap     = 60000
+)
+
+var (
+	fieldNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,31}$`)
+	fieldPathRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*){0,7}$`)
+)
+
+var settingKeyRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,63}$`)
+
+func (m *Meta) validateNetLocal(granted bool) error {
+	if len(m.NetLocal) > 0 && !granted {
+		return fmt.Errorf("netLocal requires permission %q", PermNetLocal)
+	}
+	if granted && len(m.NetLocal) == 0 {
+		return fmt.Errorf("permission %q requires netLocal targets", PermNetLocal)
+	}
+	if len(m.NetLocal) > maxNetLocal {
+		return fmt.Errorf("too many netLocal targets (max %d)", maxNetLocal)
+	}
+	topics := map[string]bool{}
+	for _, e := range m.Events {
+		topics[e.ID] = true
+	}
+	streams := 0
+	for _, t := range m.NetLocal {
+		if _, ok := normLocalTarget(t.Target); !ok {
+			return fmt.Errorf("netLocal target %q: host:port on this computer expected (127.0.0.1, localhost or [::1])", t.Target)
+		}
+		if t.Setting != "" && !settingKeyRe.MatchString(t.Setting) {
+			return fmt.Errorf("netLocal setting %q: bad name", t.Setting)
+		}
+		if len(t.Paths) > maxNetLocal*4 {
+			return fmt.Errorf("netLocal %q: too many paths", t.Target)
+		}
+		for _, pr := range t.Paths {
+			if !strings.HasPrefix(pr, "/") || len(pr) > 200 || hasDotSegment(pr) {
+				return fmt.Errorf("netLocal path %q: must start with / and have no . or .. segments", pr)
+			}
+		}
+		for _, s := range t.Streams {
+			if streams++; streams > maxStreams {
+				return fmt.Errorf("too many netLocal streams (max %d)", maxStreams)
+			}
+			if err := s.validate(topics); err != nil {
+				return fmt.Errorf("netLocal stream %q: %w", s.Path, err)
+			}
+		}
+	}
+	return nil
+}
+
+// hasDotSegment — в пути есть сегмент «.» или «..» (с разделителями / и \): такой путь выводит за пределы разрешённого префикса.
+func hasDotSegment(p string) bool {
+	for _, seg := range strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if seg == "." || seg == ".." {
+			return true
+		}
+	}
+	return false
+}
+
+func (s NetLocalStream) validate(topics map[string]bool) error {
+	if !strings.HasPrefix(s.Path, "/") || len(s.Path) > 200 || hasDotSegment(s.Path) || strings.ContainsAny(s.Path, " ?#\x00") {
+		return fmt.Errorf("path must start with /, have no spaces, ?, # or . and .. segments")
+	}
+	if !topics[s.Topic] {
+		return fmt.Errorf("topic %q is not declared in events", s.Topic)
+	}
+	if len(s.Fields) == 0 || len(s.Fields) > maxStreamFields {
+		return fmt.Errorf("1..%d fields expected", maxStreamFields)
+	}
+	for name, path := range s.Fields {
+		if !fieldNameRe.MatchString(name) || !fieldPathRe.MatchString(path) {
+			return fmt.Errorf("field %q: bad name or path %q", name, path)
+		}
+	}
+	if s.MinIntervalMs != 0 && (s.MinIntervalMs < minStreamGap || s.MinIntervalMs > maxStreamGap) {
+		return fmt.Errorf("minIntervalMs must be %d..%d", minStreamGap, maxStreamGap)
+	}
+	return nil
+}
+
+func (s NetLocalStream) gap() time.Duration {
+	if s.MinIntervalMs == 0 {
+		return defaultStreamGap * time.Millisecond
+	}
+	return time.Duration(s.MinIntervalMs) * time.Millisecond
+}

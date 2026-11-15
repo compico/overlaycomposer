@@ -58,6 +58,8 @@
   "id": "music", "name": "Music requests", "version": "0.1.0", "apiVersion": 1,
   "description": "…", "author": "…",
   "permissions": ["storage", "timer", "net.http", "twitch.redemption"],
+  "netLocal": [{"target": "127.0.0.1:24050", "setting": "tosuHost", "paths": ["/files/beatmap/"],
+               "streams": [{"path": "/websocket/v2", "topic": "live", "fields": {"file": "directPath.beatmapFile"}, "minIntervalMs": 250}]}],
   "subscriptions": ["twitch.redemption"],
   "routes": [{"method": "GET", "path": "/next", "handler": "next"}],
   "configSchema": {"rewardId": {"type": "string", "title": "Награда"}}
@@ -97,7 +99,7 @@
 | `storage.delete` | `{"key"}` | `{}` | `storage` |
 | `timer.set` | `{"id","ms","repeat"}` — 50 мс…24 ч, до 16 таймеров, тот же `id` заменяет | `{}` | `timer` |
 | `timer.clear` | `{"id"}` | — | `timer` |
-| `http.fetch` | `{"id","method","url","body"}` — асинхронно, ответ придёт `http.response` | `{}` | `net.http` |
+| `http.fetch` | `{"id","method","url","body"}` — асинхронно, ответ придёт `http.response` | `{}` | `net.http`; для адреса из `netLocal` — `net.local` |
 | `twitch.redemption.update` | `{"rewardId","id","status":"FULFILLED"\|"CANCELED"}` | `{}` | `twitch.redemption` |
 | `events.publish` | `{"topic","data","retain"}` | `{}` | `events.publish` |
 | `chat.send` | `{"text"}` | `{}` | `chat.send` |
@@ -253,7 +255,7 @@ Events: []ocplugin.EventDecl{{ID: "now", Name: "Сейчас играет"}, {ID
 ### Подписка из виджета и страницы настроек
 
 ```js
-oc.plugin.subscribe("now", (e) => { /* e = { topic, data, seq, retained } */ });
+oc.plugin.subscribe("now", (data, meta) => { /* data — JSON события; meta = { topic, seq, retained } */ });
 ```
 
 Виджет плагина и его страница настроек могут подписаться на **объявленные** топики **своего** плагина. Если у топика есть
@@ -278,3 +280,51 @@ oc.plugin.subscribe("now", (e) => { /* e = { topic, data, seq, retained } */ });
 - Сервер раз в 20 с шлёт управляющий ping (браузер отвечает сам); соединение, из которого ничего не приходит 70 с, закрывается. Клиент без доступа к управляющим кадрам шлёт `{"t":"ping"}`.
 - Лимиты: 64 внешних соединения, 32 подписки на соединение, кадр клиента до 4 КБ, до 20 сообщений/с. Медленный клиент теряет события (смотрите `seq`), на плагин и других подписчиков это не влияет.
 - Нужен ли переподключаться: да, клиент сам; после `sub` retained-значение приходит снова, поэтому состояние восстанавливается.
+
+## Программа на этом компьютере (`net.local`)
+
+`http.fetch` с разрешением `net.http` ходит только в интернет: loopback, частные сети и link-local закрыты. Если плагину нужна программа на
+этом же компьютере (например, tosu отдаёт файлы карт на `127.0.0.1:24050`), он объявляет её в `oc_meta` и просит разрешение `net.local`:
+
+```json
+"permissions": ["net.local"],
+"netLocal": [{"target": "127.0.0.1:24050", "setting": "tosuHost", "paths": ["/files/beatmap/"]}]
+```
+
+- `target` — `host:port` на этом компьютере (`127.0.0.1`, `localhost` или `[::1]`); до 4 целей.
+- `setting` — необязательное имя строковой настройки: пользователь может заменить адрес (если порт нестандартный).
+- `paths` — необязательные префиксы пути; сегменты `.` и `..` в пути запрещены (разделители `/` и `\`).
+- `http.fetch` на объявленный адрес требует именно `net.local` (`net.http` его не заменяет). Идёт по `http`, без редиректов,
+  соединение принимается только с loopback, ответ может быть до 8 МиБ (в интернет — 1 МиБ).
+- Любой другой локальный адрес по-прежнему закрыт. Пользователь в «Standalone plugins…» видит, к каким адресам плагин получит доступ.
+
+## Потоки net.local: ретранслятор websocket
+
+Локальные программы (tosu) не пускают websocket из виджета: iframe плагина в sandbox, браузер шлёт `Origin: null`. Опрос HTTP через `Fetch`
+будит wasm на каждый запрос и заметно грузит процессор. Поэтому плагин может объявить поток в `netLocal[].streams`:
+
+```json
+{"path": "/websocket/v2", "topic": "live", "fields": {"file": "directPath.beatmapFile", "time": "beatmap.time.live"}, "minIntervalMs": 250}
+```
+
+- хост сам подключается к `ws://<target><path>` (без `Origin`, только loopback, без прокси) и **только пока у топика есть подписчики**; при обрыве переподключается с паузой 1–15 с;
+- из каждого JSON-кадра берутся поля `fields` (имя → путь через точки; нет поля — `null`), объект публикуется в топик (`retain`: новый подписчик сразу получает последнее значение);
+- кадры чаще `minIntervalMs` (по умолчанию 250 мс, 100…60000) отбрасываются без разбора JSON; неизменившееся значение не публикуется;
+- топик обязан быть объявлен в `events`; нужно разрешение `net.local`; не больше 2 потоков на плагин и 16 полей на поток; кадр до 4 МиБ, событие до 64 КБ;
+- виджет получает данные через `oc.plugin.subscribe(topic, cb)`, wasm не вызывается.
+
+## Настройки виджета
+
+У виджета есть собственные настройки: у каждого источника на сцене они свои, редактор строит по ним форму (в том числе выпадающий список), а значения
+приходят виджету как `?key=value`. Формат тот же, что у `settings` в `plugin.json` HTML-плагинов (типы `string`, `text`, `number`, `range`, `bool`, `color`,
+`font`, `select`; см. docs/PLUGINS.md), до 32 настроек на виджет:
+
+```go
+Widgets: []ocplugin.Widget{{ID: "graph", Name: "Graph", Entry: "index.html", Settings: []ocplugin.WidgetSetting{
+    {Key: "style", Label: "Style", Type: "select", Default: "ribbon",
+        Options: []ocplugin.SettingOption{{Value: "ribbon", Label: "Ribbon"}, {Value: "bars", Label: "Bars"}}},
+}}},
+```
+
+В виджете: `oc.param("style", "ribbon")`. Редактор сохраняет только изменённые значения, поэтому умолчание должно быть и в коде виджета.
+Настройки плагина (`configSchema`) остаются для того, что общее для всего плагина (адреса, токены).
