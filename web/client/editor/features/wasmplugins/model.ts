@@ -13,6 +13,8 @@ export interface WasmMeta {
   configSchema?: Record<string, unknown>;
   /** путь HTML страницы настроек плагина (в его статике) */
   settings?: string;
+  /** Программы на этом компьютере, к которым плагин ходит при выданном net.local. */
+  netLocal?: { target: string; setting?: string }[];
 }
 
 export interface WasmPlugin {
@@ -90,12 +92,18 @@ const PERMISSION_TEXT: Record<string, string> = {
   "events.publish": "Send live events (player state, commands) to widgets and connected apps",
   "chat.send": "Write messages to your channel chat as the bot",
   "net.http": "Make requests to the internet (never to your local network)",
+  "net.local": "Talk to programs on this computer (only the addresses it names)",
   "twitch.redemption": "See channel point redemptions and mark them fulfilled or cancelled",
   timer: "Run on a timer in the background",
 };
 
 /** Что даёт право, по-человечески; неизвестное право показывается как есть. */
-export const permissionText = (p: string): string => PERMISSION_TEXT[p] ?? p;
+export const permissionText = (p: string, meta?: WasmMeta): string => {
+  const base = PERMISSION_TEXT[p] ?? p;
+  // Для net.local называем адреса: пользователь должен видеть, к чему именно плагин получит доступ.
+  if (p === "net.local" && meta?.netLocal?.length) return `${base}: ${meta.netLocal.map((t) => t.target).join(", ")}`;
+  return base;
+};
 
 /** Награды, которыми приложение может управлять, — первыми: только у них меняется статус погашения. */
 export function sortRewards(list: Reward[]): Reward[] {

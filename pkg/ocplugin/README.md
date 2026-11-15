@@ -40,7 +40,7 @@ GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o hello.wasm .
 | `p.OnRedemption`, `p.OnTimer(id, f)`, `p.OnHTTPResponse(id, f)` | события хоста |
 | `Load[T]`, `Store`, `Remove` | хранилище (`PermStorage`) |
 | `SetTimer`, `ClearTimer` | таймеры хоста (`PermTimer`) |
-| `Fetch(id, FetchRequest)` | HTTP-запрос хоста, ответ — в `OnHTTPResponse` (`PermNetHTTP`) |
+| `Fetch(id, FetchRequest)` | HTTP-запрос хоста, ответ — в `OnHTTPResponse` (`PermNetHTTP`; к программе на этом компьютере, например tosu, — `PermNetLocal` и `Meta.NetLocal`) |
 | `FulfillRedemption`, `CancelRedemption` | статус погашения награды (`PermRedeem`) |
 | `Debug/Info/Warn/Error(msg, kv...)` | лог приложения с пометкой плагина |
 
