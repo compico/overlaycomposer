@@ -14,6 +14,7 @@ import (
 	"github.com/fasthttp/websocket"
 
 	"github.com/compico/overlaycomposer/internal/events"
+	"github.com/compico/overlaycomposer/internal/plugins"
 )
 
 const tosuFrame = `{"beatmap":{"checksum":"abc","time":{"live":%d},"extra":{"big":[1,2,3]}},"directPath":{"beatmapFile":"1 a\\b.osu"},"play":{"mods":{"name":"HD"}},"other":"x"}`
@@ -218,5 +219,40 @@ func TestStreamNeedsGrant(t *testing.T) {
 	time.Sleep(2500 * time.Millisecond)
 	if ts.conns.Load() != 0 || ts.frames.Load() != 0 {
 		t.Fatal("без разрешения net.local хост не должен подключаться")
+	}
+}
+
+func TestWidgetSettingsValidation(t *testing.T) {
+	good := func() Meta {
+		m := baseMeta("w")
+		m.Widgets = []Widget{{ID: "g", Name: "G", Entry: "index.html", Settings: []plugins.Setting{
+			{Key: "style", Type: plugins.TSelect, Options: []plugins.Option{{Value: "a", Label: "A"}, {Value: "b", Label: "B"}}, Default: "a"},
+			{Key: "size", Label: "Size", Type: plugins.TNumber},
+		}}}
+		return m
+	}
+	m := good()
+	if err := m.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if m.Widgets[0].Settings[0].Label != "style" {
+		t.Fatalf("пустая подпись должна заполниться ключом: %q", m.Widgets[0].Settings[0].Label)
+	}
+	for name, mut := range map[string]func(*Meta){
+		"select без вариантов": func(m *Meta) { m.Widgets[0].Settings[0].Options = nil },
+		"неизвестный тип":      func(m *Meta) { m.Widgets[0].Settings[1].Type = "pie" },
+		"повтор ключа":         func(m *Meta) { m.Widgets[0].Settings[1].Key = "style" },
+		"плохой ключ":          func(m *Meta) { m.Widgets[0].Settings[1].Key = "1x" },
+		"слишком много": func(m *Meta) {
+			for i := 0; i < maxWidgetSettings; i++ {
+				m.Widgets[0].Settings = append(m.Widgets[0].Settings, plugins.Setting{Key: "k" + itoa(i), Type: plugins.TString})
+			}
+		},
+	} {
+		m := good()
+		mut(&m)
+		if err := m.Validate(); err == nil {
+			t.Errorf("%s: ждали ошибку", name)
+		}
 	}
 }

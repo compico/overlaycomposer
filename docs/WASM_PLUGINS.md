@@ -312,3 +312,19 @@ oc.plugin.subscribe("now", (data, meta) => { /* data — JSON события; me
 - кадры чаще `minIntervalMs` (по умолчанию 250 мс, 100…60000) отбрасываются без разбора JSON; неизменившееся значение не публикуется;
 - топик обязан быть объявлен в `events`; нужно разрешение `net.local`; не больше 2 потоков на плагин и 16 полей на поток; кадр до 4 МиБ, событие до 64 КБ;
 - виджет получает данные через `oc.plugin.subscribe(topic, cb)`, wasm не вызывается.
+
+## Настройки виджета
+
+У виджета есть собственные настройки: у каждого источника на сцене они свои, редактор строит по ним форму (в том числе выпадающий список), а значения
+приходят виджету как `?key=value`. Формат тот же, что у `settings` в `plugin.json` HTML-плагинов (типы `string`, `text`, `number`, `range`, `bool`, `color`,
+`font`, `select`; см. docs/PLUGINS.md), до 32 настроек на виджет:
+
+```go
+Widgets: []ocplugin.Widget{{ID: "graph", Name: "Graph", Entry: "index.html", Settings: []ocplugin.WidgetSetting{
+    {Key: "style", Label: "Style", Type: "select", Default: "ribbon",
+        Options: []ocplugin.SettingOption{{Value: "ribbon", Label: "Ribbon"}, {Value: "bars", Label: "Bars"}}},
+}}},
+```
+
+В виджете: `oc.param("style", "ribbon")`. Редактор сохраняет только изменённые значения, поэтому умолчание должно быть и в коде виджета.
+Настройки плагина (`configSchema`) остаются для того, что общее для всего плагина (адреса, токены).

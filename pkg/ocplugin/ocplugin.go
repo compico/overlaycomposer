@@ -100,6 +100,29 @@ type Widget struct {
 	Entry  string `json:"entry"`
 	Width  int    `json:"width,omitempty"`
 	Height int    `json:"height,omitempty"`
+	// Settings — настройки источника на сцене: редактор рисует по ним форму, значения приходят виджету как ?key=value (oc.param).
+	Settings []WidgetSetting `json:"settings,omitempty"`
+}
+
+// WidgetSetting — одна настройка виджета (как в plugin.json HTML-плагинов). Type: string, text, number, range, bool, color,
+// font, select (нужны Options). Default должен совпадать со значением по умолчанию в коде виджета.
+type WidgetSetting struct {
+	Key     string          `json:"key"`
+	Label   string          `json:"label"`
+	Type    string          `json:"type"`
+	Group   string          `json:"group,omitempty"`
+	Help    string          `json:"help,omitempty"`
+	Default any             `json:"default,omitempty"`
+	Options []SettingOption `json:"options,omitempty"`
+	Min     *float64        `json:"min,omitempty"`
+	Max     *float64        `json:"max,omitempty"`
+	Step    *float64        `json:"step,omitempty"`
+}
+
+// SettingOption — вариант списка (Type select).
+type SettingOption struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
 }
 
 // Handler обрабатывает запрос к маршруту. Возвращённая ошибка — это 500 без подробностей наружу (подробности — в лог плагина).

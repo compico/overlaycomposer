@@ -459,3 +459,18 @@ func TestWasmWidgets(t *testing.T) {
 		}
 	})
 }
+
+func TestWidgetManifestCarriesSettings(t *testing.T) {
+	m := widgetManifest(wasmplugins.Meta{ID: "p", Name: "P"}, wasmplugins.Widget{ID: "w", Name: "W", Entry: "index.html", Width: 10, Height: 10,
+		Settings: []plugins.Setting{{Key: "style", Label: "Style", Type: plugins.TSelect, Options: []plugins.Option{{Value: "a", Label: "A"}}}}})
+	if len(m.Settings) != 1 || m.Settings[0].Key != "style" || !m.Wasm || m.Widget != "w" {
+		t.Fatalf("%+v", m)
+	}
+	// Значения источника проверяются по схеме виджета, как у HTML-плагинов.
+	if _, err := m.CleanSettings(map[string]any{"style": "a"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.CleanSettings(map[string]any{"style": "zzz"}); err == nil {
+		t.Fatal("значение вне списка должно отклоняться")
+	}
+}
