@@ -72,6 +72,18 @@ type NetLocalTarget struct {
 	Target  string   `json:"target"`
 	Setting string   `json:"setting,omitempty"`
 	Paths   []string `json:"paths,omitempty"`
+	// Streams — websocket-потоки программы, которые хост ретранслирует в события плагина (wasm не вызывается).
+	Streams []NetLocalStream `json:"streams,omitempty"`
+}
+
+// NetLocalStream — websocket-поток: пока у топика есть подписчики, хост сам подключается к ws://<Target><Path> (без Origin),
+// берёт из каждого JSON-кадра поля Fields (имя → путь «a.b.c»), и публикует объект из них в топик Topic (объявите его в Meta.Events).
+// MinIntervalMs — не чаще (100..60000, по умолчанию 250): лишние кадры отбрасываются без разбора. Нужно PermNetLocal.
+type NetLocalStream struct {
+	Path          string            `json:"path"`
+	Topic         string            `json:"topic"`
+	Fields        map[string]string `json:"fields"`
+	MinIntervalMs int               `json:"minIntervalMs,omitempty"`
 }
 
 // EventDecl — объявление публикуемого топика: id (`a-z0-9._-`, до 64 символов), название и описание для редакторов.

@@ -73,6 +73,8 @@ type EventBus interface {
 	Declare(plugin string, topics []string) error
 	Forget(plugin string)
 	Publish(plugin, topic string, data json.RawMessage, retain bool) error
+	// Subscribers — сколько подписчиков у топика сейчас (потоки net.local работают, только пока они есть).
+	Subscribers(plugin, topic string) int
 }
 
 // Request/Response — обращение к маршруту плагина.
@@ -196,6 +198,7 @@ func (p *Plugin) Start() error {
 	err := p.startLocked()
 	p.mu.Unlock()
 	go p.worker()
+	p.startStreams()
 	if err != nil {
 		p.fail(err)
 	}
@@ -822,20 +825,26 @@ func (p *Plugin) isLocalTarget(raw string) bool {
 	if err != nil {
 		return false
 	}
-	var cfg map[string]any
-	_ = json.Unmarshal(p.cfg, &cfg)
 	for _, t := range p.meta.NetLocal {
-		target := t.Target
-		if t.Setting != "" {
-			if v, ok := cfg[t.Setting].(string); ok && strings.TrimSpace(v) != "" {
-				target = v // нерабочий адрес из настройки не пускает никуда: цель просто не совпадёт
-			}
-		}
-		if got, ok := normLocalTarget(target); ok && got == want && pathAllowed(u.Path, t.Paths) {
+		if got, ok := p.targetAddr(t); ok && got == want && pathAllowed(u.Path, t.Paths) {
 			return true
 		}
 	}
 	return false
+}
+
+// targetAddr — адрес цели net.local: из настройки плагина (если цель её называет), иначе из метаданных.
+// Нерабочий адрес из настройки не пускает никуда: ok=false.
+func (p *Plugin) targetAddr(t NetLocalTarget) (string, bool) {
+	target := t.Target
+	if t.Setting != "" {
+		var cfg map[string]any
+		_ = json.Unmarshal(p.config(), &cfg)
+		if v, ok := cfg[t.Setting].(string); ok && strings.TrimSpace(v) != "" {
+			target = v
+		}
+	}
+	return normLocalTarget(target)
 }
 
 // pathAllowed — путь запроса начинается с одного из префиксов и не выходит из него через «..» (сегменты делятся по / и \).
