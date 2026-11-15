@@ -7,6 +7,7 @@ package wasmplugins
 
 import (
 	"fmt"
+	"github.com/compico/overlaycomposer/internal/plugins"
 	"path"
 	"regexp"
 	"strings"
@@ -21,19 +22,20 @@ const APIVersion = 1
 
 // Разрешения плагина. Плагин их запрашивает в oc_meta, пользователь выдаёт; без выдачи операция отклоняется.
 const (
-	PermStorage  = "storage"
-	PermNetHTTP  = "net.http"
-	PermNetLocal = "net.local" // HTTP к программе на этом компьютере по адресу из Meta.NetLocal (например, tosu)
-	PermRedeem   = "twitch.redemption"
-	PermTimer    = "timer"
-	PermPublish  = "events.publish" // публиковать события для подписчиков (виджеты, аддоны, deck)
-	PermChat     = "chat.send"      // писать в чат канала от имени бота
-	maxRoutes    = 64
-	maxMetaBytes = 64 << 10
-	maxWidgets   = 16
-	defWidgetW   = 400
-	defWidgetH   = 300
-	maxWidgetDim = 8192
+	PermStorage       = "storage"
+	PermNetHTTP       = "net.http"
+	PermNetLocal      = "net.local" // HTTP к программе на этом компьютере по адресу из Meta.NetLocal (например, tosu)
+	PermRedeem        = "twitch.redemption"
+	PermTimer         = "timer"
+	PermPublish       = "events.publish" // публиковать события для подписчиков (виджеты, аддоны, deck)
+	PermChat          = "chat.send"      // писать в чат канала от имени бота
+	maxRoutes         = 64
+	maxMetaBytes      = 64 << 10
+	maxWidgets        = 16
+	maxWidgetSettings = 32
+	defWidgetW        = 400
+	defWidgetH        = 300
+	maxWidgetDim      = 8192
 )
 
 // События, на которые плагин может подписаться.
@@ -129,6 +131,9 @@ type Widget struct {
 	Entry  string `json:"entry"`
 	Width  int    `json:"width,omitempty"`
 	Height int    `json:"height,omitempty"`
+	// Settings — настройки источника на сцене (формат как в plugin.json HTML-плагинов): редактор строит по ним форму,
+	// значения уходят виджету как ?key=value (читайте через oc.param). У каждого источника на сцене они свои.
+	Settings []plugins.Setting `json:"settings,omitempty"`
 }
 
 // Validate проверяет метаданные, чтобы кривой плагин не попал в маршруты и интерфейс.
@@ -249,6 +254,13 @@ func (m *Meta) validateWidgets() error {
 		}
 		if ext := strings.ToLower(path.Ext(w.Entry)); ext != ".html" && ext != ".htm" {
 			return fmt.Errorf("widget %q: entry must be an HTML file", w.ID)
+		}
+		if len(w.Settings) > maxWidgetSettings {
+			return fmt.Errorf("widget %q: too many settings (max %d)", w.ID, maxWidgetSettings)
+		}
+		// Схему настроек проверяет тот же код, что и у HTML-плагинов (ключи, типы, options у select; пустые подписи заполняются).
+		if err := (&plugins.Manifest{ID: "widget", Name: w.Name, Settings: w.Settings}).Validate(); err != nil {
+			return fmt.Errorf("widget %q: %w", w.ID, err)
 		}
 		if w.Width == 0 {
 			w.Width = defWidgetW

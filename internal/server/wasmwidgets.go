@@ -39,7 +39,7 @@ func widgetManifest(m wasmplugins.Meta, w wasmplugins.Widget) plugins.Manifest {
 	return plugins.Manifest{
 		ID: m.ID, Name: w.Name, Version: m.Version, Description: m.Description, Author: m.Author,
 		Entry: w.Entry, DefaultSize: plugins.Size{Width: w.Width, Height: w.Height},
-		Widget: w.ID, Wasm: true,
+		Widget: w.ID, Wasm: true, Settings: w.Settings,
 	}
 }
 
