@@ -26,6 +26,7 @@ jobs:
           GH_TOKEN: ${{ secrets.PR_TOKEN || github.token }}
           BASE: ${{ github.event.repository.default_branch }}
           BRANCH: ${{ github.ref_name }}
+          ASSIGNEE: compico
         run: |
           set -euo pipefail
           open=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
@@ -51,4 +52,7 @@ jobs:
               printf '⚠ В коммитах и названии ветки нет номера issue. Заведите issue и добавьте `Closes #N` сюда.\n'
             fi
           } > "$RUNNER_TEMP/body.md"
-          gh pr create --base "$BASE" --head "$BRANCH" --title "$title" --body-file "$RUNNER_TEMP/body.md"
+          url=$(gh pr create --base "$BASE" --head "$BRANCH" --title "$title" --body-file "$RUNNER_TEMP/body.md")
+          echo "$url"
+          # PR создан ботом: назначаем владельца, чтобы все PR были видны на его странице «Pull requests» (assignee:@me).
+          gh pr edit "$url" --add-assignee "$ASSIGNEE" || echo "::warning::не удалось назначить $ASSIGNEE на $url"

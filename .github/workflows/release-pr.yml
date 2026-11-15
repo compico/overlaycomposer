@@ -29,5 +29,7 @@ jobs:
             gh pr edit "$n" --body "$body"
             echo "Updated PR #$n"
           else
-            gh pr create --base main --head dev --title "Release: dev → main" --body "$body"
+            url=$(gh pr create --base main --head dev --title "Release: dev → main" --body "$body")
+            echo "$url"
+            gh pr edit "$url" --add-assignee compico || echo "::warning::не удалось назначить compico на $url"
           fi
