@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import type { Api } from "../../lib/api.ts";
 import {
   buildConfig, configFields, createWasmModel, formValues, missingGrants, needsAttention, permissionText,
@@ -87,6 +88,8 @@ test("права: недостающие, внимание, переключен
   assert.deepEqual(toggleGrant(plugin({ granted: ["timer", "storage"] }), "storage", false), []); // timer плагин не запрашивал
   assert.match(permissionText("storage"), /data/);
   assert.equal(permissionText("weird"), "weird");
+  assert.match(permissionText("chat.command.read"), /chat commands/);
+  assert.match(permissionText("chat.command.read", { id: "x", name: "x", version: "1", commands: ["np", "info"] } as never), /!np, !info/);
   assert.match(permissionText("net.local"), /this computer/);
   assert.match(permissionText("net.local", { id: "x", name: "x", version: "1", netLocal: [{ target: "127.0.0.1:24050" }] } as never), /127\.0\.0\.1:24050/);
 });
@@ -131,4 +134,20 @@ test("validateNewReward и twitchLine", () => {
   assert.equal(twitchLine({ state: "connected" }, false), "Twitch: not needed by any plugin");
   assert.equal(twitchLine({ state: "error", detail: "no account" }, true), "Twitch: error — no account");
   assert.equal(twitchLine(undefined, true), "");
+});
+
+// Каждое право, которое знает сервер (Perm* в internal/wasmplugins/meta.go), должно иметь человеческое описание в модалке:
+// иначе пользователь видит сырое «chat.command.read» и не понимает, что разрешает.
+test("у каждого права wasm-плагинов есть описание для модалки", () => {
+  const goFile = new URL("../../../../../internal/wasmplugins/meta.go", import.meta.url);
+  const perms = [...readFileSync(goFile, "utf8").matchAll(/\bPerm\w+\s*=\s*"([a-z][a-z0-9.]*)"/g)].map((m) => m[1]);
+  assert.ok(perms.length >= 7, `в ${goFile.pathname} не нашлись права (Perm… = "…"): тест устарел вместе с форматом констант?`);
+  const missing = perms.filter((p) => permissionText(p) === p);
+  assert.deepEqual(
+    missing, [],
+    `Нет человеческого описания для права: ${missing.join(", ")}. В модалке плагинов оно показывается как есть, без объяснения. ` +
+    `Добавьте запись "${missing[0]}": "<что это разрешает, по-человечески>" в PERMISSION_TEXT ` +
+    "(web/client/editor/features/wasmplugins/model.ts) — по образцу соседних, например " +
+    `"events.publish": "Send live events (player state, commands) to widgets and connected apps".`,
+  );
 });
