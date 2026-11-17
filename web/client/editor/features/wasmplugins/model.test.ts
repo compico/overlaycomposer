@@ -87,6 +87,8 @@ test("права: недостающие, внимание, переключен
   assert.deepEqual(toggleGrant(plugin({ granted: ["timer", "storage"] }), "storage", false), []); // timer плагин не запрашивал
   assert.match(permissionText("storage"), /data/);
   assert.equal(permissionText("weird"), "weird");
+  assert.match(permissionText("chat.command.read"), /chat commands/);
+  assert.match(permissionText("chat.command.read", { id: "x", name: "x", version: "1", commands: ["np", "info"] } as never), /!np, !info/);
   assert.match(permissionText("net.local"), /this computer/);
   assert.match(permissionText("net.local", { id: "x", name: "x", version: "1", netLocal: [{ target: "127.0.0.1:24050" }] } as never), /127\.0\.0\.1:24050/);
 });
