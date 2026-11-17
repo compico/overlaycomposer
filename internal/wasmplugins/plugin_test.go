@@ -522,7 +522,7 @@ func TestChatSendNeedsPermissionAndIsLimited(t *testing.T) {
 			limited++
 		}
 	}
-	if ok != chatBurst || limited != 3 {
+	if ok != chatBurst || limited != 4 { // из chatBurst+2 попыток проходит одна: два токена уже потрачены
 		t.Fatalf("ok=%d limited=%d", ok, limited)
 	}
 }
