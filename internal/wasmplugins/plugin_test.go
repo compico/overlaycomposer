@@ -470,7 +470,7 @@ func TestChatSendNeedsPermissionAndIsLimited(t *testing.T) {
 	meta.Permissions = []string{PermChat}
 	mod := &fakeModule{meta: meta, handler: func(*fakeInst, string, []byte) ([]byte, error) { return nil, nil }}
 	sent := make(chan string, 10)
-	svc := Services{Say: func(_ context.Context, text string) error { sent <- text; return nil }}
+	svc := Services{Say: func(_ context.Context, text, replyTo string) error { sent <- text + "|" + replyTo; return nil }}
 
 	denied := newTestPlugin(t, mod, svc)
 	var m map[string]any
@@ -485,22 +485,34 @@ func TestChatSendNeedsPermissionAndIsLimited(t *testing.T) {
 	}
 	select {
 	case got := <-sent:
-		if got != "привет" { // канал и аккаунт плагин выбрать не может: хост их не читает
+		if got != "привет|" { // канал и аккаунт плагин выбрать не может: хост их не читает
 			t.Fatalf("got %q", got)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("сообщение не отправлено")
 	}
+	// ответ реплаем: id сообщения передаётся хосту, мусор вместо id отклоняется
+	if out := p.hostCall(context.Background(), "chat.send", []byte(`{"text":"ответ","replyTo":"abc-123"}`)); string(out) != "{}" {
+		t.Fatalf("out=%s", out)
+	}
+	select {
+	case got := <-sent:
+		if got != "ответ|abc-123" {
+			t.Fatalf("got %q", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("ответ не отправлен")
+	}
 	// плохой текст
-	for _, a := range []string{`{"text":""}`, `{"text":"   "}`, `{"text":"` + strings.Repeat("я", chatMaxText+1) + `"}`, `{"text":1}`, `nope`} {
+	for _, a := range []string{`{"text":"x","replyTo":"a b"}`, `{"text":"x","replyTo":"` + strings.Repeat("a", 65) + `"}`, `{"text":""}`, `{"text":"   "}`, `{"text":"` + strings.Repeat("я", chatMaxText+1) + `"}`, `{"text":1}`, `nope`} {
 		m = nil
 		_ = json.Unmarshal(p.hostCall(context.Background(), "chat.send", []byte(a)), &m)
 		if m["error"] == nil {
 			t.Fatalf("%.30s должно отклоняться", a)
 		}
 	}
-	// всплеск: chatBurst сообщений проходят (одно уже ушло), следующее отклоняется
-	ok, limited := 1, 0
+	// всплеск: chatBurst сообщений проходят (два уже ушли), следующее отклоняется
+	ok, limited := 2, 0 // два сообщения уже ушли (обычное и реплай)
 	for i := 0; i < chatBurst+2; i++ {
 		m = nil
 		_ = json.Unmarshal(p.hostCall(context.Background(), "chat.send", []byte(`{"text":"x"}`)), &m)

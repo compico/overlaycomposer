@@ -104,7 +104,7 @@ OC читает чат канала по умолчанию (из настрое
 
 `command` — без `!`, в нижнем регистре; `args` — слова после команды (разделитель — пробел, регистр сохранён, до 16 слов по 200 символов).
 Аргументы и ники — текст зрителей, ему нельзя доверять. Права («кто может») и паузы между вызовами плагин проверяет сам по `is*`.
-В SDK: `Meta.Commands`, `p.OnChatCommand(func(ocplugin.ChatCommand){…})`, `ocplugin.PermChatCommandRead`; ответить в чат — `ocplugin.Say` (`chat.send`).
+В SDK: `Meta.Commands`, `p.OnChatCommand(func(ocplugin.ChatCommand){…})`, `ocplugin.PermChatCommandRead`; ответить в чат — `ocplugin.SayReply(c.MessageID, текст)` (нужно `chat.send`).
 
 События доставляются по очереди; очередь ограничена (256), при переполнении событие отбрасывается с записью в лог.
 
@@ -121,13 +121,13 @@ OC читает чат канала по умолчанию (из настрое
 | `http.fetch` | `{"id","method","url","body"}` — асинхронно, ответ придёт `http.response` | `{}` | `net.http`; для адреса из `netLocal` — `net.local` |
 | `twitch.redemption.update` | `{"rewardId","id","status":"FULFILLED"\|"CANCELED"}` | `{}` | `twitch.redemption` |
 | `events.publish` | `{"topic","data","retain"}` | `{}` | `events.publish` |
-| `chat.send` | `{"text"}` | `{}` | `chat.send` |
+| `chat.send` | `{"text","replyTo"?}` | `{}` | `chat.send` |
 
 Ошибка операции — `{"error":"…"}` вместо результата.
 
 `chat.send` (`ocplugin.Say`): сообщение в чат канала стримера **от бота**. Канал и аккаунт выбирает хост (плагин их указать не может);
 текст до 300 символов; частота: всплеск 3 сообщения, затем одно в 3 секунды, лишнее отклоняется. Отправка идёт в фоне: `{}` значит «принято»,
-а нет аккаунта бота или связи с чатом — запись в логе OC. Без разрешения `chat.send` операция отклоняется.
+а нет аккаунта бота или связи с чатом — запись в логе OC. Необязательный `replyTo` — id сообщения (`ChatCommand.messageId`): Twitch покажет ответ реплаем (SDK: `ocplugin.SayReply`). Без разрешения `chat.send` операция отклоняется.
 
 `http.fetch`: только `http(s)`; тело запроса до 256 КБ, ответа до 1 МБ, 15 с, не более 8 запросов одновременно, до 3 редиректов.
 Адреса **loopback, частных сетей, link-local и CGNAT запрещены** (проверка при соединении, после DNS, поэтому подмена DNS не помогает) —

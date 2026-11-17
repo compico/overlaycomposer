@@ -491,8 +491,8 @@ func openWasmPlugins(p paths.Paths, kvSvc *kv.Service, tw *twitch.Manager, chatS
 	return wasmplugins.NewManager(context.Background(), wasmplugins.Options{
 		Engine: eng, Dirs: dirs, State: state,
 		Services: wasmplugins.Services{Storage: wasmplugins.KVStorage{S: kvSvc}, Redeem: tw.UpdateRedemption, Log: slog.Default(), Events: bus,
-			Say: func(ctx context.Context, text string) error {
-				return chatSvc.Say(ctx, chat.SayRequest{Text: text, As: twitch.RoleBot})
+			Say: func(ctx context.Context, text, replyTo string) error {
+				return chatSvc.Say(ctx, chat.SayRequest{Text: text, As: twitch.RoleBot, ReplyTo: replyTo})
 			}},
 		Reserved: func(id string) bool { _, ok := reg.Get(id); return ok },
 	}), dirs

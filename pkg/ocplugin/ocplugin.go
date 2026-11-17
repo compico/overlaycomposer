@@ -160,7 +160,7 @@ type ChatCommand struct {
 	UserID        string   `json:"userId"`
 	User          string   `json:"user"` // ник (login)
 	DisplayName   string   `json:"displayName"`
-	MessageID     string   `json:"messageId"` // id сообщения в Twitch
+	MessageID     string   `json:"messageId"` // id сообщения в Twitch: для ответа реплаем (SayReply)
 	IsBroadcaster bool     `json:"isBroadcaster"`
 	IsMod         bool     `json:"isMod"`
 	IsVip         bool     `json:"isVip"`

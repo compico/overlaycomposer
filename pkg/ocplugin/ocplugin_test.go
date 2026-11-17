@@ -363,3 +363,14 @@ func TestChatCommandEvent(t *testing.T) {
 		t.Fatalf("command: %+v", got)
 	}
 }
+
+func TestSayReply(t *testing.T) {
+	f := useFakeHost(t)
+	if err := SayReply("m1", "привет"); err != nil {
+		t.Fatal(err)
+	}
+	c := f.last("chat.send")
+	if c.Arg["text"] != "привет" || c.Arg["replyTo"] != "m1" {
+		t.Fatalf("chat.send: %+v", c)
+	}
+}
