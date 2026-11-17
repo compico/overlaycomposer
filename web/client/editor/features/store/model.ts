@@ -1,13 +1,20 @@
 // Магазин плагинов: состояние каталога и действия без DOM.
 import type { Api } from "../../lib/api.ts";
 import { createStore, type Readable } from "../../lib/store.ts";
+import type { Deprecation } from "./deprecated.ts";
 
 export interface StoreEntry {
   id: string; name: string; version?: string; description?: string; author?: string; permissions?: string[]; repo: string;
   installed: boolean; installedVersion?: string; installedCommit?: string; updateAvailable: boolean; blocked?: "builtin" | "foreign";
   digest: string; commit?: string; addedPermissions?: string[];
+  /** Плагин объявлен устаревшим в deprecated.json источника. */
+  deprecated?: Deprecation;
 }
-export interface StoreSource { repo: string; error?: string; plugins: StoreEntry[] }
+export interface StoreSource {
+  repo: string; error?: string; plugins: StoreEntry[];
+  /** Все записи deprecated.json источника: виджеты, wasm-плагины и уже удалённые из репозитория. */
+  deprecated?: Deprecation[];
+}
 export interface StoreData { sources: StoreSource[]; installed: Record<string, { repo: string; version?: string }>; hasToken: boolean }
 
 export interface StoreState {

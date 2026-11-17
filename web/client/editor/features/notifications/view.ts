@@ -1,6 +1,8 @@
 // Представление центра уведомлений (ванильный DOM). Получает модель и «порты» — всё, что нужно снаружи.
 import { el } from "../../lib/dom.ts";
 import type { Ui } from "../../lib/ui.ts";
+import { deprecationText, replacementUrl, type Deprecation } from "../store/deprecated.ts";
+import { openExternal } from "../store/deprecated-view.ts";
 import type { NotificationsModel, NotifItem, PluginChange } from "./model.ts";
 
 /** Элементы, которыми владеет представление (во фреймворке — собственная разметка компонента). */
@@ -91,6 +93,25 @@ export function mountNotifications(refs: NotificationsRefs, model: Notifications
       const open = el("button", { type: "button", class: "primary" }, "Open widget store");
       open.addEventListener("click", () => { refs.dialog.close(); ports.openStore(); });
       refs.actions.append(open);
+    } else if (n.kind === "plugin-deprecated") {
+      const dep = d as unknown as Deprecation;
+      refs.detail.append(el("div", { class: "hint warn" }, deprecationText(dep)));
+      const r = dep.replacedBy;
+      if (r) {
+        refs.detail.append(el("div", { class: "hint" }, `Replacement: ${r.id} (${r.kind === "wasm" ? "plugin" : "widget plugin"}, ${r.repo})`));
+        const url = replacementUrl(r);
+        // Замена-виджет ставится из магазина; wasm-плагин магазин не ставит — ведём на страницу, где его взять.
+        if (r.kind === "widget") {
+          const open = el("button", { type: "button", class: "primary" }, `Open widget store to get ${r.id}`);
+          open.addEventListener("click", () => { refs.dialog.close(); ports.openStore(); });
+          refs.actions.append(open);
+        } else if (url) {
+          const get = el("button", { type: "button", class: "primary", title: url }, `Get ${r.id}`);
+          get.addEventListener("click", () => openExternal(url));
+          refs.actions.append(get);
+        }
+      }
+      refs.detail.append(el("div", { class: "hint" }, "The plugin keeps working until you remove it."));
     } else if (n.kind === "app-update") {
       refs.detail.append(el("div", { class: "hint" }, `${d.current ?? "?"} → ${d.latest ?? "?"}`));
       if (d.notes) refs.detail.append(el("h4", {}, "Release notes"), el("div", { class: "migration", style: "border-left-color:var(--line)" }, String(d.notes)));
