@@ -529,3 +529,39 @@ func TestChatSendUnavailableWithoutService(t *testing.T) {
 
 // Subscribers — в этих тестах подписчиков нет: потоки net.local не запускаются.
 func (b *fakeBus) Subscribers(string, string) int { return 0 }
+
+func TestDeliverCommand(t *testing.T) {
+	meta := baseMeta("cmd")
+	meta.Permissions = []string{PermChatCommandRead}
+	meta.Subscriptions = []string{EventChatCommand}
+	meta.Commands = []string{"np"}
+	var mu sync.Mutex
+	var got []string
+	mod := &fakeModule{meta: meta, handler: func(_ *fakeInst, _ string, arg []byte) ([]byte, error) {
+		mu.Lock()
+		got = append(got, string(arg))
+		mu.Unlock()
+		return nil, nil
+	}}
+	p := newTestPlugin(t, mod, Services{})
+	c := ChatCommand{Command: "np", Args: []string{"a"}, User: "viewer"}
+	if p.DeliverCommand(c) {
+		t.Fatal("без разрешения команда не доставляется")
+	}
+	p.setGrants([]string{PermChatCommandRead})
+	if p.DeliverCommand(ChatCommand{Command: "other"}) {
+		t.Fatal("команда, которую плагин не объявил, не доставляется")
+	}
+	if p.Deliver(EventChatCommand, c) {
+		t.Fatal("общий Deliver не должен пропускать команды мимо фильтра")
+	}
+	if !p.DeliverCommand(c) {
+		t.Fatal("разрешено и объявлено: должна быть доставлена")
+	}
+	waitFor(t, "command event", func() bool { mu.Lock(); defer mu.Unlock(); return len(got) == 1 })
+	mu.Lock()
+	defer mu.Unlock()
+	if !strings.Contains(got[0], `"type":"chat.command"`) || !strings.Contains(got[0], `"command":"np"`) || !strings.Contains(got[0], `"user":"viewer"`) {
+		t.Fatalf("событие: %s", got[0])
+	}
+}

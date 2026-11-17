@@ -349,3 +349,17 @@ func TestMetaWidgetsAreReported(t *testing.T) {
 		t.Fatal("no widgets: the field must be omitted")
 	}
 }
+
+func TestChatCommandEvent(t *testing.T) {
+	useFakeHost(t)
+	p := New(Meta{ID: "demo", Name: "Demo", Version: "1.0.0", Commands: []string{"np"}})
+	var got ChatCommand
+	p.OnChatCommand(func(c ChatCommand) { got = c })
+	if !strings.Contains(string(p.metaJSON()), `"chat.command"`) || !strings.Contains(string(p.metaJSON()), `"commands":["np"]`) {
+		t.Fatalf("meta: %s", p.metaJSON())
+	}
+	p.dispatch("on_event", []byte(`{"type":"chat.command","data":{"command":"np","args":["@compico"],"user":"v","isMod":true,"messageId":"m1"}}`))
+	if got.Command != "np" || len(got.Args) != 1 || got.Args[0] != "@compico" || got.User != "v" || !got.IsMod || got.MessageID != "m1" {
+		t.Fatalf("command: %+v", got)
+	}
+}

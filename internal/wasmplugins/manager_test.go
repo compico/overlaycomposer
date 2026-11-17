@@ -209,6 +209,12 @@ func TestMetaValidate(t *testing.T) {
 		"handler chars":    func(m *Meta) { m.Routes = []Route{{"GET", "/x", "a-b"}} },
 		"duplicate route":  func(m *Meta) { m.Routes = []Route{{"GET", "/x", "a"}, {"GET", "/x", "b"}} },
 		"too many routes":  func(m *Meta) { m.Routes = make([]Route, maxRoutes+1) },
+		"cmd sub no perm":  func(m *Meta) { m.Permissions = nil; m.Subscriptions = []string{EventChatCommand}; m.Commands = []string{"np"} },
+		"cmd sub no cmds":  func(m *Meta) { m.Permissions = []string{PermRedeem, PermChatCommandRead}; m.Subscriptions = []string{EventChatCommand} },
+		"cmds no sub":      func(m *Meta) { m.Commands = []string{"np"} },
+		"cmd bad name":     func(m *Meta) { m.Permissions = []string{PermChatCommandRead}; m.Subscriptions = []string{EventChatCommand}; m.Commands = []string{"!np"} },
+		"cmd upper":        func(m *Meta) { m.Permissions = []string{PermChatCommandRead}; m.Subscriptions = []string{EventChatCommand}; m.Commands = []string{"NP"} },
+		"cmd dup":          func(m *Meta) { m.Permissions = []string{PermChatCommandRead}; m.Subscriptions = []string{EventChatCommand}; m.Commands = []string{"np", "np"} },
 	}
 	for name, mut := range cases {
 		m := good
@@ -241,5 +247,18 @@ func TestScanIgnoresHTMLPluginFoldersAndOtherFiles(t *testing.T) {
 	infos, problems := m.List()
 	if len(infos) != 1 || infos[0].Meta.ID != "good" || len(problems) != 0 {
 		t.Fatalf("infos=%+v problems=%+v", infos, problems)
+	}
+}
+
+func TestMetaValidateChatCommands(t *testing.T) {
+	m := baseMeta("cmd")
+	m.Permissions = []string{PermChatCommandRead}
+	m.Subscriptions = []string{EventChatCommand}
+	m.Commands = []string{"np", "info_2"}
+	if err := m.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if !m.WantsCommand("np") || m.WantsCommand("other") {
+		t.Fatal("WantsCommand")
 	}
 }

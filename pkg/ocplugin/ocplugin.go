@@ -36,11 +36,14 @@ const (
 	PermTimer    = "timer"
 	PermPublish  = "events.publish"
 	PermChat     = "chat.send" // писать в чат канала от имени бота
+	// PermChatCommandRead — получать команды чата («!np …»), перечисленные в Meta.Commands. Весь чат плагину недоступен.
+	PermChatCommandRead = "chat.command.read"
 )
 
 const (
 	apiVersion        = 1
 	eventRedemption   = "twitch.redemption"
+	eventChatCommand  = "chat.command"
 	eventTimer        = "timer"
 	eventHTTPResponse = "http.response"
 )
@@ -63,6 +66,8 @@ type Meta struct {
 	Settings string `json:"settings,omitempty"`
 	// Events — топики, которые плагин публикует через Publish. Публиковать можно только объявленные.
 	Events []EventDecl `json:"events,omitempty"`
+	// Commands — команды чата без «!» в нижнем регистре, которые плагин хочет получать в OnChatCommand (нужно PermChatCommandRead).
+	Commands []string `json:"commands,omitempty"`
 }
 
 // NetLocalTarget — адрес программы на этом компьютере: Target — host:port (127.0.0.1, localhost или [::1]).
@@ -147,6 +152,22 @@ type Redemption struct {
 	RedeemedAt  string `json:"redeemedAt"`
 }
 
+// ChatCommand — команда зрителя в чате («!np арг1 арг2»). Приходит только для команд из Meta.Commands.
+type ChatCommand struct {
+	Command       string   `json:"command"` // «np» для «!np»: без «!», в нижнем регистре
+	Args          []string `json:"args"`    // слова после команды (разделитель — пробел), регистр сохранён; недоверенный текст
+	Channel       string   `json:"channel"`
+	UserID        string   `json:"userId"`
+	User          string   `json:"user"` // ник (login)
+	DisplayName   string   `json:"displayName"`
+	MessageID     string   `json:"messageId"` // id сообщения в Twitch
+	IsBroadcaster bool     `json:"isBroadcaster"`
+	IsMod         bool     `json:"isMod"`
+	IsVip         bool     `json:"isVip"`
+	IsSub         bool     `json:"isSub"`
+	Timestamp     int64    `json:"timestamp"` // мс
+}
+
 // HTTPResponse — ответ на Fetch. Error непустой, если запрос не удался (тогда Status == 0).
 type HTTPResponse struct {
 	ID     string `json:"id"`
@@ -162,6 +183,7 @@ type Plugin struct {
 	handlers map[string]Handler
 	onInit   func() error
 	onRedeem func(Redemption)
+	onCmd    func(ChatCommand)
 	timers   map[string]func()
 	fetches  map[string]func(HTTPResponse)
 	config   json.RawMessage
@@ -206,6 +228,9 @@ func (p *Plugin) OnInit(f func() error) { p.onInit = f }
 // OnRedemption принимает погашения наград. Нужны разрешение PermRedeem в Meta и его выдача пользователем.
 func (p *Plugin) OnRedemption(f func(Redemption)) { p.onRedeem = f }
 
+// OnChatCommand принимает команды чата. Нужны Meta.Commands (какие именно), разрешение PermChatCommandRead и его выдача пользователем.
+func (p *Plugin) OnChatCommand(f func(ChatCommand)) { p.onCmd = f }
+
 // OnTimer вызывается, когда сработал таймер с этим id (см. SetTimer). Нужно разрешение PermTimer.
 func (p *Plugin) OnTimer(id string, f func()) { p.timers[id] = f }
 
@@ -225,7 +250,10 @@ type metaOut struct {
 func (p *Plugin) metaJSON() []byte {
 	out := metaOut{Meta: p.meta, APIVersion: apiVersion, Routes: p.routes}
 	if p.onRedeem != nil {
-		out.Subscriptions = []string{eventRedemption}
+		out.Subscriptions = append(out.Subscriptions, eventRedemption)
+	}
+	if p.onCmd != nil {
+		out.Subscriptions = append(out.Subscriptions, eventChatCommand)
 	}
 	b, _ := json.Marshal(out)
 	return b
@@ -295,6 +323,11 @@ func (p *Plugin) onEvent(arg []byte) {
 		var r Redemption
 		if p.onRedeem != nil && json.Unmarshal(ev.Data, &r) == nil {
 			run(func() { p.onRedeem(r) })
+		}
+	case eventChatCommand:
+		var c ChatCommand
+		if p.onCmd != nil && json.Unmarshal(ev.Data, &c) == nil {
+			run(func() { p.onCmd(c) })
 		}
 	case eventTimer:
 		var t struct {

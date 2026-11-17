@@ -22,25 +22,27 @@ const APIVersion = 1
 
 // Разрешения плагина. Плагин их запрашивает в oc_meta, пользователь выдаёт; без выдачи операция отклоняется.
 const (
-	PermStorage       = "storage"
-	PermNetHTTP       = "net.http"
-	PermNetLocal      = "net.local" // HTTP к программе на этом компьютере по адресу из Meta.NetLocal (например, tosu)
-	PermRedeem        = "twitch.redemption"
-	PermTimer         = "timer"
-	PermPublish       = "events.publish" // публиковать события для подписчиков (виджеты, аддоны, deck)
-	PermChat          = "chat.send"      // писать в чат канала от имени бота
-	maxRoutes         = 64
-	maxMetaBytes      = 64 << 10
-	maxWidgets        = 16
-	maxWidgetSettings = 32
-	defWidgetW        = 400
-	defWidgetH        = 300
-	maxWidgetDim      = 8192
+	PermStorage         = "storage"
+	PermNetHTTP         = "net.http"
+	PermNetLocal        = "net.local" // HTTP к программе на этом компьютере по адресу из Meta.NetLocal (например, tosu)
+	PermRedeem          = "twitch.redemption"
+	PermTimer           = "timer"
+	PermPublish         = "events.publish"    // публиковать события для подписчиков (виджеты, аддоны, deck)
+	PermChat            = "chat.send"         // писать в чат канала от имени бота
+	PermChatCommandRead = "chat.command.read" // получать команды чата («!np …») из Meta.Commands; весь чат плагин не видит
+	maxRoutes           = 64
+	maxMetaBytes        = 64 << 10
+	maxWidgets          = 16
+	maxWidgetSettings   = 32
+	defWidgetW          = 400
+	defWidgetH          = 300
+	maxWidgetDim        = 8192
 )
 
 // События, на которые плагин может подписаться.
 const (
 	EventRedemption   = "twitch.redemption"
+	EventChatCommand  = "chat.command"
 	EventTimer        = "timer"
 	EventHTTPResponse = "http.response"
 )
@@ -52,9 +54,9 @@ var (
 	pathSegRe = regexp.MustCompile(`^[A-Za-z0-9._~-]+$`)
 )
 
-var knownPerms = map[string]bool{PermStorage: true, PermNetHTTP: true, PermNetLocal: true, PermRedeem: true, PermTimer: true, PermPublish: true, PermChat: true}
+var knownPerms = map[string]bool{PermStorage: true, PermNetHTTP: true, PermNetLocal: true, PermRedeem: true, PermTimer: true, PermPublish: true, PermChat: true, PermChatCommandRead: true}
 
-var knownEvents = map[string]bool{EventRedemption: true, EventTimer: true, EventHTTPResponse: true}
+var knownEvents = map[string]bool{EventRedemption: true, EventChatCommand: true, EventTimer: true, EventHTTPResponse: true}
 
 // Route — HTTP-маршрут плагина: он доступен как /plugins/<id>/api<Path>.
 type Route struct {
@@ -76,6 +78,9 @@ type Meta struct {
 	NetLocal      []NetLocalTarget `json:"netLocal,omitempty"`
 	Routes        []Route          `json:"routes,omitempty"`
 	Subscriptions []string         `json:"subscriptions,omitempty"`
+	// Commands — команды чата без «!» (в нижнем регистре), которые плагин хочет получать событием chat.command. Остальные команды ему
+	// не доставляются. Нужны подписка chat.command и разрешение chat.command.read.
+	Commands []string `json:"commands,omitempty"`
 	// ConfigSchema — необязательное описание настроек (JSON Schema-подобное), UI строит по нему форму. Хост его не толкует.
 	ConfigSchema map[string]any `json:"configSchema,omitempty"`
 	// Widgets — виджеты плагина (iframe с HTML из секции oc.assets); пользователь добавляет их на сцену как обычные виджеты.
@@ -197,6 +202,12 @@ func (m *Meta) Validate() error {
 	}
 	if subs[EventRedemption] && !perms[PermRedeem] {
 		return fmt.Errorf("subscription %q requires permission %q", EventRedemption, PermRedeem)
+	}
+	if subs[EventChatCommand] && !perms[PermChatCommandRead] {
+		return fmt.Errorf("subscription %q requires permission %q", EventChatCommand, PermChatCommandRead)
+	}
+	if err := m.validateCommands(subs[EventChatCommand]); err != nil {
+		return err
 	}
 	if err := m.validateWidgets(); err != nil {
 		return err
@@ -407,4 +418,57 @@ func (s NetLocalStream) gap() time.Duration {
 		return defaultStreamGap * time.Millisecond
 	}
 	return time.Duration(s.MinIntervalMs) * time.Millisecond
+}
+
+const maxCommands = 16
+
+var commandRe = regexp.MustCompile(`^[a-z0-9_]{1,32}$`)
+
+func (m *Meta) validateCommands(subscribed bool) error {
+	if len(m.Commands) > maxCommands {
+		return fmt.Errorf("too many commands (max %d)", maxCommands)
+	}
+	if subscribed && len(m.Commands) == 0 {
+		return fmt.Errorf("subscription %q requires at least one command in commands", EventChatCommand)
+	}
+	if !subscribed && len(m.Commands) > 0 {
+		return fmt.Errorf("commands require subscription %q", EventChatCommand)
+	}
+	seen := map[string]bool{}
+	for _, c := range m.Commands {
+		if !commandRe.MatchString(c) {
+			return fmt.Errorf("command %q: lowercase latin letters, digits and _ only (1..32), without !", c)
+		}
+		if seen[c] {
+			return fmt.Errorf("duplicate command %q", c)
+		}
+		seen[c] = true
+	}
+	return nil
+}
+
+// WantsCommand — просил ли плагин команду name (без «!», в нижнем регистре).
+func (m *Meta) WantsCommand(name string) bool {
+	for _, c := range m.Commands {
+		if c == name {
+			return true
+		}
+	}
+	return false
+}
+
+// ChatCommand — команда чата, доставленная плагину событием chat.command.
+type ChatCommand struct {
+	Command       string   `json:"command"` // «np» для «!np»: без «!», в нижнем регистре
+	Args          []string `json:"args"`    // слова после команды (разделитель — пробел), регистр сохранён
+	Channel       string   `json:"channel"`
+	UserID        string   `json:"userId"`
+	User          string   `json:"user"` // ник (login)
+	DisplayName   string   `json:"displayName"`
+	MessageID     string   `json:"messageId"` // id сообщения в Twitch
+	IsBroadcaster bool     `json:"isBroadcaster"`
+	IsMod         bool     `json:"isMod"`
+	IsVip         bool     `json:"isVip"`
+	IsSub         bool     `json:"isSub"`
+	Timestamp     int64    `json:"timestamp"` // мс
 }
