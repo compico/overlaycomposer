@@ -470,7 +470,7 @@ func TestChatSendNeedsPermissionAndIsLimited(t *testing.T) {
 	meta.Permissions = []string{PermChat}
 	mod := &fakeModule{meta: meta, handler: func(*fakeInst, string, []byte) ([]byte, error) { return nil, nil }}
 	sent := make(chan string, 10)
-	svc := Services{Say: func(_ context.Context, text string) error { sent <- text; return nil }}
+	svc := Services{Say: func(_ context.Context, text, replyTo string) error { sent <- text + "|" + replyTo; return nil }}
 
 	denied := newTestPlugin(t, mod, svc)
 	var m map[string]any
@@ -485,22 +485,34 @@ func TestChatSendNeedsPermissionAndIsLimited(t *testing.T) {
 	}
 	select {
 	case got := <-sent:
-		if got != "привет" { // канал и аккаунт плагин выбрать не может: хост их не читает
+		if got != "привет|" { // канал и аккаунт плагин выбрать не может: хост их не читает
 			t.Fatalf("got %q", got)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("сообщение не отправлено")
 	}
+	// ответ реплаем: id сообщения передаётся хосту, мусор вместо id отклоняется
+	if out := p.hostCall(context.Background(), "chat.send", []byte(`{"text":"ответ","replyTo":"abc-123"}`)); string(out) != "{}" {
+		t.Fatalf("out=%s", out)
+	}
+	select {
+	case got := <-sent:
+		if got != "ответ|abc-123" {
+			t.Fatalf("got %q", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("ответ не отправлен")
+	}
 	// плохой текст
-	for _, a := range []string{`{"text":""}`, `{"text":"   "}`, `{"text":"` + strings.Repeat("я", chatMaxText+1) + `"}`, `{"text":1}`, `nope`} {
+	for _, a := range []string{`{"text":"x","replyTo":"a b"}`, `{"text":"x","replyTo":"` + strings.Repeat("a", 65) + `"}`, `{"text":""}`, `{"text":"   "}`, `{"text":"` + strings.Repeat("я", chatMaxText+1) + `"}`, `{"text":1}`, `nope`} {
 		m = nil
 		_ = json.Unmarshal(p.hostCall(context.Background(), "chat.send", []byte(a)), &m)
 		if m["error"] == nil {
 			t.Fatalf("%.30s должно отклоняться", a)
 		}
 	}
-	// всплеск: chatBurst сообщений проходят (одно уже ушло), следующее отклоняется
-	ok, limited := 1, 0
+	// всплеск: chatBurst сообщений проходят (два уже ушли), следующее отклоняется
+	ok, limited := 2, 0 // два сообщения уже ушли (обычное и реплай)
 	for i := 0; i < chatBurst+2; i++ {
 		m = nil
 		_ = json.Unmarshal(p.hostCall(context.Background(), "chat.send", []byte(`{"text":"x"}`)), &m)
@@ -510,7 +522,7 @@ func TestChatSendNeedsPermissionAndIsLimited(t *testing.T) {
 			limited++
 		}
 	}
-	if ok != chatBurst || limited != 3 {
+	if ok != chatBurst || limited != 4 { // из chatBurst+2 попыток проходит одна: два токена уже потрачены
 		t.Fatalf("ok=%d limited=%d", ok, limited)
 	}
 }
@@ -529,3 +541,39 @@ func TestChatSendUnavailableWithoutService(t *testing.T) {
 
 // Subscribers — в этих тестах подписчиков нет: потоки net.local не запускаются.
 func (b *fakeBus) Subscribers(string, string) int { return 0 }
+
+func TestDeliverCommand(t *testing.T) {
+	meta := baseMeta("cmd")
+	meta.Permissions = []string{PermChatCommandRead}
+	meta.Subscriptions = []string{EventChatCommand}
+	meta.Commands = []string{"np"}
+	var mu sync.Mutex
+	var got []string
+	mod := &fakeModule{meta: meta, handler: func(_ *fakeInst, _ string, arg []byte) ([]byte, error) {
+		mu.Lock()
+		got = append(got, string(arg))
+		mu.Unlock()
+		return nil, nil
+	}}
+	p := newTestPlugin(t, mod, Services{})
+	c := ChatCommand{Command: "np", Args: []string{"a"}, User: "viewer"}
+	if p.DeliverCommand(c) {
+		t.Fatal("без разрешения команда не доставляется")
+	}
+	p.setGrants([]string{PermChatCommandRead})
+	if p.DeliverCommand(ChatCommand{Command: "other"}) {
+		t.Fatal("команда, которую плагин не объявил, не доставляется")
+	}
+	if p.Deliver(EventChatCommand, c) {
+		t.Fatal("общий Deliver не должен пропускать команды мимо фильтра")
+	}
+	if !p.DeliverCommand(c) {
+		t.Fatal("разрешено и объявлено: должна быть доставлена")
+	}
+	waitFor(t, "command event", func() bool { mu.Lock(); defer mu.Unlock(); return len(got) == 1 })
+	mu.Lock()
+	defer mu.Unlock()
+	if !strings.Contains(got[0], `"type":"chat.command"`) || !strings.Contains(got[0], `"command":"np"`) || !strings.Contains(got[0], `"user":"viewer"`) {
+		t.Fatalf("событие: %s", got[0])
+	}
+}

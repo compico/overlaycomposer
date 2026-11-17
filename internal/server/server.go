@@ -82,6 +82,10 @@ type Server struct {
 
 	redeem *wasmplugins.Bridge // EventSub для wasm-плагинов; nil — без Twitch или без wasm
 
+	cmdMu sync.Mutex // chatCommands: подписка на чат ради команд wasm-плагинов
+
+	cmdSub bool
+
 	evMu       sync.Mutex // подписки страниц на события плагинов (wasmevents.go)
 	evPeers    map[*hub.Peer]*peerSubs
 	pluginAuth func(plugin, source string) string // подмена authorizePlugin в тестах

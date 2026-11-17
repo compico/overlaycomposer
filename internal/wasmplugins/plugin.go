@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -65,7 +66,7 @@ type Services struct {
 	// Events — брокер событий для events.publish; nil — публикация недоступна.
 	Events EventBus
 	// Say пишет в чат канала стримера от имени бота (chat.send); nil — недоступно. Вызывается в отдельной горутине.
-	Say func(ctx context.Context, text string) error
+	Say func(ctx context.Context, text, replyTo string) error
 }
 
 // EventBus — то, что плагинам нужно от брокера событий (его реализует *events.Broker).
@@ -365,7 +366,18 @@ func (p *Plugin) Deliver(typ string, data any) bool {
 	if typ == EventRedemption && !p.granted(PermRedeem) {
 		return false
 	}
+	if typ == EventChatCommand { // команды идут только через DeliverCommand: он проверяет, просил ли плагин именно эту
+		return false
+	}
 	return p.enqueue(typ, data)
+}
+
+// DeliverCommand доставляет команду чата плагину, если он подписан, получил chat.command.read и объявил эту команду.
+func (p *Plugin) DeliverCommand(c ChatCommand) bool {
+	if !p.meta.Subscribes(EventChatCommand) || !p.meta.WantsCommand(c.Command) || !p.granted(PermChatCommandRead) {
+		return false
+	}
+	return p.enqueue(EventChatCommand, c)
 }
 
 func (p *Plugin) enqueue(typ string, data any) bool {
@@ -631,15 +643,21 @@ func (p *Plugin) chatAllow(now time.Time) bool {
 	return true
 }
 
+var replyIDRe = regexp.MustCompile(`^[0-9A-Za-z-]{1,64}$`)
+
 func (p *Plugin) opChatSend(arg []byte) []byte {
 	if p.svc.Say == nil {
 		return errOut("chat is not available")
 	}
 	var a struct {
-		Text string `json:"text"`
+		Text    string `json:"text"`
+		ReplyTo string `json:"replyTo"` // id сообщения (ChatCommand.MessageID): ответ реплаем
 	}
 	if err := json.Unmarshal(arg, &a); err != nil {
 		return errOut("bad arguments: %v", err)
+	}
+	if a.ReplyTo != "" && !replyIDRe.MatchString(a.ReplyTo) {
+		return errOut("replyTo: message id expected")
 	}
 	text := strings.TrimSpace(a.Text)
 	if text == "" || utf8.RuneCountInString(text) > chatMaxText {
@@ -653,7 +671,7 @@ func (p *Plugin) opChatSend(arg []byte) []byte {
 	go func() {
 		ctx, cancel := context.WithTimeout(ctx, chatTimeout)
 		defer cancel()
-		if err := say(ctx, text); err != nil {
+		if err := say(ctx, text, a.ReplyTo); err != nil {
 			p.log.Warn("chat.send: message was not sent", "err", err)
 		}
 	}()
