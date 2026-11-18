@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"sync"
 
 	"github.com/compico/overlaycomposer/internal/deck"
@@ -53,14 +54,43 @@ func (w *deckWatch) drain() (closed bool) {
 	}
 }
 
-// deckActiveTiles возвращает id плиток плагинов, у которых выполнено activeWhen.
-func (s *Server) deckActiveTiles(l deck.Layout) []string {
+// deckTileState — то, что события плагинов дают состоянию панели: подсвеченные плитки и тексты плиток (id → строки).
+type deckTileState struct {
+	On   []string
+	Text map[string][]string
+}
+
+// deckPluginTiles считает состояние плиток плагинов по их activeWhen и display.
+func (s *Server) deckPluginTiles(l deck.Layout) deckTileState {
 	pl, ev := s.deckPlugins(), s.deckEventsSrc()
 	w := &s.deckWatch
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	want := map[string]bool{}
-	var on []string
+	var out deckTileState
+	// value — последнее значение события топика плагина; подписка создаётся при первом обращении.
+	value := func(plugin, topic string) (json.RawMessage, bool) {
+		key := plugin + "\x00" + topic
+		want[key] = true
+		if w.m == nil {
+			w.m = map[string]*deckWatch{}
+		}
+		cur := w.m[key]
+		if cur != nil && cur.drain() {
+			cur = nil
+			delete(w.m, key)
+		}
+		if cur == nil {
+			sub, err := ev.Subscribe(plugin, topic, 8)
+			if err != nil {
+				return nil, false
+			}
+			cur = &deckWatch{sub: sub}
+			w.m[key] = cur
+			cur.drain()
+		}
+		return cur.last, cur.have
+	}
 	if pl != nil && ev != nil {
 		infos, _ := pl.List()
 		byID := map[string]wasmplugins.Info{}
@@ -77,41 +107,32 @@ func (s *Server) deckActiveTiles(l deck.Layout) []string {
 					continue
 				}
 				a, ok := in.Meta.FindAction(t.Action.PluginAction)
-				if !ok || a.ActiveWhen == nil {
+				if !ok {
 					continue
 				}
-				key := in.Meta.ID + "\x00" + a.ActiveWhen.Topic
-				want[key] = true
-				if w.m == nil {
-					w.m = map[string]*deckWatch{}
-				}
-				cur := w.m[key]
-				if cur != nil && cur.drain() {
-					cur, w.m[key] = nil, nil
-				}
-				if cur == nil {
-					sub, err := ev.Subscribe(in.Meta.ID, a.ActiveWhen.Topic, 8)
-					if err != nil {
-						delete(w.m, key)
-						continue
+				if a.ActiveWhen != nil {
+					if v, ok := value(in.Meta.ID, a.ActiveWhen.Topic); ok && a.ActiveWhen.Match(v) {
+						out.On = append(out.On, t.ID)
 					}
-					cur = &deckWatch{sub: sub}
-					w.m[key] = cur
-					cur.drain()
 				}
-				if cur.have && a.ActiveWhen.Match(cur.last) {
-					on = append(on, t.ID)
+				if a.Display != nil {
+					if v, ok := value(in.Meta.ID, a.Display.Topic); ok {
+						if lines := a.Display.Lines(v); len(lines) > 0 {
+							if out.Text == nil {
+								out.Text = map[string][]string{}
+							}
+							out.Text[t.ID] = lines
+						}
+					}
 				}
 			}
 		}
 	}
 	for k, cur := range w.m {
 		if !want[k] {
-			if cur != nil {
-				cur.sub.Close()
-			}
+			cur.sub.Close()
 			delete(w.m, k)
 		}
 	}
-	return on
+	return out
 }

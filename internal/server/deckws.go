@@ -36,6 +36,8 @@ type deckStateData struct {
 	Online bool     `json:"online"`
 	Scene  string   `json:"scene"`
 	On     []string `json:"on"`
+	// Text — тексты плиток плагинов (id плитки → строки), например «сейчас играет».
+	Text map[string][]string `json:"text,omitempty"`
 }
 
 // deckStateNow собирает текущее состояние. Плитки считаются на сервере, чтобы устройству не нужно было знать, что значит «подсвечена».
@@ -45,7 +47,8 @@ func (s *Server) deckStateNow() deckStateData {
 	if o := s.deckObs(); o != nil {
 		st.Online, st.Scene = o.Connected(), o.CurrentScene()
 	}
-	st.On = append(st.On, s.deckActiveTiles(l)...)
+	pt := s.deckPluginTiles(l)
+	st.On, st.Text = append(st.On, pt.On...), pt.Text
 	if st.Online {
 		for _, g := range l.Groups {
 			for _, t := range g.Tiles {

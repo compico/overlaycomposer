@@ -252,3 +252,15 @@ func TestCSPForAllowsWebSocketOnOwnHost(t *testing.T) {
 		t.Error("клиент должен уметь и WebSocket, и опрос")
 	}
 }
+
+func TestRenderPluginTileHasTextBox(t *testing.T) {
+	l := valid()
+	l.Groups[0].Tiles[0].Action = Action{Type: ActionPlugin, Plugin: "music", PluginAction: "now"}
+	out, err := Render(ViewData{Layout: l})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(out), "<s></s>"); n != 1 {
+		t.Fatalf("блок текста только у плиток плагинов, нашли %d", n)
+	}
+}

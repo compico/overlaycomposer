@@ -22,7 +22,7 @@ type ViewData struct {
 type tileView struct {
 	ID, Label, Color, Icon, Scene string
 	Style                         template.CSS
-	Confirm, On                   bool
+	Confirm, On, Plugin           bool
 }
 
 type groupView struct {
@@ -64,7 +64,7 @@ func Render(v ViewData) ([]byte, error) {
 		gv := groupView{Name: g.Name, Style: template.CSS(fmt.Sprintf("left:%.2fem;width:%.2fem", x, w))}
 		for _, t := range g.Tiles {
 			tv := tileView{
-				ID: t.ID, Label: t.Label, Color: t.Color, Icon: Icons[t.Icon], Confirm: t.Confirm,
+				ID: t.ID, Label: t.Label, Color: t.Color, Icon: Icons[t.Icon], Confirm: t.Confirm, Plugin: t.Action.Type == ActionPlugin,
 				Style: template.CSS(fmt.Sprintf("left:%dem;top:%.2fem;width:%dem;height:%dem", t.X, topCells+titleCells+float64(t.Y), t.W, t.H)),
 				Scene: t.Action.Scene,
 			}
@@ -134,6 +134,9 @@ html,body{margin:0;height:100%;background:#111;color:#fff;font-family:"Segoe UI"
 .t b{position:absolute;left:.08em;right:.08em;bottom:.06em;font-size:.15em;font-weight:300;line-height:1.15;max-height:3.5em;overflow:hidden;word-wrap:break-word}
 .t em{position:absolute;left:.08em;top:.05em;font-size:.26em;font-style:normal;opacity:.9}
 .t.on i{border-color:#fff}
+.t s{position:absolute;left:.1em;right:.1em;top:.45em;bottom:.5em;text-decoration:none;overflow:hidden;text-align:center;font-size:.15em;line-height:1.3}
+.t s div{font-weight:300;opacity:.9;margin-top:.2em;overflow:hidden;text-overflow:ellipsis}
+.t s div:first-child{font-weight:600;font-size:1.25em;opacity:1;margin-top:0}
 .t.arm i{border-color:#e3c800;background-image:-webkit-linear-gradient(135deg,rgba(0,0,0,.25) 25%,transparent 25%,transparent 50%,rgba(0,0,0,.25) 50%,rgba(0,0,0,.25) 75%,transparent 75%);background-size:24px 24px}
 .t.busy{opacity:.6}
 .t.err i{border-color:#e51400}
@@ -145,7 +148,7 @@ body.off #dot{background:#e51400}
 {{.Palette}}
 </style></head>
 <body class="{{if not .Online}}off{{end}}" data-rev="{{.Rev}}">
-<div id="scroll"><div id="strip" style="{{.Strip}}">{{range .Groups}}<div class="g" style="{{.Style}}"><div class="gn"><span>{{.Name}}</span></div>{{range .Tiles}}<div class="t c-{{.Color}}{{if .On}} on{{end}}" style="{{.Style}}" data-id="{{.ID}}" data-scene="{{.Scene}}"{{if .Confirm}} data-confirm="1"{{end}}><i>{{if .Icon}}<em>{{.Icon}}</em>{{end}}<b>{{.Label}}</b></i></div>{{end}}</div>{{end}}</div></div>
+<div id="scroll"><div id="strip" style="{{.Strip}}">{{range .Groups}}<div class="g" style="{{.Style}}"><div class="gn"><span>{{.Name}}</span></div>{{range .Tiles}}<div class="t c-{{.Color}}{{if .On}} on{{end}}" style="{{.Style}}" data-id="{{.ID}}" data-scene="{{.Scene}}"{{if .Confirm}} data-confirm="1"{{end}}><i>{{if .Icon}}<em>{{.Icon}}</em>{{end}}{{if .Plugin}}<s></s>{{end}}<b>{{.Label}}</b></i></div>{{end}}</div>{{end}}</div></div>
 <span id="dot"></span>
 <div id="msg"></div>
 <script>{{.Script}}</script>
@@ -208,6 +211,15 @@ var tiles=document.querySelectorAll(".t[data-id]");
 for(var i=0;i<tiles.length;i++){
  (function(el){el.onclick=function(){onTap(el);};})(tiles[i]);
 }
+function setText(box,lines){
+ var key=lines.join("\n");
+ if(box.getAttribute("data-k")===key){return;}
+ box.setAttribute("data-k",key);
+ while(box.firstChild){box.removeChild(box.firstChild);}
+ for(var i=0;i<lines.length;i++){
+  var d=document.createElement("div");d.appendChild(document.createTextNode(lines[i]));box.appendChild(d);
+ }
+}
 function apply(j){
  cls(body,"off",!j.online);
  if(String(j.rev)!==rev){
@@ -216,9 +228,12 @@ function apply(j){
  }
  var on=j.on,map=null;
  if(on){map={};for(var m=0;m<on.length;m++){map[on[m]]=1;}}
+ var tx=j.text||{};
  for(var k=0;k<tiles.length;k++){
-  var el=tiles[k],s=el.getAttribute("data-scene");
-  cls(el,"on",map?!!map[el.getAttribute("data-id")]:(!!s&&j.online&&s===j.scene));
+  var el=tiles[k],s=el.getAttribute("data-scene"),id=el.getAttribute("data-id");
+  cls(el,"on",map?!!map[id]:(!!s&&j.online&&s===j.scene));
+  var box=el.getElementsByTagName("s")[0];
+  if(box){setText(box,tx[id]||[]);}
  }
 }
 var ws=null,wsUp=false,wsTry=0,polling=false;
