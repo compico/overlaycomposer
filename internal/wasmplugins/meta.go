@@ -11,6 +11,7 @@ import (
 	"github.com/compico/overlaycomposer/internal/plugins"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -492,6 +493,97 @@ type Action struct {
 	Danger bool `json:"danger,omitempty"`
 	// ActiveWhen — когда плитка подсвечена: последнее событие топика плагина (из Events) удовлетворяет условию. Необязательно.
 	ActiveWhen *ActiveWhen `json:"activeWhen,omitempty"`
+	// Display — текст на плитке из событий плагина (например, «сейчас играет» на крупной плитке). Необязательно.
+	Display *Display `json:"display,omitempty"`
+}
+
+// Display — текст плитки Deck из последнего события топика: каждое поле Fields (путь «a.b») даёт строку. Строка — как есть,
+// число — числом, массив строк — через запятую; пустые и отсутствующие поля пропускаются. Строки обрезаются по maxDisplayRunes.
+type Display struct {
+	Topic  string   `json:"topic"`
+	Fields []string `json:"fields"`
+}
+
+const (
+	maxDisplayFields = 4
+	maxDisplayRunes  = 80
+)
+
+func (m *Meta) validateDisplay(a *Action) error {
+	d := a.Display
+	if d == nil {
+		return nil
+	}
+	declared := false
+	for _, e := range m.Events {
+		if e.ID == d.Topic {
+			declared = true
+		}
+	}
+	if !declared {
+		return fmt.Errorf("action %q: display.topic %q is not declared in events", a.ID, d.Topic)
+	}
+	if len(d.Fields) == 0 || len(d.Fields) > maxDisplayFields {
+		return fmt.Errorf("action %q: display.fields needs 1 to %d paths", a.ID, maxDisplayFields)
+	}
+	for _, f := range d.Fields {
+		if !activeFieldRe.MatchString(f) {
+			return fmt.Errorf("action %q: display.fields must be paths like a.b (letters, digits, _; up to 4 parts)", a.ID)
+		}
+	}
+	return nil
+}
+
+// jsonPath достаёт значение по пути «a.b» из JSON-объекта.
+func jsonPath(v any, path string) (any, bool) {
+	for _, k := range strings.Split(path, ".") {
+		o, ok := v.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		if v, ok = o[k]; !ok {
+			return nil, false
+		}
+	}
+	return v, true
+}
+
+// Lines — строки текста плитки из значения события.
+func (d Display) Lines(data json.RawMessage) []string {
+	var v any
+	if json.Unmarshal(data, &v) != nil {
+		return nil
+	}
+	var out []string
+	for _, f := range d.Fields {
+		x, ok := jsonPath(v, f)
+		if !ok {
+			continue
+		}
+		var s string
+		switch t := x.(type) {
+		case string:
+			s = t
+		case float64:
+			s = strconv.FormatFloat(t, 'f', -1, 64)
+		case []any:
+			parts := make([]string, 0, len(t))
+			for _, e := range t {
+				if es, ok := e.(string); ok && strings.TrimSpace(es) != "" {
+					parts = append(parts, strings.TrimSpace(es))
+				}
+			}
+			s = strings.Join(parts, ", ")
+		}
+		s = strings.Join(strings.Fields(s), " ")
+		if r := []rune(s); len(r) > maxDisplayRunes {
+			s = string(r[:maxDisplayRunes-1]) + "…"
+		}
+		if s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // ActiveWhen — условие подсветки плитки Deck по событиям плагина. Topic — объявленный в Events топик. Field — путь «a.b» к полю
@@ -608,6 +700,9 @@ func (m *Meta) validateActions() error {
 			return fmt.Errorf("action %q: body must be JSON up to %d bytes", a.ID, maxActionBody)
 		}
 		if err := m.validateActiveWhen(a); err != nil {
+			return err
+		}
+		if err := m.validateDisplay(a); err != nil {
 			return err
 		}
 	}

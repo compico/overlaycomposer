@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/compico/overlaycomposer/internal/events"
@@ -60,6 +61,37 @@ func TestDeckPluginTileHighlightFollowsEvents(t *testing.T) {
 	_ = bus.Publish("music", "np", json.RawMessage(`{"playing":true}`), true)
 	if len(on()) != 1 {
 		t.Fatal("после перезагрузки плагина")
+	}
+	s.deckPluginsOverride, s.deckEventsOverride = nil, nil
+}
+
+func TestDeckPluginTileTextFromEvents(t *testing.T) {
+	s, _ := deckEnv(t)
+	info := musicInfo(wasmplugins.StateRunning)
+	info.Meta.Events = []wasmplugins.EventDecl{{ID: "now"}}
+	info.Meta.Actions[0].Display = &wasmplugins.Display{Topic: "now", Fields: []string{"now.title", "now.artists"}}
+	s.deckPluginsOverride = &fakeDeckPlugins{infos: []wasmplugins.Info{info}}
+	bus := events.New(events.Options{})
+	_ = bus.Declare("music", []string{"now"})
+	s.deckEventsOverride = bus
+	if code, b, _ := deckReq(t, s, "PUT", "/api/deck/layout", deckPluginLayout, true); code != 200 {
+		t.Fatalf("save: %d %s", code, b)
+	}
+	if got := s.deckStateNow().Text; len(got) != 0 {
+		t.Fatalf("событий не было: %v", got)
+	}
+	_ = bus.Publish("music", "now", json.RawMessage(`{"now":{"title":"Song","artists":["A","B"]}}`), true)
+	st := s.deckStateNow()
+	if !reflect.DeepEqual(st.Text["toggle"], []string{"Song", "A, B"}) || len(st.Text) != 1 {
+		t.Fatalf("текст: %v", st.Text)
+	}
+	raw := string(encodeDeckState(st))
+	if !strings.Contains(raw, `"text":{"toggle":["Song","A, B"]}`) {
+		t.Fatalf("кадр: %s", raw)
+	}
+	_ = bus.Publish("music", "now", json.RawMessage(`{"now":null}`), true)
+	if got := s.deckStateNow().Text; len(got) != 0 {
+		t.Fatalf("ничего не играет: %v", got)
 	}
 	s.deckPluginsOverride, s.deckEventsOverride = nil, nil
 }

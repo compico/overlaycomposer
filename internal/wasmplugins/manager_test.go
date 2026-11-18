@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -358,5 +359,40 @@ func TestActionActiveWhen(t *testing.T) {
 		if got := c.w.Match([]byte(c.data)); got != c.want {
 			t.Errorf("%+v на %s: %v", c.w, c.data, got)
 		}
+	}
+}
+
+func TestActionDisplay(t *testing.T) {
+	m := baseMeta("music")
+	m.Routes = []Route{{"POST", "/control", "ctl"}}
+	m.Events = []EventDecl{{ID: "now"}}
+	check := func(d *Display) error {
+		m.Actions = []Action{{ID: "now", Title: "Now", Path: "/control", Display: d}}
+		return m.Validate()
+	}
+	if err := check(&Display{Topic: "now", Fields: []string{"now.title", "now.artists"}}); err != nil {
+		t.Fatal(err)
+	}
+	for name, d := range map[string]*Display{
+		"топик не объявлен": {Topic: "x", Fields: []string{"a"}},
+		"нет полей":         {Topic: "now"},
+		"много полей":       {Topic: "now", Fields: []string{"a", "b", "c", "d", "e"}},
+		"плохое поле":       {Topic: "now", Fields: []string{"a b"}},
+	} {
+		if check(d) == nil {
+			t.Errorf("%s: ожидалась ошибка", name)
+		}
+	}
+	d := Display{Topic: "now", Fields: []string{"now.title", "now.artists", "now.n", "missing", "now.empty"}}
+	got := d.Lines([]byte(`{"now":{"title":"  Song \n Name ","artists":["A"," ","B"],"n":2.5,"empty":""}}`))
+	if want := []string{"Song Name", "A, B", "2.5"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("%q", got)
+	}
+	long := Display{Topic: "now", Fields: []string{"t"}}.Lines([]byte(`{"t":"` + strings.Repeat("я", 200) + `"}`))
+	if len(long) != 1 || len([]rune(long[0])) != maxDisplayRunes {
+		t.Fatalf("обрезка: %d", len([]rune(long[0])))
+	}
+	if (Display{Fields: []string{"a"}}).Lines([]byte(`nope`)) != nil {
+		t.Fatal("не JSON")
 	}
 }

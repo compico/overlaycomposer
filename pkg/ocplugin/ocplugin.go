@@ -84,6 +84,16 @@ type Action struct {
 	Danger bool            `json:"danger,omitempty"` // необратимо или заметно зрителям: плитка просит подтверждения
 	// ActiveWhen — когда плитка подсвечена: последнее событие топика (объявите его в Meta.Events) удовлетворяет условию.
 	ActiveWhen *ActiveWhen `json:"activeWhen,omitempty"`
+	// Display — текст на плитке из событий плагина (см. Display).
+	Display *Display `json:"display,omitempty"`
+}
+
+// Display — текст плитки Deck из последнего события топика (объявите его в Meta.Events): каждое поле Fields (путь «a.b»)
+// даёт строку; строка берётся как есть, число — числом, массив строк — через запятую. До 4 полей, строка до 80 символов.
+// Первая строка на плитке жирная (например, название трека), остальные обычные (исполнитель).
+type Display struct {
+	Topic  string   `json:"topic"`
+	Fields []string `json:"fields"`
 }
 
 // ActiveWhen — условие подсветки плитки Deck по событию плагина. Field — путь «a.b» к полю объекта события (пусто — само значение);
