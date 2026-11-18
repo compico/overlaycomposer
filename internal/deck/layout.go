@@ -49,7 +49,11 @@ func sizeOK(w, h int) bool {
 const (
 	ActionScene  = "scene"  // сменить сцену OBS (Scene)
 	ActionPlugin = "plugin" // действие wasm-плагина (Plugin, PluginAction): плагин объявляет их в Meta.Actions
+	ActionFolder = "folder" // папка со сценами (Scenes): нажатие открывает выбор, сервер принимает только сцены из списка
 )
+
+// MaxFolderScenes — сколько сцен в одной папке.
+const MaxFolderScenes = 8
 
 var idRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
 
@@ -100,10 +104,49 @@ type Tile struct {
 type Action struct {
 	Type  string `json:"type"`
 	Scene string `json:"scene,omitempty"`
+	// Scenes — избранные сцены папки (ActionFolder), 1..MaxFolderScenes, без повторов.
+	Scenes []string `json:"scenes,omitempty"`
 	// Plugin и PluginAction — id плагина и его объявленного действия. Что именно вызвать (маршрут, тело), решает сервер по Meta плагина;
 	// плагина может не быть в момент сохранения (он ещё не установлен) — тогда нажатие вернёт ошибку, а раскладка останется валидной.
 	Plugin       string `json:"plugin,omitempty"`
 	PluginAction string `json:"pluginAction,omitempty"`
+}
+
+// HasScene сообщает, переключает ли действие на эту сцену: сцена плитки или любая сцена из папки.
+func (a Action) HasScene(name string) bool {
+	if name == "" {
+		return false
+	}
+	switch a.Type {
+	case ActionScene:
+		return a.Scene == name
+	case ActionFolder:
+		for _, s := range a.Scenes {
+			if s == name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func validSceneName(s string) bool {
+	n := utf8.RuneCountInString(s)
+	return n > 0 && n <= 200
+}
+
+func validFolder(scenes []string) error {
+	if len(scenes) == 0 || len(scenes) > MaxFolderScenes {
+		return fmt.Errorf("folder needs 1..%d scenes", MaxFolderScenes)
+	}
+	seen := map[string]bool{}
+	for _, s := range scenes {
+		if !validSceneName(s) || seen[s] {
+			return fmt.Errorf("folder scenes: names 1..200 characters, no repeats")
+		}
+		seen[s] = true
+	}
+	return nil
 }
 
 // Width — ширина группы в клетках (минимум 1, чтобы пустая группа оставалась видимой и её можно было наполнить).
@@ -184,8 +227,12 @@ func (l *Layout) Validate() error {
 			}
 			switch t.Action.Type {
 			case ActionScene:
-				if n := utf8.RuneCountInString(t.Action.Scene); n == 0 || n > 200 {
+				if !validSceneName(t.Action.Scene) {
 					return fmt.Errorf("tile %q: scene name 1..200 characters", t.ID)
+				}
+			case ActionFolder:
+				if err := validFolder(t.Action.Scenes); err != nil {
+					return fmt.Errorf("tile %q: %v", t.ID, err)
 				}
 			case ActionPlugin:
 				if !pluginIDRe.MatchString(t.Action.Plugin) || !actionIDRe.MatchString(t.Action.PluginAction) {

@@ -146,10 +146,26 @@ func (s *Server) deckState(c fiber.Ctx) error {
 	return c.JSON(s.deckStateNow())
 }
 
+// deckSetScene переключает сцену OBS; имя уже проверено по сохранённой раскладке.
+func (s *Server) deckSetScene(c fiber.Ctx, scene string) error {
+	o := s.deckObs()
+	if o == nil || !o.Connected() {
+		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "OBS is not connected"})
+	}
+	if err := o.SetScene(scene); err != nil {
+		if errors.Is(err, obs.ErrUnknownScene) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "scene not found in OBS"})
+		}
+		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{"ok": true})
+}
+
 func (s *Server) deckPress(c fiber.Ctx) error {
 	var b struct {
 		Tile    string `json:"tile"`
 		Confirm bool   `json:"confirm"`
+		Scene   string `json:"scene"` // для папки: выбранная сцена из её списка
 	}
 	if !body(c, &b) {
 		return bad(c, "invalid json body")
@@ -163,22 +179,17 @@ func (s *Server) deckPress(c fiber.Ctx) error {
 	if !ok {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "no such tile"})
 	}
-	if t.Confirm && !b.Confirm {
+	if t.Confirm && !b.Confirm && t.Action.Type != deck.ActionFolder {
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "confirm required", "confirm": true})
 	}
 	switch t.Action.Type {
 	case deck.ActionScene:
-		o := s.deckObs()
-		if o == nil || !o.Connected() {
-			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "OBS is not connected"})
+		return s.deckSetScene(c, t.Action.Scene)
+	case deck.ActionFolder:
+		if b.Scene == "" || !t.Action.HasScene(b.Scene) {
+			return bad(c, "pick a scene from this folder")
 		}
-		if err := o.SetScene(t.Action.Scene); err != nil {
-			if errors.Is(err, obs.ErrUnknownScene) {
-				return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "scene not found in OBS"})
-			}
-			return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": err.Error()})
-		}
-		return c.JSON(fiber.Map{"ok": true})
+		return s.deckSetScene(c, b.Scene)
 	case deck.ActionPlugin:
 		return s.deckPluginPress(c, t)
 	default:

@@ -40,6 +40,13 @@ type deckStateData struct {
 	Text map[string][]string `json:"text,omitempty"`
 }
 
+func (st *deckStateData) setText(id string, lines []string) {
+	if st.Text == nil {
+		st.Text = map[string][]string{}
+	}
+	st.Text[id] = lines
+}
+
 // deckStateNow собирает текущее состояние. Плитки считаются на сервере, чтобы устройству не нужно было знать, что значит «подсвечена».
 func (s *Server) deckStateNow() deckStateData {
 	l, _ := s.deckLayout()
@@ -52,8 +59,11 @@ func (s *Server) deckStateNow() deckStateData {
 	if st.Online {
 		for _, g := range l.Groups {
 			for _, t := range g.Tiles {
-				if t.Action.Type == deck.ActionScene && t.Action.Scene != "" && t.Action.Scene == st.Scene {
+				if t.Action.HasScene(st.Scene) {
 					st.On = append(st.On, t.ID)
+					if t.Action.Type == deck.ActionFolder { // на плитке папки — название активной сцены
+						st.setText(t.ID, []string{st.Scene})
+					}
 				}
 			}
 		}

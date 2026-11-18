@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -340,5 +341,35 @@ func TestDeckLayoutListsPluginActions(t *testing.T) {
 	_, b, _ = deckReq(t, s, "GET", "/api/deck/layout", "", false)
 	if !strings.Contains(b, `"pluginActions":[]`) {
 		t.Fatalf("без плагинов — пустой список, а не null: %s", b)
+	}
+}
+
+func TestDeckFolderPressAcceptsOnlyListedScenes(t *testing.T) {
+	s, o := deckEnv(t)
+	o.scenes = []string{"Game", "Chat", "Secret"}
+	layout := `{"rev":0,"groups":[{"id":"g","tiles":[{"id":"fav","x":0,"y":0,"w":2,"h":3,"confirm":true,"action":{"type":"folder","scenes":["Game","Chat"]}}]}]}`
+	if code, b, _ := deckReq(t, s, "PUT", "/api/deck/layout", layout, true); code != 200 {
+		t.Fatalf("save: %d %s", code, b)
+	}
+	press := func(body string) int {
+		c, _, _ := deckReq(t, s, "POST", "/api/deck/press", body, true)
+		return c
+	}
+	if c := press(`{"tile":"fav"}`); c != 400 {
+		t.Fatalf("без сцены: %d", c)
+	}
+	if c := press(`{"tile":"fav","scene":"Secret"}`); c != 400 || o.scene == "Secret" {
+		t.Fatalf("чужая сцена: %d %q", c, o.scene)
+	}
+	if c := press(`{"tile":"fav","scene":"Chat"}`); c != 200 || o.scene != "Chat" {
+		t.Fatalf("сцена из папки (confirm папке не нужен): %d %q", c, o.scene)
+	}
+	st := s.deckStateNow()
+	if !reflect.DeepEqual(st.On, []string{"fav"}) || !reflect.DeepEqual(st.Text["fav"], []string{"Chat"}) {
+		t.Fatalf("состояние: %+v", st)
+	}
+	o.scene = "Secret"
+	if st := s.deckStateNow(); len(st.On) != 0 || len(st.Text) != 0 {
+		t.Fatalf("сцена не из папки: %+v", st)
 	}
 }
