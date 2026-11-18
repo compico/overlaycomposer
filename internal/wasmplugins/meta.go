@@ -490,6 +490,87 @@ type Action struct {
 	Body   json.RawMessage `json:"body,omitempty"`   // готовое тело запроса (JSON, до 1 КиБ)
 	// Danger — действие необратимо или заметно зрителям (бан трека, остановка): плитка по умолчанию просит подтверждения.
 	Danger bool `json:"danger,omitempty"`
+	// ActiveWhen — когда плитка подсвечена: последнее событие топика плагина (из Events) удовлетворяет условию. Необязательно.
+	ActiveWhen *ActiveWhen `json:"activeWhen,omitempty"`
+}
+
+// ActiveWhen — условие подсветки плитки Deck по событиям плагина. Topic — объявленный в Events топик. Field — путь «a.b» к полю
+// объекта события (пусто — само значение события). Equals — скаляр для сравнения (строка, число, bool); без него условие
+// выполнено, когда значение «истинно» (true, ненулевое число, непустая строка).
+type ActiveWhen struct {
+	Topic  string          `json:"topic"`
+	Field  string          `json:"field,omitempty"`
+	Equals json.RawMessage `json:"equals,omitempty"`
+}
+
+var activeFieldRe = regexp.MustCompile(`^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+){0,3}$`)
+
+const maxActiveEquals = 120
+
+func (m *Meta) validateActiveWhen(a *Action) error {
+	w := a.ActiveWhen
+	if w == nil {
+		return nil
+	}
+	declared := false
+	for _, e := range m.Events {
+		if e.ID == w.Topic {
+			declared = true
+		}
+	}
+	if !declared {
+		return fmt.Errorf("action %q: activeWhen.topic %q is not declared in events", a.ID, w.Topic)
+	}
+	if w.Field != "" && !activeFieldRe.MatchString(w.Field) {
+		return fmt.Errorf("action %q: activeWhen.field must be a path like a.b (letters, digits, _; up to 4 parts)", a.ID)
+	}
+	if len(w.Equals) > 0 {
+		var v any
+		if len(w.Equals) > maxActiveEquals || json.Unmarshal(w.Equals, &v) != nil {
+			return fmt.Errorf("action %q: activeWhen.equals must be a short JSON scalar", a.ID)
+		}
+		switch v.(type) {
+		case string, float64, bool:
+		default:
+			return fmt.Errorf("action %q: activeWhen.equals must be a string, number or boolean", a.ID)
+		}
+	}
+	return nil
+}
+
+// Match сообщает, удовлетворяет ли значение события условию.
+func (w ActiveWhen) Match(data json.RawMessage) bool {
+	var v any
+	if json.Unmarshal(data, &v) != nil {
+		return false
+	}
+	if w.Field != "" {
+		for _, k := range strings.Split(w.Field, ".") {
+			o, ok := v.(map[string]any)
+			if !ok {
+				return false
+			}
+			if v, ok = o[k]; !ok {
+				return false
+			}
+		}
+	}
+	if len(w.Equals) > 0 {
+		var want any
+		if json.Unmarshal(w.Equals, &want) != nil {
+			return false
+		}
+		return v == want
+	}
+	switch x := v.(type) {
+	case bool:
+		return x
+	case float64:
+		return x != 0
+	case string:
+		return x != ""
+	}
+	return false
 }
 
 const (
@@ -525,6 +606,9 @@ func (m *Meta) validateActions() error {
 		}
 		if len(a.Body) > maxActionBody || (len(a.Body) > 0 && !json.Valid(a.Body)) {
 			return fmt.Errorf("action %q: body must be JSON up to %d bytes", a.ID, maxActionBody)
+		}
+		if err := m.validateActiveWhen(a); err != nil {
+			return err
 		}
 	}
 	return nil
