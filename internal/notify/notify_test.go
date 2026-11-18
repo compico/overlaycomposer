@@ -161,3 +161,31 @@ func TestSyncAnnouncesOnceAndResolves(t *testing.T) {
 		t.Fatalf("resolve: %+v", l)
 	}
 }
+
+func TestCheckDeprecatedKindIsIndependentFromUpdates(t *testing.T) {
+	c := Open("")
+	var n int
+	both := finder(&n,
+		Candidate{Key: "plugin:a@2", Title: "A 2"},
+		Candidate{Kind: KindPluginDeprecated, Key: "deprecated:widget:old", Title: "Old is deprecated", Data: map[string]string{"id": "old"}},
+		Candidate{Kind: "что-то-чужое", Key: "x"}, // неизвестный вид игнорируется
+	)
+	if err := c.Check(context.Background(), false, both); err != nil {
+		t.Fatal(err)
+	}
+	kinds := map[string]string{}
+	for _, it := range c.List() {
+		kinds[it.Key] = it.Kind
+	}
+	if len(kinds) != 2 || kinds["plugin:a@2"] != KindPluginUpdate || kinds["deprecated:widget:old"] != KindPluginDeprecated {
+		t.Fatalf("%+v", kinds)
+	}
+	// плагин удалён, но обновление всё ещё есть: снимается только уведомление об устаревании
+	c.now = func() time.Time { return time.Now().Add(CheckInterval + time.Minute) }
+	if err := c.Check(context.Background(), false, finder(&n, Candidate{Key: "plugin:a@2", Title: "A 2"})); err != nil {
+		t.Fatal(err)
+	}
+	if l := c.List(); len(l) != 1 || l[0].Key != "plugin:a@2" {
+		t.Fatalf("%+v", l)
+	}
+}

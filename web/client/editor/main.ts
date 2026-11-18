@@ -26,6 +26,7 @@ import { type Api, httpApi } from "./lib/api.ts";
 import { createNotificationsModel } from "./features/notifications/model.ts";
 import { mountNotifications } from "./features/notifications/view.ts";
 import { createStoreModel } from "./features/store/model.ts";
+import { deprecationFor } from "./features/store/deprecated.ts";
 import { mountStore } from "./features/store/view.ts";
 import { PERM_TEXT } from "./lib/permissions.ts";
 import { copyText, COPY_ICON } from "./lib/clipboard.ts";
@@ -252,6 +253,7 @@ async function afterPluginChange() {
   renderProps();
 }
 
+const storeModel = createStoreModel({ api, afterChange: afterPluginChange });
 const pluginStore = mountStore(
   {
     openBtn: $("openStoreBtn"), dialog: $<HTMLDialogElement>("storeDialog"), body: $("storeBody"), refreshBtn: $("storeRefreshBtn"),
@@ -259,7 +261,7 @@ const pluginStore = mountStore(
     tokenInput: $<HTMLInputElement>("storeToken"), tokenSave: $("storeTokenSave"), tokenClear: $<HTMLButtonElement>("storeTokenClear"),
     openPluginsBtn: $("openPluginsBtn"),
   },
-  createStoreModel({ api, afterChange: afterPluginChange }),
+  storeModel,
   {
     ui: { toast, fail },
     usedBy: (id) => sources.filter((x) => x.type === "plugin" && x.data.plugin === id).length,
@@ -273,7 +275,19 @@ mountWasmPlugins(
   { openBtn: $("pluginsBtn"), dialog: $<HTMLDialogElement>("wasmDialog"), body: $("wasmBody"), reloadBtn: $("wasmReloadBtn"), folderBtn: $("wasmFolderBtn"), status: $("wasmStatus"),
     settings: { dialog: $<HTMLDialogElement>("wasmSettingsDialog"), title: $("wasmSettingsTitle"), form: $("wasmSettingsForm"), frameBox: $("wasmSettingsFrame") } },
   wasmModel,
-  { ui: { toast, fail }, openFolder: () => api("/api/app/open", "POST", { what: "plugins" }), host: pluginHost },
+  {
+    ui: { toast, fail }, openFolder: () => api("/api/app/open", "POST", { what: "plugins" }), host: pluginHost,
+    deprecations: {
+      find: (id) => {
+        const sources = storeModel.get().data?.sources ?? [];
+        const dep = deprecationFor(sources, "wasm", id);
+        return dep ? { dep, sources } : null;
+      },
+      subscribe: (cb) => { storeModel.subscribe(cb); },
+      refresh: () => { if (!storeModel.get().loading) void storeModel.load(); },
+      openStore: () => pluginStore.open(),
+    },
+  },
 );
 mountTabs($("settingsDialog"));
 mountDeck(

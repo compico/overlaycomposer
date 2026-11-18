@@ -185,10 +185,27 @@ func run() int {
 
 	// Центр уведомлений: обновления плагинов (проверка при запуске и по кнопке) и новая версия приложения.
 	center := notify.Open(filepath.Join(p.DataDir, "notifications.json"))
+	var wasmNames func() map[string]string // id → имя установленных wasm-плагинов; задаётся ниже, когда они загружены
 	checkPlugins := func(ctx context.Context, force bool) error {
 		return center.Check(ctx, force, func(ctx context.Context) ([]notify.Candidate, bool) {
 			ups, ok := mk.Updates(ctx, force)
 			out := make([]notify.Candidate, 0, len(ups))
+			// Устаревшие плагины: каталог только что загружен (кэш), второго запроса в сеть нет.
+			var wn map[string]string
+			if wasmNames != nil {
+				wn = wasmNames()
+			}
+			deps, depOK := mk.DeprecatedInstalled(ctx, false, wn)
+			ok = ok && depOK
+			for _, d := range deps {
+				out = append(out, notify.Candidate{
+					Kind:  notify.KindPluginDeprecated,
+					Key:   "deprecated:" + d.Kind + ":" + d.ID,
+					Title: fmt.Sprintf("%s is deprecated", d.Name),
+					Text:  d.Reason,
+					Data:  d,
+				})
+			}
 			for _, u := range ups {
 				out = append(out, notify.Candidate{
 					Key:   "plugin:" + u.ID + "@" + u.To,
@@ -206,6 +223,14 @@ func run() int {
 	wasmMgr, _ := openWasmPlugins(p, kvSvc, twMgr, chatSvc, pluginReg, eventBus)
 	if wasmMgr != nil {
 		defer wasmMgr.Close()
+		wasmNames = func() map[string]string {
+			infos, _ := wasmMgr.List()
+			names := make(map[string]string, len(infos))
+			for _, in := range infos {
+				names[in.Meta.ID] = in.Meta.Name
+			}
+			return names
+		}
 	}
 
 	srv = server.New(server.Deps{

@@ -2,6 +2,8 @@
 import { el } from "../../lib/dom.ts";
 import { PERM_TEXT } from "../../lib/permissions.ts";
 import type { Ui } from "../../lib/ui.ts";
+import { deprecationFor } from "./deprecated.ts";
+import { deprecationBlock } from "./deprecated-view.ts";
 import type { StoreData, StoreModel } from "./model.ts";
 
 export interface StoreRefs {
@@ -42,6 +44,15 @@ export function mountStore(refs: StoreRefs, model: StoreModel, ports: StorePorts
   };
 
   function render(d: StoreData) {
+    /** Замена устаревшего плагина — виджет из каталога: ставится тут же, с тостом как при обычной установке. */
+    const deprecationActions = {
+      install: async (e: StoreData["sources"][number]["plugins"][number]) => {
+        try {
+          await model.install(e);
+          ui.toast(`${e.name} installed. Add it via Add Source → widget plugin.`);
+        } catch (err) { ui.fail(err); }
+      },
+    };
     refs.tokenSummary.textContent = d.hasToken ? "Private repositories — GitHub token is set" : "Private repositories (GitHub token)";
     refs.tokenClear.toggleAttribute("disabled", !d.hasToken);
     const shown = new Set<string>();
@@ -84,7 +95,8 @@ export function mountStore(refs: StoreRefs, model: StoreModel, ports: StorePorts
           el("div", { style: "flex:1;min-width:0" },
             el("div", { textContent: title }),
             el("div", { class: "hint", textContent: [p.author, p.description].filter(Boolean).join(" — ") }),
-            el("div", { class: "hint", textContent: perms })),
+            el("div", { class: "hint", textContent: perms }),
+            ...(p.deprecated ? [deprecationBlock(p.deprecated, d.sources, deprecationActions)] : [])),
           button));
       }
     }
@@ -98,8 +110,10 @@ export function mountStore(refs: StoreRefs, model: StoreModel, ports: StorePorts
           if (!confirm(`Uninstall “${name}”?`)) { await model.load(); return; }
           await model.uninstall(id);
         });
+        const dep = deprecationFor(d.sources, "widget", id, rec.repo);
         parts.push(el("div", { class: "row", style: "justify-content:space-between;border-top:1px solid var(--line);padding-top:6px" },
-          el("div", {}, el("div", { textContent: `${name}${rec.version ? ` ${rec.version}` : ""}` }), el("div", { class: "hint", textContent: rec.repo })), b));
+          el("div", {}, el("div", { textContent: `${name}${rec.version ? ` ${rec.version}` : ""}` }), el("div", { class: "hint", textContent: rec.repo }),
+            ...(dep ? [deprecationBlock(dep, d.sources, deprecationActions)] : [])), b));
       }
     }
     if (!d.sources.length && !orphans.length) parts.push(el("div", { class: "empty", textContent: "No sources yet. Add a GitHub repository above." }));
