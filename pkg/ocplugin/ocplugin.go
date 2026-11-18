@@ -82,6 +82,16 @@ type Action struct {
 	Path   string          `json:"path"`
 	Body   json.RawMessage `json:"body,omitempty"`   // готовое тело запроса: JSON до 1 КиБ
 	Danger bool            `json:"danger,omitempty"` // необратимо или заметно зрителям: плитка просит подтверждения
+	// ActiveWhen — когда плитка подсвечена: последнее событие топика (объявите его в Meta.Events) удовлетворяет условию.
+	ActiveWhen *ActiveWhen `json:"activeWhen,omitempty"`
+}
+
+// ActiveWhen — условие подсветки плитки Deck по событию плагина. Field — путь «a.b» к полю объекта события (пусто — само значение);
+// Equals — скаляр для сравнения (строка, число, bool), например json.RawMessage(`true`); без него подсветка, когда значение «истинно».
+type ActiveWhen struct {
+	Topic  string          `json:"topic"`
+	Field  string          `json:"field,omitempty"`
+	Equals json.RawMessage `json:"equals,omitempty"`
 }
 
 // NetLocalTarget — адрес программы на этом компьютере: Target — host:port (127.0.0.1, localhost или [::1]).

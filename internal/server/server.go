@@ -95,6 +95,8 @@ type Server struct {
 	deckObsOverride     deckOBS     // подмена OBS в тестах
 	deckPluginsOverride deckPlugins // подмена плагинов в тестах
 	deckHubMu           sync.Mutex
+	deckEventsOverride  deckEvents // подмена брокера событий в тестах
+	deckWatch           deckWatcher
 	deckHub             *deckHub // рассылка состояния панели по WebSocket (создаётся при первом обращении)
 
 	deny *denyLimiter // отказы без токена по адресам (nil — без ограничения, как в тестах)

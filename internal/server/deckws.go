@@ -45,6 +45,7 @@ func (s *Server) deckStateNow() deckStateData {
 	if o := s.deckObs(); o != nil {
 		st.Online, st.Scene = o.Connected(), o.CurrentScene()
 	}
+	st.On = append(st.On, s.deckActiveTiles(l)...)
 	if st.Online {
 		for _, g := range l.Groups {
 			for _, t := range g.Tiles {

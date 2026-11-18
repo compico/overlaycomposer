@@ -314,3 +314,49 @@ func TestMetaActions(t *testing.T) {
 		t.Fatal("несуществующее действие")
 	}
 }
+
+func TestActionActiveWhen(t *testing.T) {
+	m := baseMeta("music")
+	m.Routes = []Route{{"POST", "/control", "ctl"}}
+	m.Events = []EventDecl{{ID: "np"}}
+	ok := func(w *ActiveWhen) error {
+		m.Actions = []Action{{ID: "toggle", Title: "T", Path: "/control", ActiveWhen: w}}
+		return m.Validate()
+	}
+	if err := ok(&ActiveWhen{Topic: "np", Field: "playing", Equals: []byte(`true`)}); err != nil {
+		t.Fatal(err)
+	}
+	for name, w := range map[string]*ActiveWhen{
+		"топик не объявлен": {Topic: "other"},
+		"плохое поле":       {Topic: "np", Field: "a b"},
+		"глубокое поле":     {Topic: "np", Field: "a.b.c.d.e"},
+		"не скаляр":         {Topic: "np", Equals: []byte(`{"a":1}`)},
+		"не JSON":           {Topic: "np", Equals: []byte(`nope`)},
+	} {
+		if ok(w) == nil {
+			t.Errorf("%s: ожидалась ошибка", name)
+		}
+	}
+	cases := []struct {
+		w    ActiveWhen
+		data string
+		want bool
+	}{
+		{ActiveWhen{Topic: "np", Field: "playing", Equals: []byte(`true`)}, `{"playing":true}`, true},
+		{ActiveWhen{Topic: "np", Field: "playing", Equals: []byte(`true`)}, `{"playing":false}`, false},
+		{ActiveWhen{Topic: "np", Field: "playing"}, `{"playing":true}`, true},
+		{ActiveWhen{Topic: "np", Field: "a.b", Equals: []byte(`"x"`)}, `{"a":{"b":"x"}}`, true},
+		{ActiveWhen{Topic: "np", Field: "a.b"}, `{"a":1}`, false},
+		{ActiveWhen{Topic: "np", Field: "n", Equals: []byte(`3`)}, `{"n":3}`, true},
+		{ActiveWhen{Topic: "np"}, `true`, true},
+		{ActiveWhen{Topic: "np"}, `""`, false},
+		{ActiveWhen{Topic: "np"}, `null`, false},
+		{ActiveWhen{Topic: "np"}, `not json`, false},
+		{ActiveWhen{Topic: "np", Field: "x"}, `[1]`, false},
+	}
+	for _, c := range cases {
+		if got := c.w.Match([]byte(c.data)); got != c.want {
+			t.Errorf("%+v на %s: %v", c.w, c.data, got)
+		}
+	}
+}
