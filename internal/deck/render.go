@@ -22,7 +22,13 @@ type ViewData struct {
 type tileView struct {
 	ID, Label, Color, Icon, Scene string
 	Style                         template.CSS
-	Confirm, On, Plugin           bool
+	Confirm, On, Plugin, Folder   bool
+}
+
+// folderView — оверлей выбора сцены для плитки-папки.
+type folderView struct {
+	ID     string
+	Scenes []string
 }
 
 type groupView struct {
@@ -34,6 +40,7 @@ type groupView struct {
 type view struct {
 	Rev     int
 	Groups  []groupView
+	Folders []folderView
 	Strip   template.CSS
 	Online  bool
 	Palette template.CSS
@@ -64,14 +71,17 @@ func Render(v ViewData) ([]byte, error) {
 		gv := groupView{Name: g.Name, Style: template.CSS(fmt.Sprintf("left:%.2fem;width:%.2fem", x, w))}
 		for _, t := range g.Tiles {
 			tv := tileView{
-				ID: t.ID, Label: t.Label, Color: t.Color, Icon: Icons[t.Icon], Confirm: t.Confirm, Plugin: t.Action.Type == ActionPlugin,
+				ID: t.ID, Label: t.Label, Color: t.Color, Icon: Icons[t.Icon], Confirm: t.Confirm && t.Action.Type != ActionFolder, Plugin: t.Action.Type == ActionPlugin, Folder: t.Action.Type == ActionFolder,
 				Style: template.CSS(fmt.Sprintf("left:%dem;top:%.2fem;width:%dem;height:%dem", t.X, topCells+titleCells+float64(t.Y), t.W, t.H)),
 				Scene: t.Action.Scene,
 			}
 			if tv.Color == "" {
 				tv.Color = "steel"
 			}
-			tv.On = v.Online && t.Action.Scene != "" && t.Action.Scene == v.Scene
+			if tv.Folder {
+				out.Folders = append(out.Folders, folderView{ID: t.ID, Scenes: t.Action.Scenes})
+			}
+			tv.On = v.Online && t.Action.HasScene(v.Scene)
 			gv.Tiles = append(gv.Tiles, tv)
 		}
 		out.Groups = append(out.Groups, gv)
@@ -142,13 +152,19 @@ html,body{margin:0;height:100%;background:#111;color:#fff;font-family:"Segoe UI"
 .t.err i{border-color:#e51400}
 .t:active{-webkit-transform:scale(.96);transform:scale(.96)}
 body.off .t{opacity:.45}
+#fo{position:fixed;left:0;right:0;top:0;bottom:0;background:rgba(0,0,0,.75);display:none;z-index:4;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.fl{display:none;margin:6% auto;width:80%;max-width:560px}
+.fs{margin:0 0 10px;padding:18px 20px;background:#647687;font-size:22px;font-weight:300;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border:3px solid transparent}
+.fs.on{border-color:#fff}
+.fs:active{background:#7b8c9c}
 #dot{position:fixed;right:10px;top:10px;width:12px;height:12px;background:#60a917;z-index:2}
 body.off #dot{background:#e51400}
 #msg{position:fixed;left:0;right:0;bottom:0;padding:10px 16px;background:#e51400;font-size:18px;display:none;z-index:3}
 {{.Palette}}
 </style></head>
 <body class="{{if not .Online}}off{{end}}" data-rev="{{.Rev}}">
-<div id="scroll"><div id="strip" style="{{.Strip}}">{{range .Groups}}<div class="g" style="{{.Style}}"><div class="gn"><span>{{.Name}}</span></div>{{range .Tiles}}<div class="t c-{{.Color}}{{if .On}} on{{end}}" style="{{.Style}}" data-id="{{.ID}}" data-scene="{{.Scene}}"{{if .Confirm}} data-confirm="1"{{end}}><i>{{if .Icon}}<em>{{.Icon}}</em>{{end}}{{if .Plugin}}<s></s>{{end}}<b>{{.Label}}</b></i></div>{{end}}</div>{{end}}</div></div>
+<div id="scroll"><div id="strip" style="{{.Strip}}">{{range .Groups}}<div class="g" style="{{.Style}}"><div class="gn"><span>{{.Name}}</span></div>{{range .Tiles}}<div class="t c-{{.Color}}{{if .On}} on{{end}}" style="{{.Style}}" data-id="{{.ID}}" data-scene="{{.Scene}}"{{if .Folder}} data-folder="1"{{end}}{{if .Confirm}} data-confirm="1"{{end}}><i>{{if .Icon}}<em>{{.Icon}}</em>{{end}}{{if or .Plugin .Folder}}<s></s>{{end}}<b>{{.Label}}</b></i></div>{{end}}</div>{{end}}</div></div>
+<div id="fo">{{range .Folders}}<div class="fl" data-for="{{.ID}}">{{range .Scenes}}<div class="fs" data-scene="{{.}}">{{.}}</div>{{end}}</div>{{end}}</div>
 <span id="dot"></span>
 <div id="msg"></div>
 <script>{{.Script}}</script>
@@ -203,7 +219,34 @@ function press(el,confirmed){
   say((j&&j.error)||(status===0?"No connection":"Error "+status));
  });
 }
+var fo=document.getElementById("fo"),openFolder="";
+function closeFolder(){
+ fo.style.display="none";
+ var ls=fo.children;for(var i=0;i<ls.length;i++){ls[i].style.display="none";}
+ openFolder="";
+}
+function showFolder(id){
+ var ls=fo.children,found=false;
+ for(var i=0;i<ls.length;i++){
+  var on=ls[i].getAttribute("data-for")===id;
+  ls[i].style.display=on?"block":"none";
+  if(on){found=true;}
+ }
+ if(found){openFolder=id;fo.style.display="block";}
+}
+fo.onclick=function(ev){
+ var t=ev.target||ev.srcElement;
+ if(t===fo||t.className.indexOf("fl")>=0&&t.className.indexOf("fs")<0){closeFolder();return;}
+ var scene=t.getAttribute&&t.getAttribute("data-scene");
+ if(!scene||!openFolder){return;}
+ var id=openFolder;
+ call("POST","/api/deck/press",{tile:id,scene:scene},function(status,j){
+  if(status===200){closeFolder();return;}
+  say((j&&j.error)||(status===0?"No connection":"Error "+status));
+ });
+};
 function onTap(el){
+ if(el.getAttribute("data-folder")){showFolder(el.getAttribute("data-id"));return;}
  if(el.getAttribute("data-confirm")&&armed!==el){arm(el);return;}
  press(el,armed===el);
 }
@@ -228,6 +271,11 @@ function apply(j){
  }
  var on=j.on,map=null;
  if(on){map={};for(var m=0;m<on.length;m++){map[on[m]]=1;}}
+ var fs=fo.getElementsByTagName("div");
+ for(var q=0;q<fs.length;q++){
+  var fsc=fs[q].getAttribute("data-scene");
+  if(fsc!==null){cls(fs[q],"on",!!j.online&&fsc===j.scene);}
+ }
  var tx=j.text||{};
  for(var k=0;k<tiles.length;k++){
   var el=tiles[k],s=el.getAttribute("data-scene"),id=el.getAttribute("data-id");

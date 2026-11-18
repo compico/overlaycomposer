@@ -264,3 +264,49 @@ func TestRenderPluginTileHasTextBox(t *testing.T) {
 		t.Fatalf("блок текста только у плиток плагинов, нашли %d", n)
 	}
 }
+
+func folder(id string, scenes ...string) Tile {
+	return Tile{ID: id, W: 2, H: 3, Action: Action{Type: ActionFolder, Scenes: scenes}}
+}
+
+func TestFolderValidation(t *testing.T) {
+	ok := func(scenes ...string) error {
+		l := Layout{Groups: []Group{{ID: "g", Tiles: []Tile{folder("f", scenes...)}}}}
+		return l.Validate()
+	}
+	if err := ok("A", "B"); err != nil {
+		t.Fatal(err)
+	}
+	many := make([]string, 0, MaxFolderScenes+1)
+	for i := 0; i <= MaxFolderScenes; i++ {
+		many = append(many, string(rune('a'+i)))
+	}
+	if ok() == nil || ok(many...) == nil || ok("A", "A") == nil || ok("") == nil || ok(strings.Repeat("я", 201)) == nil {
+		t.Fatal("плохие папки должны отклоняться")
+	}
+	if ok(many[:MaxFolderScenes]...) != nil {
+		t.Fatal("максимум сцен допустим")
+	}
+}
+
+func TestActionHasScene(t *testing.T) {
+	f := Action{Type: ActionFolder, Scenes: []string{"A", "B"}}
+	s := Action{Type: ActionScene, Scene: "A"}
+	if !f.HasScene("B") || f.HasScene("C") || f.HasScene("") || !s.HasScene("A") || s.HasScene("B") || (Action{Type: ActionPlugin}).HasScene("") {
+		t.Fatal("HasScene")
+	}
+}
+
+func TestRenderFolderHasOverlayAndHighlight(t *testing.T) {
+	l := Layout{Rev: 1, Groups: []Group{{ID: "g", Tiles: []Tile{folder("f", "Game", "Chat")}}}}
+	out, err := Render(ViewData{Layout: l, Online: true, Scene: "Chat"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	for _, want := range []string{`data-folder="1"`, `data-for="f"`, `<div class="fs" data-scene="Game">`, `<div class="fs" data-scene="Chat">`, "t c-steel on"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("нет %q", want)
+		}
+	}
+}
