@@ -51,6 +51,14 @@ func TestValidateAcceptsGoodLayoutAndRejectsBadOnes(t *testing.T) {
 		"чужая иконка":            func(l *Layout) { l.Groups[0].Tiles[0].Icon = "skull" },
 		"неизвестное действие":    func(l *Layout) { l.Groups[0].Tiles[0].Action.Type = "exec" },
 		"пустая сцена":            func(l *Layout) { l.Groups[0].Tiles[0].Action.Scene = "" },
+		"плагин без действия":     func(l *Layout) { l.Groups[0].Tiles[0].Action = Action{Type: ActionPlugin, Plugin: "music"} },
+		"действие без плагина":    func(l *Layout) { l.Groups[0].Tiles[0].Action = Action{Type: ActionPlugin, PluginAction: "pause"} },
+		"id плагина со слэшем": func(l *Layout) {
+			l.Groups[0].Tiles[0].Action = Action{Type: ActionPlugin, Plugin: "a/b", PluginAction: "pause"}
+		},
+		"id действия в верхнем": func(l *Layout) {
+			l.Groups[0].Tiles[0].Action = Action{Type: ActionPlugin, Plugin: "music", PluginAction: "Pause"}
+		},
 		"слишком много групп": func(l *Layout) {
 			for i := 0; i < MaxGroups; i++ {
 				l.Groups = append(l.Groups, Group{ID: fmt.Sprintf("x%d", i)})
@@ -210,5 +218,22 @@ func TestParseEmptyGroupHasNoNullTiles(t *testing.T) {
 	raw, _ := json.Marshal(l)
 	if !strings.Contains(string(raw), `"tiles":[]`) {
 		t.Fatalf("tiles должен быть [], а не null: %s", raw)
+	}
+}
+
+func TestPluginActionTileIsValid(t *testing.T) {
+	l := Layout{Groups: []Group{{ID: "g", Tiles: []Tile{
+		{ID: "pause", W: 1, H: 1, Icon: "pause", Action: Action{Type: ActionPlugin, Plugin: "music", PluginAction: "toggle"}},
+	}}}}
+	if err := l.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := l.Tile("pause"); got.Action.Plugin != "music" || got.Action.PluginAction != "toggle" {
+		t.Fatalf("%+v", got)
+	}
+	// из JSON и обратно: плагина может не быть в системе — раскладка всё равно читается
+	raw := `{"rev":1,"groups":[{"id":"g","tiles":[{"id":"t","x":0,"y":0,"w":1,"h":1,"action":{"type":"plugin","plugin":"nobody","pluginAction":"x"}}]}]}`
+	if _, err := Parse([]byte(raw)); err != nil {
+		t.Fatal(err)
 	}
 }

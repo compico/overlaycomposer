@@ -68,6 +68,20 @@ type Meta struct {
 	Events []EventDecl `json:"events,omitempty"`
 	// Commands — команды чата без «!» в нижнем регистре, которые плагин хочет получать в OnChatCommand (нужно PermChatCommandRead).
 	Commands []string `json:"commands,omitempty"`
+	// Actions — действия для панели Deck: нажатие плитки вызывает маршрут плагина с готовым телом (см. Action).
+	Actions []Action `json:"actions,omitempty"`
+}
+
+// Action — действие плагина для плитки панели Deck. OC вызывает только объявленные действия: Method Path (маршрут плагина,
+// по умолчанию POST) с телом Body. Маршрут должен быть зарегистрирован (GET/POST/…) — иначе плагин не запустится.
+type Action struct {
+	ID     string          `json:"id"`               // a-z, 0-9, _ и -, до 32 символов; уникален в плагине
+	Title  string          `json:"title"`            // подпись в редакторе и на плитке по умолчанию
+	Icon   string          `json:"icon,omitempty"`   // значок Deck: play, pause, next, ban, scene, home, mic
+	Method string          `json:"method,omitempty"` // по умолчанию POST
+	Path   string          `json:"path"`
+	Body   json.RawMessage `json:"body,omitempty"`   // готовое тело запроса: JSON до 1 КиБ
+	Danger bool            `json:"danger,omitempty"` // необратимо или заметно зрителям: плитка просит подтверждения
 }
 
 // NetLocalTarget — адрес программы на этом компьютере: Target — host:port (127.0.0.1, localhost или [::1]).
