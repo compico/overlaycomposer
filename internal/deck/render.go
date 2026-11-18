@@ -101,6 +101,20 @@ func paletteCSS() string {
 // CSP страницы: свои стили и скрипт (inline), запросы только на тот же адрес, ничего внешнего.
 const CSP = "default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
 
+// CSPFor — CSP с явным разрешением WebSocket на адрес панели: Safari 9 не считает 'self' достаточным для ws://. host — заголовок Host запроса
+// (хост[:порт]); если он выглядит подозрительно, остаётся CSP без WebSocket (панель уйдёт на опрос).
+func CSPFor(host string) string {
+	if host == "" || len(host) > 255 {
+		return CSP
+	}
+	for _, r := range host {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '.' || r == '-' || r == ':' || r == '[' || r == ']') {
+			return CSP
+		}
+	}
+	return strings.Replace(CSP, "connect-src 'self'", "connect-src 'self' ws://"+host+" wss://"+host, 1)
+}
+
 const pageHTML = `<!doctype html>
 <html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
@@ -194,22 +208,48 @@ var tiles=document.querySelectorAll(".t[data-id]");
 for(var i=0;i<tiles.length;i++){
  (function(el){el.onclick=function(){onTap(el);};})(tiles[i]);
 }
+function apply(j){
+ cls(body,"off",!j.online);
+ if(String(j.rev)!==rev){
+  try{sessionStorage.setItem("deckScroll",String(sc.scrollLeft));}catch(e){}
+  location.reload();return;
+ }
+ var on=j.on,map=null;
+ if(on){map={};for(var m=0;m<on.length;m++){map[on[m]]=1;}}
+ for(var k=0;k<tiles.length;k++){
+  var el=tiles[k],s=el.getAttribute("data-scene");
+  cls(el,"on",map?!!map[el.getAttribute("data-id")]:(!!s&&j.online&&s===j.scene));
+ }
+}
+var ws=null,wsUp=false,wsTry=0,polling=false;
+function startPoll(delay){
+ if(polling||wsUp){return;}
+ polling=true;setTimeout(poll,delay);
+}
 function poll(){
+ if(wsUp){polling=false;return;}
  call("GET","/api/deck/state",null,function(status,j){
   if(status===401){location.href="/pair?next=/deck";return;}
-  cls(body,"off",!(status===200&&j&&j.online));
-  if(status===200&&j){
-   if(String(j.rev)!==rev){
-    try{sessionStorage.setItem("deckScroll",String(sc.scrollLeft));}catch(e){}
-    location.reload();return;
-   }
-   for(var k=0;k<tiles.length;k++){
-    var s=tiles[k].getAttribute("data-scene");
-    cls(tiles[k],"on",!!s&&j.online&&s===j.scene);
-   }
-  }
+  if(status===200&&j){apply(j);}else{cls(body,"off",true);}
   setTimeout(poll,2000);
  });
 }
-setTimeout(poll,2000);
+function connect(){
+ if(!window.WebSocket){return;}
+ var opened=false;
+ try{ws=new WebSocket((location.protocol==="https:"?"wss://":"ws://")+location.host+"/api/deck/ws");}catch(e){ws=null;return;}
+ ws.onopen=function(){opened=true;wsUp=true;wsTry=0;};
+ ws.onmessage=function(ev){
+  var j=null;try{j=JSON.parse(ev.data);}catch(e){}
+  if(j&&j.t==="state"){apply(j);}
+ };
+ ws.onclose=function(){
+  wsUp=false;ws=null;
+  startPoll(opened?0:2000);
+  wsTry++;
+  setTimeout(connect,Math.min(30000,2000*wsTry));
+ };
+}
+connect();
+startPoll(2000);
 })();`
