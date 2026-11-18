@@ -47,10 +47,17 @@ func sizeOK(w, h int) bool {
 
 // Типы действий плитки. Действие определяет сервер по сохранённой раскладке; клиент присылает только id плитки.
 const (
-	ActionScene = "scene" // сменить сцену OBS (Scene)
+	ActionScene  = "scene"  // сменить сцену OBS (Scene)
+	ActionPlugin = "plugin" // действие wasm-плагина (Plugin, PluginAction): плагин объявляет их в Meta.Actions
 )
 
 var idRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
+
+// Идентификаторы плагина и его действия — как в wasmplugins (id плагина: a-z, 0-9, _ и -; действия: то же, до 32).
+var (
+	pluginIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+	actionIDRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
+)
 
 // Palette — цвета Metro: клиенту уходит имя, а не произвольный CSS (нечего внедрять в стиль).
 var Palette = map[string]string{
@@ -93,6 +100,10 @@ type Tile struct {
 type Action struct {
 	Type  string `json:"type"`
 	Scene string `json:"scene,omitempty"`
+	// Plugin и PluginAction — id плагина и его объявленного действия. Что именно вызвать (маршрут, тело), решает сервер по Meta плагина;
+	// плагина может не быть в момент сохранения (он ещё не установлен) — тогда нажатие вернёт ошибку, а раскладка останется валидной.
+	Plugin       string `json:"plugin,omitempty"`
+	PluginAction string `json:"pluginAction,omitempty"`
 }
 
 // Width — ширина группы в клетках (минимум 1, чтобы пустая группа оставалась видимой и её можно было наполнить).
@@ -175,6 +186,10 @@ func (l *Layout) Validate() error {
 			case ActionScene:
 				if n := utf8.RuneCountInString(t.Action.Scene); n == 0 || n > 200 {
 					return fmt.Errorf("tile %q: scene name 1..200 characters", t.ID)
+				}
+			case ActionPlugin:
+				if !pluginIDRe.MatchString(t.Action.Plugin) || !actionIDRe.MatchString(t.Action.PluginAction) {
+					return fmt.Errorf("tile %q: plugin action needs a plugin id and an action id", t.ID)
 				}
 			default:
 				return fmt.Errorf("tile %q: unknown action %q", t.ID, t.Action.Type)

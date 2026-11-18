@@ -1,7 +1,7 @@
 import { el } from "../../lib/dom.ts";
 import type { Ui } from "../../lib/ui.ts";
 import { isConflict, type DeckModel, type DeckState } from "./model.ts";
-import { findTile, groupWidth, sizesFor, MAX_LABEL, MAX_NAME, type DeckGroup, type DeckTile } from "./ops.ts";
+import { findTile, groupWidth, sizesFor, tileTitle, unusedScenes, MAX_LABEL, MAX_NAME, type DeckGroup, type DeckTile } from "./ops.ts";
 
 export interface DeckRefs {
   openBtn: HTMLElement;
@@ -56,10 +56,10 @@ export function mountDeck(refs: DeckRefs, model: DeckModel, ports: DeckPorts): v
     const node = el("div", {
       class: "deckTile" + (st.selected === t.id ? " sel" : ""),
       draggable: true,
-      title: `${t.label || t.action.scene || ""} (${sizeKey(t)})`,
+      title: `${tileTitle(t)} (${sizeKey(t)})`,
       style: `position:absolute;left:${t.x * STEP}px;top:${t.y * STEP}px;width:${t.w * STEP - GAP}px;height:${t.h * STEP - GAP}px;`
         + `background:${color};color:#fff;border-radius:3px;box-sizing:border-box;padding:5px;overflow:hidden;font-size:12px;cursor:grab;`,
-    }, el("div", { style: "font-size:20px;line-height:1" }, glyph), el("div", {}, t.label || t.action.scene || "(empty)"),
+    }, el("div", { style: "font-size:20px;line-height:1" }, glyph), el("div", {}, tileTitle(t) || "(empty)"),
     t.confirm ? el("div", { style: "opacity:.7;font-size:10px" }, "confirm") : "");
     node.addEventListener("click", (e) => { e.stopPropagation(); model.select(t.id); });
     node.addEventListener("dragstart", (e) => {
@@ -130,6 +130,26 @@ export function mountDeck(refs: DeckRefs, model: DeckModel, ports: DeckPorts): v
         ...scenes.map((s) => el("option", { value: s, selected: s === t.action.scene }, s)));
     }
     scene.addEventListener("change", () => model.updateTile(t.id, { scene: scene.value }));
+    // «Что делает плитка»: сцена OBS или действие плагина (их объявляют установленные wasm-плагины). Выбор кодируется строкой value.
+    const isPlugin = t.action.type === "plugin";
+    const current = isPlugin ? `plugin:${t.action.plugin}:${t.action.pluginAction}` : "scene";
+    const known = st.pluginActions.some((a) => `plugin:${a.plugin}:${a.id}` === current);
+    const byPlugin = new Map<string, typeof st.pluginActions>();
+    for (const a of st.pluginActions) byPlugin.set(a.plugin, [...(byPlugin.get(a.plugin) ?? []), a]);
+    const what = el("select", { style: "width:100%" },
+      el("option", { value: "scene", selected: current === "scene" }, "Switch OBS scene"),
+      ...[...byPlugin.values()].map((list) => el("optgroup", { label: list[0].pluginName || list[0].plugin },
+        ...list.map((a) => el("option", { value: `plugin:${a.plugin}:${a.id}`, selected: `plugin:${a.plugin}:${a.id}` === current }, a.title)))),
+      // Плагин удалён или отключён: плитка остаётся, но честно говорит, что работать не будет.
+      ...(isPlugin && !known ? [el("option", { value: current, selected: true }, `${t.action.plugin}: ${t.action.pluginAction} (plugin not available)`)] : []));
+    what.addEventListener("change", () => {
+      if (what.value === "scene") { model.updateTile(t.id, { scene: unusedScenes(layout, st.scenes)[0] ?? st.scenes[0] ?? "" }); return; }
+      const a = st.pluginActions.find((x) => `plugin:${x.plugin}:${x.id}` === what.value);
+      if (a) model.updateTile(t.id, { pluginAction: a });
+    });
+    const pluginHint = isPlugin
+      ? el("div", { class: "hint" }, known ? "Runs when the plugin is running. A plugin that isn't running makes the tile show an error." : "Install or enable the plugin, or pick another function.")
+      : "";
     const sceneHint = st.scenes.length === 0 ? el("div", { class: "hint" }, "The scene list is unavailable (OBS is not connected?). Type the scene name exactly as in OBS.") : "";
 
     const colors = el("div", { class: "row", style: "flex-wrap:wrap" });
@@ -165,8 +185,9 @@ export function mountDeck(refs: DeckRefs, model: DeckModel, ports: DeckPorts): v
       el("h3", {}, "Tile"),
       el("label", {}, "Title"), label,
       el("h3", {}, "Function"),
-      el("label", {}, "Switch OBS scene to"), scene, sceneHint,
-      el("label", { class: "chk", style: "display:flex;gap:6px;align-items:center;margin-top:8px" }, confirmBox, "Ask for a second tap (risky scenes)"),
+      el("label", {}, "What it does"), what,
+      ...(isPlugin ? [pluginHint] : [el("label", {}, "Scene"), scene, sceneHint]),
+      el("label", { class: "chk", style: "display:flex;gap:6px;align-items:center;margin-top:8px" }, confirmBox, "Ask for a second tap (risky actions)"),
       el("h3", {}, "Look"),
       el("label", {}, "Size"), sizes,
       el("label", {}, "Color"), colors,
@@ -202,7 +223,7 @@ export function mountDeck(refs: DeckRefs, model: DeckModel, ports: DeckPorts): v
     for (const t of cur?.tiles ?? []) {
       const item = el("div", { class: "item" + (st.selected === t.id ? " sel" : "") },
         el("span", { style: `width:12px;height:12px;border-radius:2px;background:${st.palette[t.color ?? ""] ?? "#555"}` }),
-        el("span", { class: "name" }, t.label || t.action.scene || "(empty)"), el("span", { class: "hint" }, sizeKey(t)));
+        el("span", { class: "name" }, tileTitle(t) || "(empty)"), el("span", { class: "hint" }, sizeKey(t)));
       item.addEventListener("click", () => model.select(t.id));
       refs.tileList.append(item);
     }

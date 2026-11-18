@@ -218,7 +218,19 @@ func TestMetaValidate(t *testing.T) {
 			m.Permissions = []string{PermRedeem, PermChatCommandRead}
 			m.Subscriptions = []string{EventChatCommand}
 		},
-		"cmds no sub": func(m *Meta) { m.Commands = []string{"np"} },
+		"action bad id":     func(m *Meta) { m.Actions = []Action{{ID: "Bad", Title: "t", Path: "/a"}} },
+		"action no title":   func(m *Meta) { m.Actions = []Action{{ID: "a", Title: " ", Path: "/a"}} },
+		"action no route":   func(m *Meta) { m.Actions = []Action{{ID: "a", Title: "t", Path: "/nope"}} },
+		"action wrong verb": func(m *Meta) { m.Actions = []Action{{ID: "a", Title: "t", Method: "GET", Path: "/a/b-c"}} },
+		"action bad body":   func(m *Meta) { m.Actions = []Action{{ID: "a", Title: "t", Path: "/a/b-c", Body: []byte("{")}} },
+		"action big body": func(m *Meta) {
+			m.Actions = []Action{{ID: "a", Title: "t", Path: "/a/b-c", Body: []byte(`"` + strings.Repeat("x", maxActionBody) + `"`)}}
+		},
+		"action dup": func(m *Meta) {
+			m.Actions = []Action{{ID: "a", Title: "t", Path: "/a/b-c"}, {ID: "a", Title: "u", Path: "/a/b-c"}}
+		},
+		"too many actions": func(m *Meta) { m.Actions = make([]Action, maxActions+1) },
+		"cmds no sub":      func(m *Meta) { m.Commands = []string{"np"} },
 		"cmd bad name": func(m *Meta) {
 			m.Permissions = []string{PermChatCommandRead}
 			m.Subscriptions = []string{EventChatCommand}
@@ -279,5 +291,26 @@ func TestMetaValidateChatCommands(t *testing.T) {
 	}
 	if !m.WantsCommand("np") || m.WantsCommand("other") {
 		t.Fatal("WantsCommand")
+	}
+}
+
+func TestMetaActions(t *testing.T) {
+	m := baseMeta("music")
+	m.Routes = []Route{{"POST", "/control", "ctl"}}
+	m.Actions = []Action{
+		{ID: "pause", Title: "Pause", Icon: "pause", Path: "/control", Body: []byte(`{"action":"pause"}`)},
+		{ID: "skip-ban", Title: "Skip and ban", Path: "/control", Body: []byte(`{"action":"skip_ban"}`), Danger: true},
+	}
+	if err := m.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if m.Actions[0].Method != "POST" { // метод по умолчанию заполняется при проверке
+		t.Fatalf("method %q", m.Actions[0].Method)
+	}
+	if a, ok := m.FindAction("skip-ban"); !ok || !a.Danger || string(a.Body) != `{"action":"skip_ban"}` {
+		t.Fatalf("%+v %v", a, ok)
+	}
+	if _, ok := m.FindAction("nope"); ok {
+		t.Fatal("несуществующее действие")
 	}
 }

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  addGroup, addTile, findSpot, groupWidth, moveGroup, moveTile, removeGroup, removeTile, renameGroup, sizesFor, unusedScenes, updateTile,
+  addGroup, addTile, findSpot, groupWidth, moveGroup, moveTile, removeGroup, removeTile, renameGroup, sizesFor, tileTitle, unusedScenes, updateTile,
   type DeckGrid, type DeckLayout,
 } from "./ops.ts";
 
@@ -118,4 +118,38 @@ test("unusedScenes и findSpot для 2×3", () => {
   const l = addTile(base(), "g1", S23, { scene: "a" }, grid)!.layout;
   assert.deepEqual(unusedScenes(l, ["a", "b", "c"]), ["b", "c"]);
   assert.deepEqual(findSpot(l.groups[0], S23, grid), { x: 2, y: 0 });
+});
+
+test("updateTile: действие плагина берёт подпись, значок и «второе касание» из объявления, но не затирает своё", () => {
+  const toggle = { plugin: "music", pluginName: "Music", id: "toggle", title: "Play / pause", icon: "play" };
+  const ban = { plugin: "music", pluginName: "Music", id: "skip-ban", title: "Skip and ban", icon: "ban", danger: true };
+  let l = addTile(base(), "g1", S11, { scene: "Game", label: "" }, grid)!.layout;
+  l = updateTile(l, "t1", { pluginAction: toggle }, grid)!;
+  let t1 = l.groups[0].tiles[0];
+  assert.deepEqual(t1.action, { type: "plugin", plugin: "music", pluginAction: "toggle" });
+  assert.equal(t1.label, "Play / pause");
+  assert.equal(t1.icon, "play");
+  assert.equal(t1.confirm, undefined);
+  assert.equal(tileTitle(t1), "Play / pause");
+  // своя подпись остаётся; опасное действие включает подтверждение
+  l = updateTile(l, "t1", { label: "Next!" }, grid)!;
+  l = updateTile(l, "t1", { pluginAction: ban }, grid)!;
+  t1 = l.groups[0].tiles[0];
+  assert.deepEqual([t1.label, t1.icon, t1.confirm, t1.action.pluginAction], ["Next!", "play", true, "skip-ban"]);
+  // вернуть сцену: плагин из действия убирается
+  l = updateTile(l, "t1", { scene: "Chat" }, grid)!;
+  assert.deepEqual(l.groups[0].tiles[0].action, { type: "scene", scene: "Chat" });
+});
+
+test("tileTitle: подпись, сцена, плагин и действие", () => {
+  const t = (action: object, label?: string) => ({ id: "x", x: 0, y: 0, w: 1, h: 1, label, action }) as never;
+  assert.equal(tileTitle(t({ type: "scene", scene: "Game" })), "Game");
+  assert.equal(tileTitle(t({ type: "scene", scene: "Game" }, "Mine")), "Mine");
+  assert.equal(tileTitle(t({ type: "plugin", plugin: "music", pluginAction: "toggle" })), "music: toggle");
+});
+
+test("unusedScenes не считает плитки плагинов занятыми сценами", () => {
+  const l = base();
+  l.groups[0].tiles.push({ id: "p", x: 0, y: 0, w: 1, h: 1, action: { type: "plugin", plugin: "music", pluginAction: "toggle" } });
+  assert.deepEqual(unusedScenes(l, ["A", "B"]), ["A", "B"]);
 });

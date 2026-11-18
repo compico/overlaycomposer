@@ -6,6 +6,7 @@
 package wasmplugins
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/compico/overlaycomposer/internal/plugins"
 	"path"
@@ -88,6 +89,8 @@ type Meta struct {
 	// Settings — страница настроек плагина: путь HTML-файла в статике (/plugins/<id>/ui/<settings>). Редактор открывает её
 	// в sandbox-iframe в окне «Plugins → Settings»; страница говорит только с маршрутами своего плагина (oc.plugin.*).
 	Settings string `json:"settings,omitempty"`
+	// Actions — действия, которые плагин предлагает панели Deck и другим «пультам»: по нажатию OC вызывает маршрут плагина.
+	Actions []Action `json:"actions,omitempty"`
 	// Events — топики, которые плагин публикует (events.publish): id, название и описание. Хост пересылает только объявленные.
 	Events []EventDecl `json:"events,omitempty"`
 }
@@ -207,6 +210,9 @@ func (m *Meta) Validate() error {
 		return fmt.Errorf("subscription %q requires permission %q", EventChatCommand, PermChatCommandRead)
 	}
 	if err := m.validateCommands(subs[EventChatCommand]); err != nil {
+		return err
+	}
+	if err := m.validateActions(); err != nil {
 		return err
 	}
 	if err := m.validateWidgets(); err != nil {
@@ -471,4 +477,74 @@ type ChatCommand struct {
 	IsVip         bool     `json:"isVip"`
 	IsSub         bool     `json:"isSub"`
 	Timestamp     int64    `json:"timestamp"` // мс
+}
+
+// Action — действие плагина для плитки панели Deck: нажатие выполняет запрос Method Path к маршруту этого плагина с готовым Body.
+// Хост вызывает только объявленные действия, поэтому устройство с панелью не может попросить плагин о чём-то ещё.
+type Action struct {
+	ID     string          `json:"id"`               // a-z, 0-9, _ и -, до 32 символов; уникален в плагине
+	Title  string          `json:"title"`            // подпись в редакторе и на плитке по умолчанию
+	Icon   string          `json:"icon,omitempty"`   // имя значка Deck (play, pause, next, ban…), необязательно
+	Method string          `json:"method,omitempty"` // по умолчанию POST
+	Path   string          `json:"path"`             // маршрут из Meta.Routes
+	Body   json.RawMessage `json:"body,omitempty"`   // готовое тело запроса (JSON, до 1 КиБ)
+	// Danger — действие необратимо или заметно зрителям (бан трека, остановка): плитка по умолчанию просит подтверждения.
+	Danger bool `json:"danger,omitempty"`
+}
+
+const (
+	maxActions    = 32
+	maxActionBody = 1 << 10
+	maxActionText = 40
+)
+
+var actionIDRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
+
+func (m *Meta) validateActions() error {
+	if len(m.Actions) > maxActions {
+		return fmt.Errorf("too many actions (max %d)", maxActions)
+	}
+	seen := map[string]bool{}
+	for i := range m.Actions {
+		a := &m.Actions[i]
+		if !actionIDRe.MatchString(a.ID) || seen[a.ID] {
+			return fmt.Errorf("action %q: id a-z, 0-9, _ and -, up to 32 characters, unique", a.ID)
+		}
+		seen[a.ID] = true
+		if t := strings.TrimSpace(a.Title); t == "" || len([]rune(t)) > maxActionText || strings.ContainsAny(t, "\r\n\t") {
+			return fmt.Errorf("action %q: title is required, up to %d characters, one line", a.ID, maxActionText)
+		}
+		if len(a.Icon) > 16 {
+			return fmt.Errorf("action %q: icon name is too long", a.ID)
+		}
+		if a.Method == "" {
+			a.Method = "POST"
+		}
+		if !m.hasRoute(a.Method, a.Path) {
+			return fmt.Errorf("action %q: route %s %s is not declared in routes", a.ID, a.Method, a.Path)
+		}
+		if len(a.Body) > maxActionBody || (len(a.Body) > 0 && !json.Valid(a.Body)) {
+			return fmt.Errorf("action %q: body must be JSON up to %d bytes", a.ID, maxActionBody)
+		}
+	}
+	return nil
+}
+
+func (m *Meta) hasRoute(method, path string) bool {
+	for _, r := range m.Routes {
+		if r.Method == method && r.Path == path {
+			return true
+		}
+	}
+	return false
+}
+
+// FindAction — объявленное действие плагина по id.
+func (m *Meta) FindAction(id string) (Action, bool) {
+	for _, a := range m.Actions {
+		if a.ID == id {
+			return a, true
+		}
+	}
+	return Action{}, false
 }

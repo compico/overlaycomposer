@@ -90,9 +90,10 @@ type Server struct {
 	evPeers    map[*hub.Peer]*peerSubs
 	pluginAuth func(plugin, source string) string // подмена authorizePlugin в тестах
 
-	deckMu          sync.Mutex // сохранение раскладки deck
-	deckRate        deckBucket
-	deckObsOverride deckOBS // подмена OBS в тестах
+	deckMu              sync.Mutex // сохранение раскладки deck
+	deckRate            deckBucket
+	deckObsOverride     deckOBS     // подмена OBS в тестах
+	deckPluginsOverride deckPlugins // подмена плагинов в тестах
 
 	deny *denyLimiter // отказы без токена по адресам (nil — без ограничения, как в тестах)
 

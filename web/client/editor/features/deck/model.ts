@@ -3,7 +3,7 @@ import { ApiError, isConflict, type Api } from "../../lib/api.ts";
 import { createStore, type Readable } from "../../lib/store.ts";
 import {
   addGroup, addTile, moveGroup, moveTile, removeGroup, removeTile, renameGroup, updateTile, unusedScenes,
-  type DeckGrid, type DeckLayout, type DeckSize, type TilePatch,
+  type DeckGrid, type DeckLayout, type DeckSize, type PluginAction, type TilePatch,
 } from "./ops.ts";
 
 export interface DeckState {
@@ -14,6 +14,8 @@ export interface DeckState {
   saved: boolean;
   dirty: boolean;
   scenes: string[];
+  /** Действия установленных wasm-плагинов, которые можно повесить на плитку. */
+  pluginActions: PluginAction[];
   /** Цвета Metro: имя → CSS-цвет (список приходит с сервера, чтобы совпадал с тем, что рисует /deck). */
   palette: Record<string, string>;
   /** Значки: имя → символ. */
@@ -27,6 +29,7 @@ interface LayoutResponse {
   layout: DeckLayout;
   saved: boolean;
   scenes: string[] | null;
+  pluginActions: PluginAction[] | null;
   palette: Record<string, string>;
   icons: Record<string, string>;
   grid: DeckGrid;
@@ -53,7 +56,7 @@ export interface DeckModel extends Readable<DeckState> {
 const DEFAULT_COLORS = ["blue", "teal", "green", "orange", "purple", "magenta", "steel", "red", "cyan", "lime", "brown", "yellow"];
 
 const empty = (): DeckState => ({
-  loaded: false, layout: null, saved: false, dirty: false, scenes: [], palette: {}, icons: {},
+  loaded: false, layout: null, saved: false, dirty: false, scenes: [], pluginActions: [], palette: {}, icons: {},
   grid: { rows: 4, maxGroupCols: 16, sizes: [{ w: 1, h: 1 }, { w: 2, h: 1 }, { w: 3, h: 1 }, { w: 2, h: 3 }] }, selected: null, error: "",
 });
 
@@ -73,7 +76,7 @@ export function createDeckModel(api: Api): DeckModel {
       const r = await api<LayoutResponse>("/api/deck/layout");
       for (const g of r.layout.groups) g.tiles ??= []; // страховка: старый сервер отдавал null для пустой группы
       store.set({
-        loaded: true, layout: r.layout, saved: r.saved, dirty: false, scenes: r.scenes ?? [], palette: r.palette ?? {}, icons: r.icons ?? {},
+        loaded: true, layout: r.layout, saved: r.saved, dirty: false, scenes: r.scenes ?? [], pluginActions: r.pluginActions ?? [], palette: r.palette ?? {}, icons: r.icons ?? {},
         grid: { ...r.grid, sizes: r.grid.sizes ?? s().grid.sizes }, selected: null, error: "",
       });
     } catch (e) {

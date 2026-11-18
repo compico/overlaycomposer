@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/compico/overlaycomposer/internal/obs"
 	"github.com/compico/overlaycomposer/internal/store"
+	"github.com/compico/overlaycomposer/internal/wasmplugins"
 )
 
 type fakeDeckObs struct {
@@ -229,5 +231,114 @@ func TestDeckBucket(t *testing.T) {
 	}
 	if !b.allow(now.Add(time.Second)) {
 		t.Fatal("за секунду набегают токены")
+	}
+}
+
+// fakeDeckPlugins — wasm-плагины панели: список и запись вызовов.
+type fakeDeckPlugins struct {
+	infos []wasmplugins.Info
+	calls []wasmplugins.Request
+	res   wasmplugins.Response
+	err   error
+}
+
+func (f *fakeDeckPlugins) List() ([]wasmplugins.Info, []wasmplugins.Problem) { return f.infos, nil }
+func (f *fakeDeckPlugins) Handle(_ context.Context, _ string, r wasmplugins.Request) (wasmplugins.Response, error) {
+	f.calls = append(f.calls, r)
+	return f.res, f.err
+}
+
+func musicInfo(state string) wasmplugins.Info {
+	return wasmplugins.Info{State: state, Meta: wasmplugins.Meta{ID: "music", Name: "Music",
+		Routes: []wasmplugins.Route{{Method: "POST", Path: "/control", Handler: "ctl"}},
+		Actions: []wasmplugins.Action{
+			{ID: "toggle", Title: "Play / pause", Icon: "play", Method: "POST", Path: "/control", Body: []byte(`{"action":"toggle"}`)},
+			{ID: "skip-ban", Title: "Skip and ban", Method: "POST", Path: "/control", Body: []byte(`{"action":"skip_ban"}`), Danger: true},
+		}}}
+}
+
+const deckPluginLayout = `{"rev":0,"groups":[{"id":"main","tiles":[
+ {"id":"toggle","x":0,"y":0,"w":1,"h":1,"action":{"type":"plugin","plugin":"music","pluginAction":"toggle"}},
+ {"id":"ban","x":1,"y":0,"w":1,"h":1,"confirm":true,"action":{"type":"plugin","plugin":"music","pluginAction":"skip-ban"}},
+ {"id":"missing-action","x":2,"y":0,"w":1,"h":1,"action":{"type":"plugin","plugin":"music","pluginAction":"nope"}},
+ {"id":"missing-plugin","x":3,"y":0,"w":1,"h":1,"action":{"type":"plugin","plugin":"ghost","pluginAction":"x"}}]}]}`
+
+func TestDeckPluginTileCallsOnlyDeclaredRouteWithDeclaredBody(t *testing.T) {
+	s, _ := deckEnv(t)
+	f := &fakeDeckPlugins{infos: []wasmplugins.Info{musicInfo(wasmplugins.StateRunning)}, res: wasmplugins.Response{Status: 200}}
+	s.deckPluginsOverride = f
+	if code, b, _ := deckReq(t, s, "PUT", "/api/deck/layout", deckPluginLayout, true); code != 200 {
+		t.Fatalf("save: %d %s", code, b)
+	}
+	press := func(body string) (int, string) {
+		c, b, _ := deckReq(t, s, "POST", "/api/deck/press", body, true)
+		return c, b
+	}
+	// маршрут и тело — из объявления плагина; всё, что прислал клиент, игнорируется
+	if c, b := press(`{"tile":"toggle","path":"/evil","body":{"action":"skip_ban"}}`); c != 200 {
+		t.Fatalf("%d %s", c, b)
+	}
+	if len(f.calls) != 1 || f.calls[0].Method != "POST" || f.calls[0].Path != "/control" || string(f.calls[0].Body) != `{"action":"toggle"}` {
+		t.Fatalf("вызов: %+v", f.calls)
+	}
+	// опасная плитка плагина — тоже через второе касание
+	if c, _ := press(`{"tile":"ban"}`); c != 409 || len(f.calls) != 1 {
+		t.Fatalf("confirm: %d %d", c, len(f.calls))
+	}
+	if c, _ := press(`{"tile":"ban","confirm":true}`); c != 200 || string(f.calls[1].Body) != `{"action":"skip_ban"}` {
+		t.Fatalf("confirmed: %+v", f.calls)
+	}
+	// действия или плагина уже нет — 404, плагин не запущен — 503, плагин не ответил — 502, плагин отказал — 409 с его текстом
+	if c, _ := press(`{"tile":"missing-action"}`); c != 404 {
+		t.Fatalf("нет действия: %d", c)
+	}
+	if c, _ := press(`{"tile":"missing-plugin"}`); c != 404 {
+		t.Fatalf("нет плагина: %d", c)
+	}
+	n := len(f.calls)
+	f.infos = []wasmplugins.Info{musicInfo(wasmplugins.StateFailed)}
+	if c, _ := press(`{"tile":"toggle"}`); c != 503 || len(f.calls) != n {
+		t.Fatalf("не запущен: %d", c)
+	}
+	f.infos = []wasmplugins.Info{musicInfo(wasmplugins.StateRunning)}
+	f.err = errors.New("timeout")
+	if c, b := press(`{"tile":"toggle"}`); c != 502 || strings.Contains(b, "timeout") {
+		t.Fatalf("плагин не ответил: %d %s", c, b)
+	}
+	f.err, f.res = nil, wasmplugins.Response{Status: 409, Body: []byte(`{"error":"nothing is playing"}`)}
+	if c, b := press(`{"tile":"toggle"}`); c != 409 || !strings.Contains(b, "nothing is playing") {
+		t.Fatalf("отказ плагина: %d %s", c, b)
+	}
+	f.res = wasmplugins.Response{Status: 500, Body: []byte(`{"error":"secret path /home/x"}`)}
+	if c, _ := press(`{"tile":"toggle"}`); c != 502 {
+		t.Fatalf("сбой плагина: %d", c)
+	}
+	// плагины выключены (Wasm == nil) — 503
+	s.deckPluginsOverride = nil
+	if c, _ := press(`{"tile":"toggle"}`); c != 503 {
+		t.Fatalf("плагины выключены: %d", c)
+	}
+}
+
+func TestDeckLayoutListsPluginActions(t *testing.T) {
+	s, _ := deckEnv(t)
+	s.deckPluginsOverride = &fakeDeckPlugins{infos: []wasmplugins.Info{musicInfo(wasmplugins.StateRunning)}}
+	_, b, _ := deckReq(t, s, "GET", "/api/deck/layout", "", false)
+	var r struct {
+		PluginActions []struct {
+			Plugin, PluginName, ID, Title, Icon string
+			Danger                              bool
+		} `json:"pluginActions"`
+	}
+	if err := json.Unmarshal([]byte(b), &r); err != nil || len(r.PluginActions) != 2 {
+		t.Fatalf("%v %s", err, b)
+	}
+	if a := r.PluginActions[1]; a.Plugin != "music" || a.PluginName != "Music" || a.ID != "skip-ban" || !a.Danger {
+		t.Fatalf("%+v", a)
+	}
+	s.deckPluginsOverride = nil
+	_, b, _ = deckReq(t, s, "GET", "/api/deck/layout", "", false)
+	if !strings.Contains(b, `"pluginActions":[]`) {
+		t.Fatalf("без плагинов — пустой список, а не null: %s", b)
 	}
 }
