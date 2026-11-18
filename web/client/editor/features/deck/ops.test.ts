@@ -153,3 +153,26 @@ test("unusedScenes не считает плитки плагинов занят�
   l.groups[0].tiles.push({ id: "p", x: 0, y: 0, w: 1, h: 1, action: { type: "plugin", plugin: "music", pluginAction: "toggle" } });
   assert.deepEqual(unusedScenes(l, ["A", "B"]), ["A", "B"]);
 });
+
+test("updateTile: папка со сценами", () => {
+  let l = addTile(base(), "g1", S23, { scene: "Game", label: "" }, grid)!.layout;
+  l = updateTile(l, "t1", { confirm: true }, grid)!;
+  l = updateTile(l, "t1", { folder: ["Game", " ", "Chat", "Game"] }, grid)!;
+  let t = l.groups[0].tiles[0];
+  assert.deepEqual(t.action, { type: "folder", scenes: ["Game", "Chat"] });
+  assert.equal(t.confirm, undefined); // папке второе касание не нужно
+  assert.equal(t.label, "Scenes");
+  assert.equal(tileTitle({ ...t, label: undefined }), "Folder (2)");
+  // свою подпись не трогаем, пустой список и больше предела — отказ
+  l = updateTile(l, "t1", { label: "Fav" }, grid)!;
+  l = updateTile(l, "t1", { folder: ["A"] }, grid)!;
+  t = l.groups[0].tiles[0];
+  assert.deepEqual([t.label, t.action.scenes], ["Fav", ["A"]]);
+  assert.equal(updateTile(l, "t1", { folder: [] }, grid), null);
+  assert.equal(updateTile(l, "t1", { folder: [" "] }, grid), null);
+  assert.equal(updateTile(l, "t1", { folder: Array.from({ length: 9 }, (_, i) => `s${i}`) }, grid), null);
+  assert.ok(updateTile(l, "t1", { folder: Array.from({ length: 8 }, (_, i) => `s${i}`) }, grid));
+  // обратно на сцену: список сцен из действия убирается
+  l = updateTile(l, "t1", { scene: "Game" }, grid)!;
+  assert.deepEqual(l.groups[0].tiles[0].action, { type: "scene", scene: "Game" });
+});
