@@ -12,14 +12,18 @@ export interface DeckTile {
   color?: string;
   icon?: string;
   confirm?: boolean;
-  action: { type: string; scene?: string; plugin?: string; pluginAction?: string };
+  action: { type: string; scene?: string; scenes?: string[]; plugin?: string; pluginAction?: string };
 }
 
 /** Действие wasm-плагина, которое можно повесить на плитку (список даёт сервер по Meta.Actions установленных плагинов). */
 export interface PluginAction { plugin: string; pluginName: string; id: string; title: string; icon?: string; danger?: boolean }
 
-/** Название плитки для списков и подсказок: подпись, иначе сцена, иначе плагин и действие. */
+/** Сколько сцен в папке (как MaxFolderScenes на сервере). */
+export const MAX_FOLDER_SCENES = 8;
+
+/** Название плитки для списков и подсказок: подпись, иначе сцена, иначе папка, иначе плагин и действие. */
 export function tileTitle(t: DeckTile): string {
+  if (!t.label && t.action.type === "folder") return `Folder (${t.action.scenes?.length ?? 0})`;
   return t.label || t.action.scene || (t.action.plugin ? `${t.action.plugin}: ${t.action.pluginAction ?? ""}` : "");
 }
 
@@ -143,6 +147,8 @@ export function addTile(l: DeckLayout, groupId: string, size: DeckSize, init: Ti
 
 export type TilePatch = Partial<Pick<DeckTile, "label" | "color" | "icon" | "confirm" | "w" | "h">> & {
   scene?: string;
+  /** Сделать плитку папкой со сценами: пустые и повторные имена убираются; больше MAX_FOLDER_SCENES или ни одной — отказ. */
+  folder?: string[];
   /** Повесить действие плагина: пустые подпись и значок заполняются из объявления, опасное действие включает «второе касание». */
   pluginAction?: PluginAction;
 };
@@ -167,6 +173,13 @@ export function updateTile(l: DeckLayout, id: string, patch: TilePatch, grid: De
   if (patch.icon !== undefined) { if (patch.icon) tile.icon = patch.icon; else delete tile.icon; }
   if (patch.confirm !== undefined) { if (patch.confirm) tile.confirm = true; else delete tile.confirm; }
   if (patch.scene !== undefined) tile.action = { type: "scene", scene: patch.scene };
+  if (patch.folder !== undefined) {
+    const scenes = [...new Set(patch.folder.filter((s) => s.trim() !== ""))];
+    if (scenes.length === 0 || scenes.length > MAX_FOLDER_SCENES) return null;
+    tile.action = { type: "folder", scenes };
+    delete tile.confirm; // папка только открывает список: второе касание ей не нужно
+    if (!tile.label) tile.label = "Scenes";
+  }
   const a = patch.pluginAction;
   if (a) {
     tile.action = { type: "plugin", plugin: a.plugin, pluginAction: a.id };
