@@ -237,3 +237,18 @@ func TestPluginActionTileIsValid(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestCSPForAllowsWebSocketOnOwnHost(t *testing.T) {
+	got := CSPFor("192.168.1.5:7878")
+	if !strings.Contains(got, "connect-src 'self' ws://192.168.1.5:7878 wss://192.168.1.5:7878;") {
+		t.Fatalf("CSP: %s", got)
+	}
+	for _, bad := range []string{"", "a b", "x;script-src *", "evil.com'", strings.Repeat("a", 300)} {
+		if CSPFor(bad) != CSP {
+			t.Errorf("хост %q не должен попадать в CSP", bad)
+		}
+	}
+	if !strings.Contains(clientJS, "/api/deck/ws") || !strings.Contains(clientJS, "/api/deck/state") {
+		t.Error("клиент должен уметь и WebSocket, и опрос")
+	}
+}

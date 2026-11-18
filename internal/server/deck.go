@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gofiber/contrib/v3/websocket"
 	"github.com/gofiber/fiber/v3"
 
 	"github.com/compico/overlaycomposer/internal/deck"
@@ -97,6 +98,7 @@ func (s *Server) deckRoutes() {
 	app.Get("/deck", s.deckPage)
 	app.Get("/deck/probe", s.deckProbe)
 	app.Get("/api/deck/state", s.deckState)
+	app.Get("/api/deck/ws", s.deckWSGuard, websocket.New(s.serveDeckWS))
 	app.Post("/api/deck/press", s.appGuard, s.deckPress)
 	app.Get("/api/deck/layout", s.deckGetLayout)
 	app.Put("/api/deck/layout", s.appGuard, s.deckPutLayout)
@@ -133,20 +135,15 @@ func (s *Server) deckPage(c fiber.Ctx) error {
 		return err
 	}
 	c.Set("Cache-Control", "no-store")
-	c.Set("Content-Security-Policy", deck.CSP)
+	c.Set("Content-Security-Policy", deck.CSPFor(c.Hostname()))
 	c.Set("X-Content-Type-Options", "nosniff")
 	c.Set("Content-Type", "text/html; charset=utf-8")
 	return c.Send(out)
 }
 
 func (s *Server) deckState(c fiber.Ctx) error {
-	l, _ := s.deckLayout()
-	st := fiber.Map{"rev": l.Rev, "online": false, "scene": ""}
-	if o := s.deckObs(); o != nil {
-		st["online"], st["scene"] = o.Connected(), o.CurrentScene()
-	}
 	c.Set("Cache-Control", "no-store")
-	return c.JSON(st)
+	return c.JSON(s.deckStateNow())
 }
 
 func (s *Server) deckPress(c fiber.Ctx) error {
@@ -290,6 +287,7 @@ func (s *Server) deckPutLayout(c fiber.Ctx) error {
 	if err := s.d.Store.SetSetting(deckLayoutKey, string(raw)); err != nil {
 		return err
 	}
+	s.deckPoke()
 	return c.JSON(fiber.Map{"ok": true, "rev": in.Rev})
 }
 
@@ -308,5 +306,6 @@ func (s *Server) deckResetLayout(c fiber.Ctx) error {
 	if err := s.d.Store.SetSetting(deckLayoutKey, ""); err != nil {
 		return err
 	}
+	s.deckPoke()
 	return c.JSON(fiber.Map{"ok": true, "rev": cur.Rev + 1})
 }

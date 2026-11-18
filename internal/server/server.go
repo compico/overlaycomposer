@@ -94,6 +94,8 @@ type Server struct {
 	deckRate            deckBucket
 	deckObsOverride     deckOBS     // подмена OBS в тестах
 	deckPluginsOverride deckPlugins // подмена плагинов в тестах
+	deckHubMu           sync.Mutex
+	deckHub             *deckHub // рассылка состояния панели по WebSocket (создаётся при первом обращении)
 
 	deny *denyLimiter // отказы без токена по адресам (nil — без ограничения, как в тестах)
 
