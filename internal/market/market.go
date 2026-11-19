@@ -313,9 +313,10 @@ type Record struct {
 }
 
 type state struct {
-	Sources   []string          `json:"sources"`
-	Installed map[string]Record `json:"installed"`
-	Token     string            `json:"githubToken,omitempty"` // зашифрован (secret.Box)
+	Sources   []string              `json:"sources"`
+	Installed map[string]Record     `json:"installed"`
+	Wasm      map[string]WasmRecord `json:"wasm,omitempty"`        // установленные wasm-плагины: что именно (тег и sha256), для воспроизведения набора
+	Token     string                `json:"githubToken,omitempty"` // зашифрован (secret.Box)
 }
 
 // Market — состояние магазина (список источников, установленные плагины) и операции над ним.
@@ -326,6 +327,7 @@ type Market struct {
 	fetch   Fetcher
 	rel     ReleaseSource
 	wasm    wasmCache
+	whost   WasmHost // nil — автономные плагины недоступны
 	builtin func(id string) bool
 	box     *secret.Box // шифрует токен GitHub; nil — токен хранить нельзя
 

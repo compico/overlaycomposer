@@ -396,3 +396,23 @@ func TestActionDisplay(t *testing.T) {
 		t.Fatal("не JSON")
 	}
 }
+
+func TestInspectChecksWithoutRegistering(t *testing.T) {
+	dir := t.TempDir()
+	mod := &fakeModule{meta: baseMeta("alpha"), handler: nopHandler}
+	eng := &fakeEngine{mods: map[string]*fakeModule{"A1": mod}}
+	m := newTestManager(t, eng, &MemState{}, dir)
+	meta, err := m.Inspect([]byte("A1"))
+	if err != nil || meta.ID != "alpha" {
+		t.Fatalf("%+v %v", meta, err)
+	}
+	if infos, _ := m.List(); len(infos) != 0 {
+		t.Fatalf("Inspect ничего не регистрирует: %+v", infos)
+	}
+	if _, err := m.Inspect([]byte("nope")); err == nil {
+		t.Fatal("не модуль")
+	}
+	if _, err := m.Inspect(nil); err == nil {
+		t.Fatal("пустой файл")
+	}
+}

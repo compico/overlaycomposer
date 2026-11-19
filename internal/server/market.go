@@ -17,6 +17,8 @@ func (s *Server) marketRoutes() {
 	app := s.app
 	app.Get("/api/market", s.localOnly, s.marketCatalog)
 	app.Get("/api/market/wasm", s.localOnly, s.marketWasm)
+	app.Post("/api/market/wasm/install", s.localOnly, s.appGuard, s.marketWasmInstall)
+	app.Post("/api/market/wasm/uninstall", s.localOnly, s.appGuard, s.marketWasmUninstall)
 	app.Post("/api/market/sources", s.localOnly, s.appGuard, s.marketAddSource)
 	app.Delete("/api/market/sources", s.localOnly, s.appGuard, s.marketRemoveSource)
 	app.Put("/api/market/token", s.localOnly, s.appGuard, s.marketSetToken)
@@ -53,11 +55,52 @@ func (s *Server) marketWasm(c fiber.Ctx) error {
 	return c.JSON(fiber.Map{"sources": s.d.Market.WasmCatalog(ctx, c.Query("refresh") == "1")})
 }
 
+// marketWasmInstall ставит, обновляет или меняет версию wasm-плагина из релиза источника.
+func (s *Server) marketWasmInstall(c fiber.Ctx) error {
+	if s.d.Market == nil {
+		return bad(c, "store is unavailable")
+	}
+	var b struct {
+		Repo string `json:"repo"`
+		ID   string `json:"id"`
+		Tag  string `json:"tag"`
+		Sha  string `json:"sha256"` // отпечаток из каталога: если файл релиза другой, установка отклоняется
+	}
+	if !body(c, &b) {
+		return bad(c, "invalid json")
+	}
+	ctx, cancel := marketCtx()
+	defer cancel()
+	res, err := s.d.Market.WasmInstall(ctx, b.Repo, b.ID, b.Tag, b.Sha)
+	if err != nil {
+		return marketErr(c, err)
+	}
+	slog.Info("store: wasm-плагин установлен", "id", res.ID, "version", res.Version, "previous", res.Previous, "repo", b.Repo)
+	return c.JSON(res)
+}
+
+func (s *Server) marketWasmUninstall(c fiber.Ctx) error {
+	if s.d.Market == nil {
+		return bad(c, "store is unavailable")
+	}
+	var b struct {
+		ID string `json:"id"`
+	}
+	if !body(c, &b) {
+		return bad(c, "invalid json")
+	}
+	if err := s.d.Market.WasmUninstall(b.ID); err != nil {
+		return marketErr(c, err)
+	}
+	slog.Info("store: wasm-плагин удалён", "id", b.ID)
+	return c.JSON(fiber.Map{"ok": true})
+}
+
 func marketErr(c fiber.Ctx, err error) error {
 	switch {
 	case errors.Is(err, market.ErrBadRepo), errors.Is(err, market.ErrNoSource), errors.Is(err, market.ErrNoPlugin),
 		errors.Is(err, market.ErrConflict), errors.Is(err, market.ErrNotOurs), errors.Is(err, market.ErrChanged),
-		errors.Is(err, market.ErrToken), errors.Is(err, market.ErrNoBox):
+		errors.Is(err, market.ErrToken), errors.Is(err, market.ErrNoBox), errors.Is(err, market.ErrNoWasmHost), errors.Is(err, market.ErrNoRelease):
 		return bad(c, err.Error())
 	}
 	slog.Warn("store", "err", err)

@@ -132,6 +132,9 @@ func New(d Deps) *Server {
 			return d.Twitch.NewEventSub(func(r twitch.Redemption) { deliver(r.ID, r) }, onState)
 		}, d.Wasm.Publish)
 	}
+	if d.Market != nil && d.Wasm != nil {
+		d.Market.SetWasmHost(wasmHost{d.Wasm})
+	}
 	s.openProxyListener()
 	s.routes()
 	s.chatWS()
