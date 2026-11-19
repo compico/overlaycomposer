@@ -2,6 +2,8 @@ package market
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -179,6 +181,13 @@ type WasmEntry struct {
 	Size        int64         `json:"size,omitempty"`
 	NoInfo      bool          `json:"noInfo,omitempty"` // у последнего релиза нет <id>.json: имя, права и sha256 неизвестны
 	Versions    []WasmVersion `json:"versions"`         // от новой к старой
+
+	Installed        bool     `json:"installed"`                  // установлен из этого репозитория через магазин
+	InstalledVersion string   `json:"installedVersion,omitempty"` //
+	InstalledTag     string   `json:"installedTag,omitempty"`     //
+	UpdateAvailable  bool     `json:"updateAvailable"`            // в каталоге версия новее установленной
+	AddedPermissions []string `json:"addedPermissions,omitempty"` // права последней версии, которых нет у установленной
+	Blocked          string   `json:"blocked,omitempty"`          // "foreign": плагин с таким id уже стоит, но не из магазина (или из другого источника)
 }
 
 // WasmSource — источник и его wasm-плагины (или ошибка загрузки).
@@ -213,7 +222,7 @@ func (m *Market) WasmCatalog(ctx context.Context, refresh bool) []WasmSource {
 		if err != nil {
 			sv.Error = err.Error()
 		} else if list != nil {
-			sv.Plugins = list
+			sv.Plugins = m.markWasmInstalled(src, list)
 		}
 		out = append(out, sv)
 	}
@@ -305,29 +314,37 @@ type wasmInfo struct {
 	} `json:"meta"`
 }
 
-// fillWasmInfo дополняет запись данными из <id>.json релиза. Нет файла или он не сходится с релизом — запись остаётся
-// без метаданных (NoInfo): ничего из чужого JSON не принимается на веру.
-func (m *Market) fillWasmInfo(ctx context.Context, r Repo, e *WasmEntry, rel Release) {
-	e.NoInfo = true
+// readWasmInfo читает <id>.json релиза и возвращает его, только если он сходится с релизом (id, версия, размер .wasm).
+// Нет файла или он не сходится — ok=false: ничего из чужого JSON не принимается на веру.
+func (m *Market) readWasmInfo(ctx context.Context, r Repo, id, version string, rel Release) (in wasmInfo, ok bool) {
 	var infoID, wasmSize int64
 	for _, a := range rel.Assets {
 		switch a.Name {
-		case e.ID + ".json":
+		case id + ".json":
 			infoID = a.ID
-		case e.ID + ".wasm":
+		case id + ".wasm":
 			wasmSize = a.Size
 		}
 	}
 	if infoID == 0 || wasmSize == 0 {
-		return
+		return in, false
 	}
 	raw, err := m.rel.Asset(ctx, r, m.token(), infoID, maxWasmInfo)
 	if err != nil {
-		return
+		return in, false
 	}
-	var in wasmInfo
-	if json.Unmarshal(raw, &in) != nil || in.ID != e.ID || in.Version != e.Version || in.Meta.ID != e.ID || in.Meta.Version != e.Version ||
+	if json.Unmarshal(raw, &in) != nil || in.ID != id || in.Version != version || in.Meta.ID != id || in.Meta.Version != version ||
 		!sha256Re.MatchString(in.Sha256) || in.Size <= 0 || in.Size > maxWasmSize || in.Size != wasmSize {
+		return wasmInfo{}, false
+	}
+	return in, true
+}
+
+// fillWasmInfo дополняет запись данными из <id>.json релиза; без них запись остаётся без метаданных (NoInfo).
+func (m *Market) fillWasmInfo(ctx context.Context, r Repo, e *WasmEntry, rel Release) {
+	e.NoInfo = true
+	in, ok := m.readWasmInfo(ctx, r, e.ID, e.Version, rel)
+	if !ok {
 		return
 	}
 	e.NoInfo = false
@@ -344,6 +361,11 @@ func (m *Market) fillWasmInfo(ctx context.Context, r Repo, e *WasmEntry, rel Rel
 }
 
 // oneLine делает из чужого текста безопасную однострочную подпись: управляющие символы — в пробелы, длина — не больше max рун.
+func sha256Hex(b []byte) string {
+	s := sha256.Sum256(b)
+	return hex.EncodeToString(s[:])
+}
+
 func oneLine(s string, max int, def string) string {
 	s = strings.Join(strings.FieldsFunc(s, func(r rune) bool { return r < 0x20 || r == 0x7f }), " ")
 	s = strings.TrimSpace(s)
