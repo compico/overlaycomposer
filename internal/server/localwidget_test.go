@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/gofiber/fiber/v3"
 
@@ -36,7 +37,7 @@ func TestInstallLocalWidgetEndpoint(t *testing.T) {
 		_ = w.Close()
 		req := httptest.NewRequest("POST", "/api/plugins/local", &buf)
 		req.Header.Set("Content-Type", w.FormDataContentType())
-		resp, err := s.app.Test(req)
+		resp, err := s.app.Test(req, fiber.TestConfig{Timeout: 10 * time.Second, FailOnTimeout: true}) // по умолчанию 1 с — на медленном CI мало
 		if err != nil {
 			t.Fatal(err)
 		}
