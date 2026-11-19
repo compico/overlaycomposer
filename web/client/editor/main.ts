@@ -28,6 +28,8 @@ import { mountNotifications } from "./features/notifications/view.ts";
 import { createStoreModel } from "./features/store/model.ts";
 import { deprecationFor } from "./features/store/deprecated.ts";
 import { mountStore } from "./features/store/view.ts";
+import { createWasmStoreModel } from "./features/store/wasm.ts";
+import { mountWasmStore } from "./features/store/wasm-view.ts";
 import { PERM_TEXT } from "./lib/permissions.ts";
 import { copyText, COPY_ICON } from "./lib/clipboard.ts";
 import { createAppModel } from "./features/app/model.ts";
@@ -254,6 +256,14 @@ async function afterPluginChange() {
 }
 
 const storeModel = createStoreModel({ api, afterChange: afterPluginChange });
+const wasmModel = createWasmModel(api);
+// Автономные (wasm) плагины — отдельный раздел в том же окне магазина, под списком обычных плагинов.
+const wasmStoreBox = document.createElement("div");
+$("storeBody").after(wasmStoreBox);
+const wasmStore = mountWasmStore(wasmStoreBox, createWasmStoreModel({ api, afterChange: () => wasmModel.load() }), {
+  ui: { toast, fail },
+  openPlugins: () => { $<HTMLDialogElement>("storeDialog").close(); $("pluginsBtn").click(); },
+});
 const pluginStore = mountStore(
   {
     openBtn: $("openStoreBtn"), dialog: $<HTMLDialogElement>("storeDialog"), body: $("storeBody"), refreshBtn: $("storeRefreshBtn"),
@@ -267,10 +277,11 @@ const pluginStore = mountStore(
     usedBy: (id) => sources.filter((x) => x.type === "plugin" && x.data.plugin === id).length,
     pluginName: (id) => plugins.find((x) => x.id === id)?.name,
     openPluginsFolder: () => api("/api/app/open", "POST", { what: "plugins" }),
+    onOpen: () => void wasmStore.load(),
+    onRefresh: () => void wasmStore.load(true),
   },
 );
 
-const wasmModel = createWasmModel(api);
 mountWasmPlugins(
   { openBtn: $("pluginsBtn"), dialog: $<HTMLDialogElement>("wasmDialog"), body: $("wasmBody"), reloadBtn: $("wasmReloadBtn"), folderBtn: $("wasmFolderBtn"), status: $("wasmStatus"),
     settings: { dialog: $<HTMLDialogElement>("wasmSettingsDialog"), title: $("wasmSettingsTitle"), form: $("wasmSettingsForm"), frameBox: $("wasmSettingsFrame") } },

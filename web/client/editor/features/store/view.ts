@@ -27,6 +27,10 @@ export interface StorePorts {
   /** Имя установленного плагина по id (для «осиротевших» записей). */
   pluginName(id: string): string | undefined;
   openPluginsFolder(): Promise<unknown>;
+  /** Окно открыли (перечитать и то, что магазин показывает рядом, например автономные плагины). */
+  onOpen?(): void;
+  /** Кнопка «↻»: заново получить каталоги. */
+  onRefresh?(): void;
 }
 
 const BLOCKED_TEXT = { builtin: "built in", foreign: "id is taken by another plugin" };
@@ -127,9 +131,9 @@ export function mountStore(refs: StoreRefs, model: StoreModel, ports: StorePorts
   });
 
   /** Открыть окно магазина (и из других мест, например из уведомления об обновлении плагина). */
-  const open = () => { refs.dialog.showModal(); void model.load(); };
+  const open = () => { refs.dialog.showModal(); void model.load(); ports.onOpen?.(); };
   refs.openBtn.addEventListener("click", open);
-  refs.refreshBtn.addEventListener("click", () => void model.load(true));
+  refs.refreshBtn.addEventListener("click", () => { void model.load(true); ports.onRefresh?.(); });
   refs.addBtn.addEventListener("click", async () => {
     if (!refs.repoInput.value.trim()) return;
     refs.addBtn.disabled = true;
