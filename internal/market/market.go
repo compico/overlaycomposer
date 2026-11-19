@@ -324,6 +324,8 @@ type Market struct {
 	dir     string // папка пользовательских плагинов
 	reg     *plugins.Registry
 	fetch   Fetcher
+	rel     ReleaseSource
+	wasm    wasmCache
 	builtin func(id string) bool
 	box     *secret.Box // шифрует токен GitHub; nil — токен хранить нельзя
 
@@ -343,12 +345,13 @@ type cached struct {
 
 // Config — зависимости Market.
 type Config struct {
-	File    string
-	Dir     string
-	Reg     *plugins.Registry
-	Fetch   Fetcher
-	Builtin func(id string) bool // id занят встроенным плагином
-	Box     *secret.Box          // для токена GitHub (приватные репозитории)
+	File     string
+	Dir      string
+	Reg      *plugins.Registry
+	Fetch    Fetcher
+	Releases ReleaseSource        // релизы GitHub для wasm-плагинов (по умолчанию — GitHub API)
+	Builtin  func(id string) bool // id занят встроенным плагином
+	Box      *secret.Box          // для токена GitHub (приватные репозитории)
 }
 
 // New читает состояние; при первом запуске (файла нет) добавляет официальный источник.
@@ -356,10 +359,13 @@ func New(c Config) (*Market, error) {
 	if c.Fetch == nil {
 		c.Fetch = HTTPFetcher("", "")
 	}
+	if c.Releases == nil {
+		c.Releases = HTTPReleases("")
+	}
 	if c.Builtin == nil {
 		c.Builtin = func(string) bool { return false }
 	}
-	m := &Market{file: c.File, dir: c.Dir, reg: c.Reg, fetch: c.Fetch, builtin: c.Builtin, box: c.Box, cache: map[string]cached{}}
+	m := &Market{file: c.File, dir: c.Dir, reg: c.Reg, fetch: c.Fetch, rel: c.Releases, builtin: c.Builtin, box: c.Box, cache: map[string]cached{}}
 	m.st.Installed = map[string]Record{}
 	if c.File != "" {
 		raw, err := os.ReadFile(c.File)

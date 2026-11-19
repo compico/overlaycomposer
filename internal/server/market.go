@@ -16,6 +16,7 @@ import (
 func (s *Server) marketRoutes() {
 	app := s.app
 	app.Get("/api/market", s.localOnly, s.marketCatalog)
+	app.Get("/api/market/wasm", s.localOnly, s.marketWasm)
 	app.Post("/api/market/sources", s.localOnly, s.appGuard, s.marketAddSource)
 	app.Delete("/api/market/sources", s.localOnly, s.appGuard, s.marketRemoveSource)
 	app.Put("/api/market/token", s.localOnly, s.appGuard, s.marketSetToken)
@@ -40,6 +41,16 @@ func (s *Server) marketCatalog(c fiber.Ctx) error {
 		"installed": inst,
 		"hasToken":  s.d.Market.HasToken(), // сам токен наружу не отдаётся никогда
 	})
+}
+
+// marketWasm — wasm-плагины из релизов источников (только чтение).
+func (s *Server) marketWasm(c fiber.Ctx) error {
+	if s.d.Market == nil {
+		return bad(c, "store is unavailable")
+	}
+	ctx, cancel := marketCtx()
+	defer cancel()
+	return c.JSON(fiber.Map{"sources": s.d.Market.WasmCatalog(ctx, c.Query("refresh") == "1")})
 }
 
 func marketErr(c fiber.Ctx, err error) error {
