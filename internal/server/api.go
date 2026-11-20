@@ -159,8 +159,13 @@ func (s *Server) putConfig(c fiber.Ctx) error {
 	if err != nil {
 		return bad(c, err.Error())
 	}
+	s.configApplied(prev, next)
+	return c.JSON(s.configView())
+}
+
+// configApplied применяет изменённый конфиг сразу: отладка прокси, включение/выключение obs-websocket, смена адреса/пароля.
+func (s *Server) configApplied(prev, next config.Config) {
 	s.d.Proxy.SetDebug(next.DebugProxy)
-	// Применяем сразу: включение/выключение obs-websocket и смена адреса/пароля.
 	switch {
 	case !next.Obs.Enabled:
 		s.d.Obs.Stop()
@@ -168,7 +173,6 @@ func (s *Server) putConfig(c fiber.Ctx) error {
 		s.d.Obs.Reconnect(next.Obs.URL, next.Obs.Password)
 	}
 	s.d.Hub.BroadcastObsStatus()
-	return c.JSON(s.configView())
 }
 
 // ---- layouts ----
