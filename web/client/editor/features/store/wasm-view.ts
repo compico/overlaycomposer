@@ -3,7 +3,7 @@ import { el } from "../../lib/dom.ts";
 import { PERM_TEXT } from "../../lib/permissions.ts";
 import type { Ui } from "../../lib/ui.ts";
 import type { WasmEntry, WasmStoreModel, WasmStoreState } from "./wasm.ts";
-import { installAction, versionChoices } from "./wasm-versions.ts";
+import { changesBetween, installAction, versionChoices, type WasmChange } from "./wasm-versions.ts";
 
 export interface WasmStorePorts {
   ui: Ui;
@@ -24,6 +24,36 @@ export function mountWasmStore(box: HTMLElement, model: WasmStoreModel, ports: W
     });
     return btn;
   };
+
+  /**
+   * Окно обновления: что изменилось во всех пропущенных версиях, что сделать после обновления и какие новые права просит плагин.
+   * Resolves true — пользователь согласен обновить.
+   */
+  function confirmUpdate(p: WasmEntry, to: string, log: WasmChange[], added: string[]): Promise<boolean> {
+    return new Promise((resolve) => {
+      const dialog = el("dialog", { class: "wasm-update", style: "max-width:560px;width:90vw" });
+      const body = el("div", { style: "max-height:60vh;overflow:auto" });
+      body.append(el("strong", { textContent: `Update “${p.name}”: ${p.installedVersion} → ${to}` }));
+      if (added.length) {
+        body.append(el("div", { class: "hint warn", textContent: `The new version asks for additional permissions: ${added.map(permText).join("; ")}. They stay off until you allow them in Plugins.` }));
+      }
+      if (!log.length) body.append(el("div", { class: "hint", textContent: "The author did not describe this update." }));
+      for (const c of log) {
+        body.append(el("h4", { textContent: c.date ? `${c.version} — ${c.date}` : c.version }));
+        if (c.changes?.length) body.append(el("ul", {}, ...c.changes.map((x) => el("li", { textContent: x }))));
+        if (c.migration) body.append(el("div", { class: "hint", textContent: "What to do after updating:" }), el("div", { class: "migration", textContent: c.migration }));
+      }
+      const ok = el("button", { type: "button", class: "primary", textContent: `Update to ${to}` });
+      const cancel = el("button", { type: "button", textContent: "Cancel" });
+      let result = false;
+      ok.addEventListener("click", () => { result = true; dialog.close(); });
+      cancel.addEventListener("click", () => dialog.close());
+      dialog.addEventListener("close", () => { dialog.remove(); resolve(result); });
+      dialog.append(body, el("div", { class: "row", style: "justify-content:flex-end;gap:6px;margin-top:10px" }, cancel, ok));
+      document.body.append(dialog);
+      dialog.showModal();
+    });
+  }
 
   function entryRow(p: WasmEntry): HTMLElement {
     const choices = versionChoices(p.versions);
@@ -53,10 +83,13 @@ export function mountWasmStore(box: HTMLElement, model: WasmStoreModel, ports: W
         await model.load();
         return;
       }
-      if (a.kind === "update" && latest && p.addedPermissions?.length &&
-        !confirm(`The new version of “${p.name}” asks for additional permissions:\n\n${p.addedPermissions.map((x) => `• ${permText(x)}`).join("\n")}\n\nUpdate anyway? (They stay off until you allow them in Plugins.)`)) {
-        await model.load();
-        return;
+      if (a.kind === "update" && p.installedVersion) {
+        const log = changesBetween(p.changelog, p.installedVersion, c.version);
+        const added = latest ? p.addedPermissions ?? [] : [];
+        if ((log.length || added.length) && !(await confirmUpdate(p, c.version, log, added))) {
+          await model.load();
+          return;
+        }
       }
       const res = await model.install({ repo: p.repo, id: p.id, tag: c.tag, ...(latest && p.sha256 ? { sha256: p.sha256 } : {}) });
       ui.toast(`${p.name} ${res.version} ${res.previous ? "installed (was " + res.previous + ")" : "installed"}.`);

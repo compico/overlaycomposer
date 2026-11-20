@@ -181,6 +181,9 @@ type WasmEntry struct {
 	Size        int64         `json:"size,omitempty"`
 	NoInfo      bool          `json:"noInfo,omitempty"` // у последнего релиза нет <id>.json: имя, права и sha256 неизвестны
 	Versions    []WasmVersion `json:"versions"`         // от новой к старой
+	// Changelog — журнал изменений из <id>.changelog.json последнего релиза (вся история). Отдаётся только для установленных плагинов:
+	// редактор показывает из него записи пропущенных версий (между установленной и выбранной).
+	Changelog []Change `json:"changelog,omitempty"`
 
 	Installed        bool     `json:"installed"`                  // установлен из этого репозитория через магазин
 	InstalledVersion string   `json:"installedVersion,omitempty"` //
@@ -293,6 +296,7 @@ func (m *Market) wasmEntries(ctx context.Context, r Repo, source string, release
 			e.Versions = append(e.Versions, WasmVersion{Version: v.v, Tag: v.rel.Tag})
 		}
 		m.fillWasmInfo(ctx, r, &e, vs[0].rel)
+		e.Changelog = m.readWasmChangelog(ctx, r, id, vs[0].rel)
 		out = append(out, e)
 	}
 	return out
@@ -358,6 +362,21 @@ func (m *Market) fillWasmInfo(ctx context.Context, r Repo, e *WasmEntry, rel Rel
 			e.Permissions = append(e.Permissions, p)
 		}
 	}
+}
+
+// readWasmChangelog читает <id>.changelog.json релиза. Нет файла, он велик или битый — журнала просто нет: на установку это не влияет.
+func (m *Market) readWasmChangelog(ctx context.Context, r Repo, id string, rel Release) []Change {
+	for _, a := range rel.Assets {
+		if a.Name != id+".changelog.json" || a.Size <= 0 || a.Size > maxChangelogSize {
+			continue
+		}
+		raw, err := m.rel.Asset(ctx, r, m.token(), a.ID, maxChangelogSize)
+		if err != nil {
+			return nil
+		}
+		return parseChangelogBytes(raw)
+	}
+	return nil
 }
 
 // oneLine делает из чужого текста безопасную однострочную подпись: управляющие символы — в пробелы, длина — не больше max рун.

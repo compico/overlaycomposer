@@ -223,6 +223,14 @@ func parseChangelog(f *zip.File) []Change {
 	if err != nil {
 		return nil
 	}
+	return parseChangelogBytes(raw)
+}
+
+// parseChangelogBytes разбирает содержимое changelog.json (из архива виджета или ассета релиза wasm-плагина).
+func parseChangelogBytes(raw []byte) []Change {
+	if len(raw) > maxChangelogSize {
+		return nil
+	}
 	var list []Change
 	if json.Unmarshal(raw, &list) != nil {
 		return nil
