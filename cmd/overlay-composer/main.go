@@ -207,8 +207,12 @@ func run() int {
 				})
 			}
 			for _, u := range ups {
+				key := "plugin:" + u.ID + "@" + u.To
+				if u.Kind == "wasm" {
+					key = "wasm:" + u.ID + "@" + u.To
+				}
 				out = append(out, notify.Candidate{
-					Key:   "plugin:" + u.ID + "@" + u.To,
+					Key:   key,
 					Title: fmt.Sprintf("%s: update %s", u.Name, u.To),
 					Text:  fmt.Sprintf("Plugin %s %s → %s is available", u.Name, u.From, u.To),
 					Data:  u,

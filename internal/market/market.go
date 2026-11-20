@@ -1013,6 +1013,7 @@ func (m *Market) dropAllCache() {
 
 // Update — доступное обновление установленного плагина (повышена версия; изменение файлов без смены версии сюда не входит).
 type Update struct {
+	Kind             string   `json:"kind,omitempty"` // "wasm" — автономный плагин; пусто — виджет
 	ID               string   `json:"id"`
 	Name             string   `json:"name"`
 	Repo             string   `json:"repo"`
@@ -1026,11 +1027,12 @@ type Update struct {
 // ok=false, если не ответил ни один источник (нет сети и т. п.) — тогда вывод «обновлений нет» ненадёжен.
 func (m *Market) Updates(ctx context.Context, refresh bool) (list []Update, ok bool) {
 	list = []Update{}
+	widgetOK := false
 	for _, sv := range m.Catalog(ctx, refresh) {
 		if sv.Error != "" {
 			continue
 		}
-		ok = true
+		widgetOK = true
 		for _, e := range sv.Plugins {
 			if e.Installed && e.UpdateAvailable && newer(e.Version, e.InstalledVersion) {
 				list = append(list, Update{ID: e.ID, Name: e.Name, Repo: e.Repo, From: e.InstalledVersion, To: e.Version,
@@ -1038,5 +1040,24 @@ func (m *Market) Updates(ctx context.Context, refresh bool) (list []Update, ok b
 			}
 		}
 	}
+	// Автономные плагины. Каждый вид надёжен, если ответил хоть один источник или плагинов этого вида нет вовсе (сбой каталога
+	// релизов, например лимит GitHub API без токена, не должен ломать проверку виджетов, и наоборот); отвечать должен хоть кто-то.
+	wasmOK := false
+	for _, sv := range m.WasmCatalog(ctx, refresh) {
+		if sv.Error != "" {
+			continue
+		}
+		wasmOK = true
+		for _, e := range sv.Plugins {
+			if e.Installed && e.UpdateAvailable && newer(e.Version, e.InstalledVersion) {
+				list = append(list, Update{Kind: "wasm", ID: e.ID, Name: e.Name, Repo: e.Repo, From: e.InstalledVersion, To: e.Version,
+					AddedPermissions: e.AddedPermissions, Changelog: between(e.Changelog, e.InstalledVersion, e.Version)})
+			}
+		}
+	}
+	m.mu.Lock()
+	haveWidgets := len(m.st.Installed) > 0
+	m.mu.Unlock()
+	ok = (widgetOK || wasmOK) && (widgetOK || !haveWidgets) && (wasmOK || len(m.WasmLock()) == 0)
 	return list, ok
 }
