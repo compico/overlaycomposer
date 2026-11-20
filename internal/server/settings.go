@@ -11,6 +11,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 
 	"github.com/compico/overlaycomposer/internal/bundle"
+	"github.com/compico/overlaycomposer/internal/bundle/content"
 )
 
 // Экспорт и импорт настроек одним файлом (internal/bundle, #98). Секции подключаются в settingsSections по мере готовности
@@ -26,7 +27,40 @@ func (s *Server) settingsRoutes() {
 }
 
 // settingsSections — секции в порядке применения: зависимости раньше зависимых (источники до layouts, плагины до их настроек).
-func (s *Server) settingsSections() []bundle.Section { return nil }
+func (s *Server) settingsSections() []bundle.Section {
+	if s.d.Store == nil {
+		return nil
+	}
+	return []bundle.Section{
+		&content.Sources{Store: s.d.Store, Settings: s.sourcePluginSettings, Changed: func() {
+			if s.d.Hub != nil {
+				s.d.Hub.SourcesChanged()
+			}
+		}},
+		&content.Layouts{Store: s.d.Store, Sources: s.d.Store,
+			Default: func() string { id, _ := s.d.Store.DefaultLayoutID(); return id },
+			Changed: func(ids []string) {
+				if s.d.Hub == nil {
+					return
+				}
+				for _, id := range ids {
+					s.d.Hub.LayoutUpdated(id)
+				}
+				s.d.Hub.LayoutsChanged()
+				s.d.Hub.Reresolve()
+			}},
+	}
+}
+
+// sourcePluginSettings проверяет настройки источника-плагина по манифесту (как при создании источника); known=false — плагина нет.
+func (s *Server) sourcePluginSettings(plugin, widget string, in map[string]any) (map[string]any, bool, error) {
+	p, ok := s.sourceManifest(plugin, widget)
+	if !ok {
+		return nil, false, nil
+	}
+	out, err := p.CleanSettings(in)
+	return out, true, err
+}
 
 func (s *Server) settings() *bundle.Service {
 	s.bundleOnce.Do(func() {
