@@ -12,6 +12,7 @@ import (
 
 	"github.com/compico/overlaycomposer/internal/bundle"
 	"github.com/compico/overlaycomposer/internal/bundle/content"
+	"github.com/compico/overlaycomposer/internal/deck"
 )
 
 // Экспорт и импорт настроек одним файлом (internal/bundle, #98). Секции подключаются в settingsSections по мере готовности
@@ -37,6 +38,12 @@ func (s *Server) settingsSections() []bundle.Section {
 				s.d.Hub.SourcesChanged()
 			}
 		}},
+		&content.Deck{Store: s.deckBundleStore(), Scenes: func() []string {
+			if o := s.deckObs(); o != nil && o.Connected() {
+				return o.Scenes()
+			}
+			return nil
+		}, PluginKnown: func(id string) bool { return s.d.Wasm != nil && s.d.Wasm.Has(id) }},
 		&content.Layouts{Store: s.d.Store, Sources: s.d.Store,
 			Default: func() string { id, _ := s.d.Store.DefaultLayoutID(); return id },
 			Changed: func(ids []string) {
@@ -50,6 +57,33 @@ func (s *Server) settingsSections() []bundle.Section {
 				s.d.Hub.Reresolve()
 			}},
 	}
+}
+
+// deckBundleStore — раскладка Deck для секции настроек: сохранение под тем же замком и с тем же счётчиком ревизий, что и у редактора панели.
+type deckBundleStore struct{ s *Server }
+
+func (s *Server) deckBundleStore() content.DeckStore { return deckBundleStore{s} }
+
+func (d deckBundleStore) Layout() (deck.Layout, bool) {
+	d.s.deckMu.Lock()
+	defer d.s.deckMu.Unlock()
+	return d.s.deckLayout()
+}
+
+func (d deckBundleStore) Save(l deck.Layout) error {
+	d.s.deckMu.Lock()
+	defer d.s.deckMu.Unlock()
+	cur, _ := d.s.deckLayout()
+	l.Rev = cur.Rev + 1 // выше текущей ревизии: устройства перерисуются
+	raw, err := json.Marshal(l)
+	if err != nil {
+		return err
+	}
+	if err := d.s.d.Store.SetSetting(deckLayoutKey, string(raw)); err != nil {
+		return err
+	}
+	d.s.deckPoke()
+	return nil
 }
 
 // sourcePluginSettings проверяет настройки источника-плагина по манифесту (как при создании источника); known=false — плагина нет.
