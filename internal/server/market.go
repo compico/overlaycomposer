@@ -19,6 +19,8 @@ func (s *Server) marketRoutes() {
 	app.Get("/api/market/wasm", s.localOnly, s.marketWasm)
 	app.Post("/api/market/wasm/install", s.localOnly, s.appGuard, s.marketWasmInstall)
 	app.Post("/api/market/wasm/uninstall", s.localOnly, s.appGuard, s.marketWasmUninstall)
+	app.Get("/api/market/wasm/lock", s.localOnly, s.marketWasmLock)
+	app.Post("/api/market/wasm/lock/plan", s.localOnly, s.appGuard, s.marketWasmLockPlan)
 	app.Post("/api/market/sources", s.localOnly, s.appGuard, s.marketAddSource)
 	app.Delete("/api/market/sources", s.localOnly, s.appGuard, s.marketRemoveSource)
 	app.Put("/api/market/token", s.localOnly, s.appGuard, s.marketSetToken)
@@ -94,6 +96,28 @@ func (s *Server) marketWasmUninstall(c fiber.Ctx) error {
 	}
 	slog.Info("store: wasm-плагин удалён", "id", b.ID)
 	return c.JSON(fiber.Map{"ok": true})
+}
+
+// marketWasmLock — lock-файл установленных через магазин wasm-плагинов (для экспорта настроек).
+func (s *Server) marketWasmLock(c fiber.Ctx) error {
+	if s.d.Market == nil {
+		return bad(c, "store is unavailable")
+	}
+	return c.JSON(s.d.Market.WasmLockExport())
+}
+
+// marketWasmLockPlan оценивает записи lock-файла: что можно поставить, а что нельзя и почему. Ничего не ставит и не скачивает.
+func (s *Server) marketWasmLockPlan(c fiber.Ctx) error {
+	if s.d.Market == nil {
+		return bad(c, "store is unavailable")
+	}
+	var b market.WasmLockFile
+	if !body(c, &b) {
+		return bad(c, "invalid json")
+	}
+	ctx, cancel := marketCtx()
+	defer cancel()
+	return c.JSON(fiber.Map{"items": s.d.Market.WasmLockPlan(ctx, b)})
 }
 
 func marketErr(c fiber.Ctx, err error) error {
