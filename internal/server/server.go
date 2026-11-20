@@ -20,6 +20,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 
 	"github.com/compico/overlaycomposer/internal/auth"
+	"github.com/compico/overlaycomposer/internal/bundle"
 	"github.com/compico/overlaycomposer/internal/chat"
 	"github.com/compico/overlaycomposer/internal/config"
 	"github.com/compico/overlaycomposer/internal/events"
@@ -79,6 +80,9 @@ type Server struct {
 	logMu     sync.Mutex // ограничение частоты /api/client-log
 	logWindow time.Time
 	logCount  int
+
+	bundleOnce sync.Once // экспорт/импорт настроек (settings.go)
+	bundleSvc  *bundle.Service
 
 	redeem *wasmplugins.Bridge // EventSub для wasm-плагинов; nil — без Twitch или без wasm
 
@@ -177,6 +181,7 @@ func (s *Server) routes() {
 	s.storageRoutes()
 	s.deckRoutes()
 	s.marketRoutes()
+	s.settingsRoutes()
 	s.notifyRoutes()
 	s.wasmRoutes()
 
