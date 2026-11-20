@@ -48,6 +48,8 @@ type Item struct {
 	Status  string `json:"status"`
 	Reason  string `json:"reason,omitempty"` // у problem — почему нельзя; у остальных — предупреждение (необязательно)
 	Warning bool   `json:"warning,omitempty"`
+	// Optional — в модалке не отмечен по умолчанию (то, что нужно только по явному желанию).
+	Optional bool `json:"optional,omitempty"`
 }
 
 // Selectable — элемент можно выбрать для применения.
@@ -80,6 +82,10 @@ type Outcome struct {
 	Error string `json:"error,omitempty"`
 	Note  string `json:"note,omitempty"` // применено, но с оговоркой (что не перенесено)
 }
+
+// OptIn — необязательный интерфейс секции: секция, которая по умолчанию не попадает в экспорт (то, что может содержать секреты:
+// например, настройки плагинов с токенами). В файл она идёт, только если названа явно; в локальный бэкап — всегда (ExportAll).
+type OptIn interface{ OptIn() bool }
 
 // Service — набор секций в порядке применения.
 type Service struct {
@@ -122,7 +128,10 @@ func sum(raw json.RawMessage) (string, error) {
 	return hex.EncodeToString(h[:]), nil
 }
 
-// Export собирает файл из перечисленных секций (пусто — из всех).
+// ExportAll — файл из всех секций, включая необязательные (OptIn): для локального бэкапа.
+func (s *Service) ExportAll(ctx context.Context) (File, error) { return s.Export(ctx, s.Names()) }
+
+// Export собирает файл из перечисленных секций (пусто — из всех, кроме OptIn).
 func (s *Service) Export(ctx context.Context, names []string) (File, error) {
 	f := File{Format: Format, App: s.App, CreatedAt: s.Now().UTC().Format(time.RFC3339), Sections: map[string]json.RawMessage{}, Checksums: map[string]string{}}
 	want := map[string]bool{}
@@ -134,6 +143,9 @@ func (s *Service) Export(ctx context.Context, names []string) (File, error) {
 	}
 	for _, sec := range s.sections {
 		if len(want) > 0 && !want[sec.Name()] {
+			continue
+		}
+		if o, ok := sec.(OptIn); ok && o.OptIn() && len(want) == 0 {
 			continue
 		}
 		raw, err := sec.Export(ctx)

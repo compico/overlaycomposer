@@ -12,6 +12,8 @@ import (
 
 	"github.com/compico/overlaycomposer/internal/bundle"
 	"github.com/compico/overlaycomposer/internal/bundle/content"
+	"github.com/compico/overlaycomposer/internal/market"
+	"github.com/compico/overlaycomposer/internal/wasmplugins"
 )
 
 // Экспорт и импорт настроек одним файлом (internal/bundle, #98). Секции подключаются в settingsSections по мере готовности
@@ -31,7 +33,13 @@ func (s *Server) settingsSections() []bundle.Section {
 	if s.d.Store == nil {
 		return nil
 	}
-	return []bundle.Section{
+	secs := []bundle.Section{}
+	if s.d.Market != nil && s.d.Wasm != nil {
+		host := s.pluginBundleHost()
+		// плагины ставятся первыми: источники и Deck ссылаются на них; настройки плагина — после установки
+		secs = append(secs, &content.Plugins{Host: host}, &content.PluginSettingsSection{Host: host})
+	}
+	return append(secs,
 		&content.Sources{Store: s.d.Store, Settings: s.sourcePluginSettings, Changed: func() {
 			if s.d.Hub != nil {
 				s.d.Hub.SourcesChanged()
@@ -49,7 +57,51 @@ func (s *Server) settingsSections() []bundle.Section {
 				s.d.Hub.LayoutsChanged()
 				s.d.Hub.Reresolve()
 			}},
+	)
+}
+
+// pluginBundleHost — магазин и менеджер wasm-плагинов для секций plugins и plugin-settings.
+type pluginBundleHost struct{ s *Server }
+
+func (s *Server) pluginBundleHost() content.PluginHost { return pluginBundleHost{s} }
+
+func (h pluginBundleHost) Lock() market.WasmLockFile { return h.s.d.Market.WasmLockExport() }
+func (h pluginBundleHost) Plan(ctx context.Context, f market.WasmLockFile) []market.WasmLockPlanItem {
+	return h.s.d.Market.WasmLockPlan(ctx, f)
+}
+func (h pluginBundleHost) Install(ctx context.Context, repo, id, tag, sha string) error {
+	_, err := h.s.d.Market.WasmInstall(ctx, repo, id, tag, sha)
+	return err
+}
+func (h pluginBundleHost) info(id string) (wasmplugins.Info, bool) {
+	list, _ := h.s.d.Wasm.List()
+	for _, i := range list {
+		if i.Meta.ID == id {
+			return i, true
+		}
 	}
+	return wasmplugins.Info{}, false
+}
+func (h pluginBundleHost) Loaded(id string) (content.LoadedPlugin, bool) {
+	i, ok := h.info(id)
+	if !ok {
+		return content.LoadedPlugin{}, false
+	}
+	return content.LoadedPlugin{SHA256: i.SHA256, Requested: i.Meta.Permissions, Granted: i.Granted, Config: i.Config}, true
+}
+func (h pluginBundleHost) LoadedIDs() []string {
+	list, _ := h.s.d.Wasm.List()
+	ids := make([]string, 0, len(list))
+	for _, i := range list {
+		ids = append(ids, i.Meta.ID)
+	}
+	return ids
+}
+func (h pluginBundleHost) SetGrants(id string, perms []string) error {
+	return h.s.d.Wasm.SetGrants(id, perms)
+}
+func (h pluginBundleHost) SetConfig(id string, cfg json.RawMessage) error {
+	return h.s.d.Wasm.SetConfig(id, cfg)
 }
 
 // sourcePluginSettings проверяет настройки источника-плагина по манифесту (как при создании источника); known=false — плагина нет.
@@ -73,7 +125,7 @@ func (s *Server) settings() *bundle.Service {
 
 // backupSettings сохраняет текущие настройки в <data>/backups перед импортом (последние settingsBackupKeep файлов).
 func (s *Server) backupSettings(ctx context.Context) error {
-	f, err := s.settings().Export(ctx, nil)
+	f, err := s.settings().ExportAll(ctx) // в бэкапе — всё, включая необязательные секции: он остаётся на этом компьютере
 	if err != nil {
 		return err
 	}
