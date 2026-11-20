@@ -314,3 +314,52 @@ func TestWasmChangelogIgnoredWhenBrokenOrHuge(t *testing.T) {
 		}
 	}
 }
+
+func TestUpdatesIncludeWasmPlugins(t *testing.T) {
+	m, _, f := installEnv(t)
+	ctx := context.Background()
+	f.addRelease("music", "0.8.0", "music 0.8.0 storage", true)
+	f.addRelease("music", "0.9.0", "music 0.9.0 storage", true)
+	f.addRelease("music", "1.0.0", "music 1.0.0 storage chat.send", true)
+	f.addChangelog("music", "1.0.0", `[{"version":"0.8.0","changes":["old"]},{"version":"0.9.0","migration":"m9"},{"version":"1.0.0","changes":["new"]}]`)
+	if _, err := m.WasmInstall(ctx, "o/n", "music", "music-v0.8.0", ""); err != nil {
+		t.Fatal(err)
+	}
+	ups, ok := m.Updates(ctx, true)
+	if !ok || len(ups) != 1 {
+		t.Fatalf("%+v %v", ups, ok)
+	}
+	u := ups[0]
+	if u.Kind != "wasm" || u.ID != "music" || u.From != "0.8.0" || u.To != "1.0.0" || len(u.AddedPermissions) != 1 || u.AddedPermissions[0] != "chat.send" {
+		t.Fatalf("%+v", u)
+	}
+	if len(u.Changelog) != 2 || u.Changelog[0].Version != "0.9.0" || u.Changelog[1].Version != "1.0.0" {
+		t.Fatalf("пропущенные версии: %+v", u.Changelog)
+	}
+	// после обновления до последней версии уведомлять не о чем
+	if _, err := m.WasmInstall(ctx, "o/n", "music", "music-v1.0.0", ""); err != nil {
+		t.Fatal(err)
+	}
+	if ups, ok = m.Updates(ctx, true); !ok || len(ups) != 0 {
+		t.Fatalf("%+v %v", ups, ok)
+	}
+}
+
+func TestUpdatesWasmCatalogFailure(t *testing.T) {
+	m, _, f := installEnv(t)
+	ctx := context.Background()
+	f.addRelease("music", "0.8.0", "music 0.8.0", true)
+	// без поставленных через магазин плагинов сбой каталога релизов проверку не ломает
+	f.err = errors.New("rate limited")
+	if _, ok := m.Updates(ctx, true); ok { // у installEnv нет виджетного каталога: ok=false и без этого, проверяем только отсутствие паники
+		t.Log("ok без источников виджетов")
+	}
+	f.err = nil
+	if _, err := m.WasmInstall(ctx, "o/n", "music", "music-v0.8.0", ""); err != nil {
+		t.Fatal(err)
+	}
+	f.err = errors.New("rate limited")
+	if _, ok := m.Updates(ctx, true); ok {
+		t.Fatal("поставленный wasm-плагин и сбой каталога релизов: ответ ненадёжен")
+	}
+}
