@@ -100,6 +100,9 @@ func (m *Market) markWasmInstalled(source string, list []WasmEntry) []WasmEntry 
 		case loaded || lock[e.ID].Repo != "":
 			e.Blocked = "foreign"
 		}
+		if !e.Installed {
+			e.Changelog = nil // нужен только при обновлении установленного
+		}
 		out[i] = e
 	}
 	return out

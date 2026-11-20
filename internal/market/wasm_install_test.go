@@ -253,3 +253,64 @@ func TestWasmInstallWithoutHost(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// addChangelog прикладывает к уже добавленному релизу <id>-v<ver> ассет <id>.changelog.json.
+func (f *fakeReleases) addChangelog(id, ver, body string) {
+	for i := range f.list {
+		if f.list[i].Tag != id+"-v"+ver {
+			continue
+		}
+		cid := int64(9000 + len(f.files))
+		f.list[i].Assets = append(f.list[i].Assets, ReleaseAsset{ID: cid, Name: id + ".changelog.json", Size: int64(len(body))})
+		f.files[cid] = body
+		return
+	}
+	panic("нет релиза " + id + "-v" + ver)
+}
+
+func TestWasmCatalogChangelogOnlyForInstalled(t *testing.T) {
+	m, _, f := installEnv(t)
+	f.addRelease("music", "0.9.0", "music 0.9.0 storage", true)
+	f.addRelease("music", "1.0.0", "music 1.0.0 storage", true)
+	f.addRelease("other", "1.0.0", "other 1.0.0", true)
+	f.addChangelog("music", "1.0.0", `[{"version":"0.9.0","changes":["a"]},{"version":"1.0.0","changes":["b"],"migration":"сделайте x"}]`)
+	f.addChangelog("other", "1.0.0", `[{"version":"1.0.0","changes":["c"]}]`)
+	cat := func() map[string]WasmEntry {
+		out := map[string]WasmEntry{}
+		for _, e := range m.WasmCatalog(context.Background(), true)[0].Plugins {
+			out[e.ID] = e
+		}
+		return out
+	}
+	if e := cat()["music"]; e.Changelog != nil {
+		t.Fatalf("у неустановленного журнал не нужен: %+v", e.Changelog)
+	}
+	if _, err := m.WasmInstall(context.Background(), "o/n", "music", "music-v0.9.0", ""); err != nil {
+		t.Fatal(err)
+	}
+	e := cat()["music"]
+	if len(e.Changelog) != 2 || e.Changelog[1].Version != "1.0.0" || e.Changelog[1].Migration != "сделайте x" {
+		t.Fatalf("журнал установленного: %+v", e.Changelog)
+	}
+	if o := cat()["other"]; o.Changelog != nil {
+		t.Fatalf("чужой журнал: %+v", o.Changelog)
+	}
+}
+
+func TestWasmChangelogIgnoredWhenBrokenOrHuge(t *testing.T) {
+	m, _, f := installEnv(t)
+	f.addRelease("a", "1.0.0", "a 1.0.0", true)
+	f.addRelease("b", "1.0.0", "b 1.0.0", true)
+	f.addChangelog("a", "1.0.0", `не json`)
+	f.addChangelog("b", "1.0.0", `[{"version":"1.0.0","changes":["`+strings.Repeat("x", maxChangelogSize)+`"]}]`)
+	for _, id := range []string{"a", "b"} {
+		if _, err := m.WasmInstall(context.Background(), "o/n", id, id+"-v1.0.0", ""); err != nil {
+			t.Fatalf("%s: журнал не должен мешать установке: %v", id, err)
+		}
+	}
+	for _, e := range m.WasmCatalog(context.Background(), true)[0].Plugins {
+		if e.Changelog != nil || e.NoInfo {
+			t.Fatalf("%s: %+v", e.ID, e)
+		}
+	}
+}

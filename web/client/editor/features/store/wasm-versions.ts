@@ -72,3 +72,15 @@ export function installAction(installed: string | undefined, to: string): { kind
   if (c > 0) return { kind: "update", label: `Update to ${to}` };
   return { kind: "downgrade", label: `Switch to ${to}` };
 }
+
+export interface WasmChange { version: string; date?: string; changes?: string[]; migration?: string }
+
+/**
+ * Записи журнала для перехода с версии `have` на `to`: новее установленной и не новее выбранной, по возрастанию версий.
+ * Берутся записи всех пропущенных версий, а не только целевой: миграции накапливаются.
+ */
+export function changesBetween(log: WasmChange[] | undefined, have: string, to: string): WasmChange[] {
+  return (log ?? [])
+    .filter((c) => parts(c.version) && compareVersions(c.version, have) > 0 && compareVersions(c.version, to) <= 0)
+    .sort((a, b) => compareVersions(a.version, b.version));
+}

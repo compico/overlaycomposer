@@ -1,7 +1,7 @@
 // Автономные (wasm) плагины в магазине: каталог из релизов источников, установка, обновление, смена версии. Без DOM.
 import type { Api } from "../../lib/api.ts";
 import { createStore, type Readable } from "../../lib/store.ts";
-import type { WasmVersion } from "./wasm-versions.ts";
+import type { WasmChange, WasmVersion } from "./wasm-versions.ts";
 
 export interface WasmEntry {
   id: string; name: string; version: string; description?: string; author?: string; permissions?: string[];
@@ -9,6 +9,8 @@ export interface WasmEntry {
   /** У последнего релиза нет <id>.json: имя, права и sha256 неизвестны. */
   noInfo?: boolean;
   versions: WasmVersion[];
+  /** Журнал изменений последнего релиза (вся история); приходит только для установленных плагинов. */
+  changelog?: WasmChange[];
   installed: boolean; installedVersion?: string; installedTag?: string; updateAvailable: boolean;
   /** Права последней версии, которых нет у установленной. */
   addedPermissions?: string[];

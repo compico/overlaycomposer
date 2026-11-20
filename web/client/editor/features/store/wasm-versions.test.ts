@@ -1,7 +1,7 @@
 // node --experimental-strip-types --test web/client/editor/features/store/wasm-versions.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { compareVersions, installAction, versionChoices, type WasmVersion } from "./wasm-versions.ts";
+import { changesBetween, compareVersions, installAction, versionChoices, type WasmVersion } from "./wasm-versions.ts";
 
 const v = (version: string): WasmVersion => ({ version, tag: `p-v${version}` });
 
@@ -44,4 +44,15 @@ test("installAction: установка, обновление, понижени�
   assert.deepEqual(installAction("0.9.0", "0.10.0"), { kind: "update", label: "Update to 0.10.0" });
   assert.deepEqual(installAction("1.0.0", "0.8.1"), { kind: "downgrade", label: "Switch to 0.8.1" });
   assert.deepEqual(installAction("1.0.0", "1.0.0"), { kind: "same", label: "Installed" });
+});
+
+test("changesBetween: все пропущенные версии по возрастанию, не новее выбранной", () => {
+  const log = [
+    { version: "0.9.0", changes: ["i"] }, { version: "0.10.0", migration: "m10" }, { version: "0.4.0", migration: "m4" },
+    { version: "0.5.0", changes: ["e"] }, { version: "bad", changes: ["x"] }, { version: "0.7.0", migration: "m7" },
+  ];
+  assert.deepEqual(changesBetween(log, "0.4.0", "0.9.0").map((c) => c.version), ["0.5.0", "0.7.0", "0.9.0"]);
+  assert.deepEqual(changesBetween(log, "0.4.0", "0.10.0").map((c) => c.version), ["0.5.0", "0.7.0", "0.9.0", "0.10.0"]);
+  assert.deepEqual(changesBetween(log, "0.10.0", "0.10.0"), []);
+  assert.deepEqual(changesBetween(undefined, "1.0.0", "2.0.0"), []);
 });
