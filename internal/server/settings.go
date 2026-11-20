@@ -12,6 +12,7 @@ import (
 
 	"github.com/compico/overlaycomposer/internal/bundle"
 	"github.com/compico/overlaycomposer/internal/bundle/content"
+	"github.com/compico/overlaycomposer/internal/config"
 	"github.com/compico/overlaycomposer/internal/deck"
 	"github.com/compico/overlaycomposer/internal/market"
 	"github.com/compico/overlaycomposer/internal/wasmplugins"
@@ -35,12 +36,15 @@ func (s *Server) settingsSections() []bundle.Section {
 		return nil
 	}
 	secs := []bundle.Section{}
+	if s.d.Market != nil {
+		secs = append(secs, &content.Store{List: s.d.Market}) // источники раньше плагинов: lock ссылается на них
+	}
 	if s.d.Market != nil && s.d.Wasm != nil {
 		host := s.pluginBundleHost()
 		// плагины ставятся первыми: источники и Deck ссылаются на них; настройки плагина — после установки
 		secs = append(secs, &content.Plugins{Host: host}, &content.PluginSettingsSection{Host: host})
 	}
-	return append(secs,
+	secs = append(secs,
 		&content.Sources{Store: s.d.Store, Settings: s.sourcePluginSettings, Changed: func() {
 			if s.d.Hub != nil {
 				s.d.Hub.SourcesChanged()
@@ -65,6 +69,27 @@ func (s *Server) settingsSections() []bundle.Section {
 				s.d.Hub.Reresolve()
 			}},
 	)
+	if s.d.Cfg != nil {
+		secs = append(secs, &content.App{Obs: obsBundleConfig{s}})
+	}
+	return secs
+}
+
+// obsBundleConfig — настройки OBS для секции app; применяются так же, как из окна настроек (переподключение сразу). Пароль не затрагивается.
+type obsBundleConfig struct{ s *Server }
+
+func (o obsBundleConfig) Get() content.ObsSettings {
+	c := o.s.d.Cfg.Get()
+	return content.ObsSettings{Enabled: c.Obs.Enabled, URL: c.Obs.URL}
+}
+
+func (o obsBundleConfig) Apply(v content.ObsSettings) error {
+	prev, next, err := o.s.d.Cfg.Apply(config.Patch{Obs: &config.ObsPatch{Enabled: &v.Enabled, URL: &v.URL}})
+	if err != nil {
+		return err
+	}
+	o.s.configApplied(prev, next)
+	return nil
 }
 
 // pluginBundleHost — магазин и менеджер wasm-плагинов для секций plugins и plugin-settings.
