@@ -78,6 +78,7 @@ type Outcome struct {
 	ID    string `json:"id"`
 	OK    bool   `json:"ok"`
 	Error string `json:"error,omitempty"`
+	Note  string `json:"note,omitempty"` // применено, но с оговоркой (что не перенесено)
 }
 
 // Service — набор секций в порядке применения.
