@@ -3,6 +3,8 @@ import { el } from "../../lib/dom.ts";
 import { PERM_TEXT } from "../../lib/permissions.ts";
 import type { Ui } from "../../lib/ui.ts";
 import type { WasmEntry, WasmStoreModel, WasmStoreState } from "./wasm.ts";
+import { defaultSelection, parseLockFile, replacementText, statusLabel } from "./wasm-lock.ts";
+import type { WasmLockPlanItem } from "./wasm.ts";
 import { changesBetween, installAction, versionChoices, type WasmChange } from "./wasm-versions.ts";
 
 export interface WasmStorePorts {
@@ -53,6 +55,66 @@ export function mountWasmStore(box: HTMLElement, model: WasmStoreModel, ports: W
       document.body.append(dialog);
       dialog.showModal();
     });
+  }
+
+  /**
+   * Окно восстановления по lock-файлу: каждая запись — с оценкой сервера; проблемные красным и с причиной, снять/поставить галочку можно
+   * только у тех, что ставятся. Ставится ровно записанная версия (тег и sha256 из lock).
+   */
+  function showLockPlan(items: WasmLockPlanItem[]) {
+    const dialog = el("dialog", { class: "wasm-lock", style: "max-width:600px;width:90vw" });
+    const selected = defaultSelection(items);
+    const body = el("div", { style: "max-height:60vh;overflow:auto" }, el("strong", { textContent: "Restore plugins from lock file" }));
+    if (!items.length) body.append(el("div", { class: "hint", textContent: "The lock file has no plugins." }));
+    for (const i of items) {
+      const box = el("input", { type: "checkbox", checked: selected.has(i.id), disabled: !i.installable }) as HTMLInputElement;
+      box.addEventListener("change", () => { if (box.checked) selected.add(i.id); else selected.delete(i.id); });
+      const head = `${i.id} ${i.version} — ${statusLabel(i)}`;
+      const lines = [el("div", { textContent: head, style: i.problem ? "color:var(--danger,#e5484d)" : "" })];
+      if (i.reason) lines.push(el("div", { class: "hint", textContent: i.reason, style: i.problem ? "color:var(--danger,#e5484d)" : "" }));
+      if (replacementText(i)) lines.push(el("div", { class: "hint", textContent: replacementText(i) }));
+      body.append(el("label", { class: "row", style: "align-items:flex-start;gap:8px;border-top:1px solid var(--line);padding:6px 0" }, box, el("div", { style: "flex:1;min-width:0" }, ...lines)));
+    }
+    const go = el("button", { type: "button", class: "primary", textContent: "Install selected" }) as HTMLButtonElement;
+    const close = el("button", { type: "button", textContent: "Close" });
+    close.addEventListener("click", () => dialog.close());
+    act(go, async () => {
+      const todo = items.filter((i) => i.installable && selected.has(i.id));
+      let done = 0;
+      for (const i of todo) {
+        try {
+          await model.install({ repo: i.repo, id: i.id, tag: i.tag, sha256: i.sha256 });
+          done++;
+        } catch (e) { ui.toast(`${i.id}: ${e instanceof Error ? e.message : String(e)}`); }
+      }
+      ui.toast(`Restored ${done} of ${todo.length} plugins. New permissions are not granted until you allow them in Plugins.`);
+      dialog.close();
+    });
+    dialog.addEventListener("close", () => dialog.remove());
+    dialog.append(body, el("div", { class: "row", style: "justify-content:flex-end;gap:6px;margin-top:10px" }, close, go));
+    document.body.append(dialog);
+    dialog.showModal();
+  }
+
+  function lockControls(): HTMLElement {
+    const exportBtn = act(el("button", { type: "button", textContent: "Export lock" }), async () => {
+      const lock = await model.exportLock();
+      const a = el("a", { href: URL.createObjectURL(new Blob([JSON.stringify(lock, null, 2) + "\n"], { type: "application/json" })), download: "plugins.lock.json" });
+      a.click();
+      URL.revokeObjectURL(a.href);
+      await model.load();
+    });
+    const file = el("input", { type: "file", accept: "application/json,.json", style: "display:none" }) as HTMLInputElement;
+    file.addEventListener("change", async () => {
+      const f = file.files?.[0];
+      file.value = "";
+      if (!f) return;
+      try { showLockPlan(await model.planLock(parseLockFile(await f.text()))); } catch (e) { ui.fail(e); }
+    });
+    const restore = el("button", { type: "button", textContent: "Restore from lock…" });
+    restore.addEventListener("click", () => file.click());
+    return el("div", { class: "row", style: "gap:6px;margin-top:8px" }, exportBtn, restore, file,
+      el("span", { class: "hint", textContent: "plugins.lock.json: which standalone plugins (version, sha256) are installed" }));
   }
 
   function entryRow(p: WasmEntry): HTMLElement {
@@ -132,6 +194,7 @@ export function mountWasmStore(box: HTMLElement, model: WasmStoreModel, ports: W
       if (src.error) parts.push(el("div", { class: "hint warn", textContent: src.error }));
       for (const p of src.plugins) parts.push(entryRow(p));
     }
+    if (s.sources.some((x) => x.plugins.length)) parts.push(lockControls());
     box.replaceChildren(...parts);
   }
   model.subscribe(render);

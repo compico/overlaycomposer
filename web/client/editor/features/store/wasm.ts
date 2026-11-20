@@ -25,6 +25,20 @@ export interface WasmInstalled {
   addedPermissions?: string[];
 }
 
+/** Запись lock-файла и её оценка (GET /api/market/wasm/lock, POST /api/market/wasm/lock/plan). */
+export interface WasmLockEntry { id: string; repo: string; tag: string; version: string; sha256: string; size?: number }
+export interface WasmLockFile { version: number; plugins: WasmLockEntry[] }
+export type WasmLockStatus = "ok" | "installed" | "differs" | "deprecated" | "removed" | "changed" | "no-source" | "unavailable" | "conflict" | "invalid";
+export interface WasmLockPlanItem extends WasmLockEntry {
+  status: WasmLockStatus;
+  /** Показывать красным: причина в reason. */
+  problem?: boolean;
+  reason?: string;
+  installable: boolean;
+  installedVersion?: string;
+  deprecation?: { reason: string; replacedBy?: { id: string; kind: string; repo: string; url?: string } };
+}
+
 export interface WasmStoreState { loading: boolean; error: string | null; sources: WasmSource[] }
 
 export interface WasmStoreModel extends Readable<WasmStoreState> {
@@ -32,6 +46,10 @@ export interface WasmStoreModel extends Readable<WasmStoreState> {
   /** Поставить, обновить или сменить версию (tag — релиз `<id>-v<версия>`); sha256 — отпечаток из каталога, если он известен. */
   install(p: { repo: string; id: string; tag: string; sha256?: string }): Promise<WasmInstalled>;
   uninstall(id: string): Promise<void>;
+  /** Lock-файл установленных через магазин плагинов (входит в экспорт настроек). */
+  exportLock(): Promise<WasmLockFile>;
+  /** Оценить записи lock-файла: что можно поставить, а что нельзя и почему. Ничего не ставит. */
+  planLock(lock: WasmLockFile): Promise<WasmLockPlanItem[]>;
 }
 
 export interface WasmStoreDeps {
@@ -67,6 +85,8 @@ export function createWasmStoreModel({ api, afterChange }: WasmStoreDeps): WasmS
       await afterChange();
       return res;
     }),
+    exportLock: () => api<WasmLockFile>("/api/market/wasm/lock"),
+    planLock: async (lock) => (await api<{ items: WasmLockPlanItem[] }>("/api/market/wasm/lock/plan", "POST", lock)).items ?? [],
     uninstall: (id) => mutate(async () => {
       await api("/api/market/wasm/uninstall", "POST", { id });
       await afterChange();
