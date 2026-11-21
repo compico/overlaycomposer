@@ -136,6 +136,12 @@ func Say(text string) error {
 	return err
 }
 
+// SayReply — то же, что Say, но ответом (реплаем) на сообщение зрителя: messageID берут из ChatCommand.MessageID.
+func SayReply(messageID, text string) error {
+	_, err := call("chat.send", map[string]any{"text": text, "replyTo": messageID})
+	return err
+}
+
 // ---- сеть (PermNetHTTP) ----
 
 // FetchRequest — исходящий HTTP-запрос. В локальную сеть ходить нельзя.

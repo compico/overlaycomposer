@@ -1,6 +1,7 @@
 // Представление центра уведомлений (ванильный DOM). Получает модель и «порты» — всё, что нужно снаружи.
 import { el } from "../../lib/dom.ts";
 import type { Ui } from "../../lib/ui.ts";
+import { deprecationText, type Deprecation } from "../store/deprecated.ts";
 import type { NotificationsModel, NotifItem, PluginChange } from "./model.ts";
 
 /** Элементы, которыми владеет представление (во фреймворке — собственная разметка компонента). */
@@ -17,6 +18,8 @@ export interface NotificationsPorts {
   ui: Ui;
   /** Открыть магазин плагинов (кнопка в окне обновления плагина). */
   openStore(): void;
+  /** Открыть окно Plugins с магазином автономных плагинов (замена устаревшего wasm-плагина). */
+  openPlugins(): void;
   /** Открыть настройки (кнопка в уведомлении «переподключите аккаунт Twitch»). */
   openSettings(): void;
 }
@@ -88,9 +91,27 @@ export function mountNotifications(refs: NotificationsRefs, model: Notifications
         if (c.changes?.length) refs.detail.append(textList(c.changes));
         if (c.migration) refs.detail.append(el("div", { class: "hint" }, "What to do after updating:"), el("div", { class: "migration" }, c.migration));
       }
-      const open = el("button", { type: "button", class: "primary" }, "Open widget store");
+      const open = el("button", { type: "button", class: "primary" }, d.kind === "wasm" ? "Open store (standalone plugins)" : "Open widget store");
       open.addEventListener("click", () => { refs.dialog.close(); ports.openStore(); });
       refs.actions.append(open);
+    } else if (n.kind === "plugin-deprecated") {
+      const dep = d as unknown as Deprecation;
+      refs.detail.append(el("div", { class: "hint warn" }, deprecationText(dep)));
+      const r = dep.replacedBy;
+      if (r) {
+        refs.detail.append(el("div", { class: "hint" }, `Replacement: ${r.id} (${r.kind === "wasm" ? "plugin" : "widget plugin"}, ${r.repo})`));
+        // Замена-виджет ставится из магазина виджетов, замена-wasm — из магазина автономных плагинов в окне Plugins.
+        if (r.kind === "wasm") {
+          const open = el("button", { type: "button", class: "primary" }, `Open plugin store to get ${r.id}`);
+          open.addEventListener("click", () => { refs.dialog.close(); ports.openPlugins(); });
+          refs.actions.append(open);
+        } else if (r.kind === "widget") {
+          const open = el("button", { type: "button", class: "primary" }, `Open widget store to get ${r.id}`);
+          open.addEventListener("click", () => { refs.dialog.close(); ports.openStore(); });
+          refs.actions.append(open);
+        }
+      }
+      refs.detail.append(el("div", { class: "hint" }, "The plugin keeps working until you remove it."));
     } else if (n.kind === "app-update") {
       refs.detail.append(el("div", { class: "hint" }, `${d.current ?? "?"} → ${d.latest ?? "?"}`));
       if (d.notes) refs.detail.append(el("h4", {}, "Release notes"), el("div", { class: "migration", style: "border-left-color:var(--line)" }, String(d.notes)));

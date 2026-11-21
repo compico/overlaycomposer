@@ -51,6 +51,14 @@ func TestValidateAcceptsGoodLayoutAndRejectsBadOnes(t *testing.T) {
 		"чужая иконка":            func(l *Layout) { l.Groups[0].Tiles[0].Icon = "skull" },
 		"неизвестное действие":    func(l *Layout) { l.Groups[0].Tiles[0].Action.Type = "exec" },
 		"пустая сцена":            func(l *Layout) { l.Groups[0].Tiles[0].Action.Scene = "" },
+		"плагин без действия":     func(l *Layout) { l.Groups[0].Tiles[0].Action = Action{Type: ActionPlugin, Plugin: "music"} },
+		"действие без плагина":    func(l *Layout) { l.Groups[0].Tiles[0].Action = Action{Type: ActionPlugin, PluginAction: "pause"} },
+		"id плагина со слэшем": func(l *Layout) {
+			l.Groups[0].Tiles[0].Action = Action{Type: ActionPlugin, Plugin: "a/b", PluginAction: "pause"}
+		},
+		"id действия в верхнем": func(l *Layout) {
+			l.Groups[0].Tiles[0].Action = Action{Type: ActionPlugin, Plugin: "music", PluginAction: "Pause"}
+		},
 		"слишком много групп": func(l *Layout) {
 			for i := 0; i < MaxGroups; i++ {
 				l.Groups = append(l.Groups, Group{ID: fmt.Sprintf("x%d", i)})
@@ -210,5 +218,95 @@ func TestParseEmptyGroupHasNoNullTiles(t *testing.T) {
 	raw, _ := json.Marshal(l)
 	if !strings.Contains(string(raw), `"tiles":[]`) {
 		t.Fatalf("tiles должен быть [], а не null: %s", raw)
+	}
+}
+
+func TestPluginActionTileIsValid(t *testing.T) {
+	l := Layout{Groups: []Group{{ID: "g", Tiles: []Tile{
+		{ID: "pause", W: 1, H: 1, Icon: "pause", Action: Action{Type: ActionPlugin, Plugin: "music", PluginAction: "toggle"}},
+	}}}}
+	if err := l.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := l.Tile("pause"); got.Action.Plugin != "music" || got.Action.PluginAction != "toggle" {
+		t.Fatalf("%+v", got)
+	}
+	// из JSON и обратно: плагина может не быть в системе — раскладка всё равно читается
+	raw := `{"rev":1,"groups":[{"id":"g","tiles":[{"id":"t","x":0,"y":0,"w":1,"h":1,"action":{"type":"plugin","plugin":"nobody","pluginAction":"x"}}]}]}`
+	if _, err := Parse([]byte(raw)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCSPForAllowsWebSocketOnOwnHost(t *testing.T) {
+	got := CSPFor("192.168.1.5:7878")
+	if !strings.Contains(got, "connect-src 'self' ws://192.168.1.5:7878 wss://192.168.1.5:7878;") {
+		t.Fatalf("CSP: %s", got)
+	}
+	for _, bad := range []string{"", "a b", "x;script-src *", "evil.com'", strings.Repeat("a", 300)} {
+		if CSPFor(bad) != CSP {
+			t.Errorf("хост %q не должен попадать в CSP", bad)
+		}
+	}
+	if !strings.Contains(clientJS, "/api/deck/ws") || !strings.Contains(clientJS, "/api/deck/state") {
+		t.Error("клиент должен уметь и WebSocket, и опрос")
+	}
+}
+
+func TestRenderPluginTileHasTextBox(t *testing.T) {
+	l := valid()
+	l.Groups[0].Tiles[0].Action = Action{Type: ActionPlugin, Plugin: "music", PluginAction: "now"}
+	out, err := Render(ViewData{Layout: l})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(out), "<s></s>"); n != 1 {
+		t.Fatalf("блок текста только у плиток плагинов, нашли %d", n)
+	}
+}
+
+func folder(id string, scenes ...string) Tile {
+	return Tile{ID: id, W: 2, H: 3, Action: Action{Type: ActionFolder, Scenes: scenes}}
+}
+
+func TestFolderValidation(t *testing.T) {
+	ok := func(scenes ...string) error {
+		l := Layout{Groups: []Group{{ID: "g", Tiles: []Tile{folder("f", scenes...)}}}}
+		return l.Validate()
+	}
+	if err := ok("A", "B"); err != nil {
+		t.Fatal(err)
+	}
+	many := make([]string, 0, MaxFolderScenes+1)
+	for i := 0; i <= MaxFolderScenes; i++ {
+		many = append(many, string(rune('a'+i)))
+	}
+	if ok() == nil || ok(many...) == nil || ok("A", "A") == nil || ok("") == nil || ok(strings.Repeat("я", 201)) == nil {
+		t.Fatal("плохие папки должны отклоняться")
+	}
+	if ok(many[:MaxFolderScenes]...) != nil {
+		t.Fatal("максимум сцен допустим")
+	}
+}
+
+func TestActionHasScene(t *testing.T) {
+	f := Action{Type: ActionFolder, Scenes: []string{"A", "B"}}
+	s := Action{Type: ActionScene, Scene: "A"}
+	if !f.HasScene("B") || f.HasScene("C") || f.HasScene("") || !s.HasScene("A") || s.HasScene("B") || (Action{Type: ActionPlugin}).HasScene("") {
+		t.Fatal("HasScene")
+	}
+}
+
+func TestRenderFolderHasOverlayAndHighlight(t *testing.T) {
+	l := Layout{Rev: 1, Groups: []Group{{ID: "g", Tiles: []Tile{folder("f", "Game", "Chat")}}}}
+	out, err := Render(ViewData{Layout: l, Online: true, Scene: "Chat"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	for _, want := range []string{`data-folder="1"`, `data-for="f"`, `<div class="fs" data-scene="Game">`, `<div class="fs" data-scene="Chat">`, "t c-steel on"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("нет %q", want)
+		}
 	}
 }

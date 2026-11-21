@@ -223,6 +223,33 @@ func (m *Manager) load(c candidate) (*Plugin, error) {
 	return p, nil
 }
 
+// Inspect проверяет .wasm, как при загрузке (модуль, oc_meta, виджеты в статике), но ничего не запускает и не регистрирует:
+// так можно убедиться, что скачанный файл — плагин с ожидаемым id и версией, до того как положить его в папку.
+func (m *Manager) Inspect(data []byte) (*Meta, error) {
+	if len(data) == 0 || len(data) > maxWasmBytes {
+		return nil, fmt.Errorf("file must be 1 byte to %d MB", maxWasmBytes>>20)
+	}
+	mod, err := m.opts.Engine.Compile(m.ctx, data)
+	if err != nil {
+		return nil, err
+	}
+	defer mod.Close(m.ctx)
+	meta, err := readMeta(m.ctx, mod)
+	if err != nil {
+		return nil, err
+	}
+	assets, err := wasmassets.Of(data)
+	if err != nil {
+		return nil, err
+	}
+	for _, w := range meta.Widgets {
+		if !assets.Has(w.Entry) {
+			return nil, fmt.Errorf("widget %q: entry %q is not in the plugin's %s section", w.ID, w.Entry, wasmassets.Section)
+		}
+	}
+	return meta, nil
+}
+
 // Asset отдаёт файл статики плагина (из секции oc.assets). ok=false — нет плагина или файла.
 func (m *Manager) Asset(id, p string) (data []byte, mime string, sha string, ok bool) {
 	pl, err := m.get(id)
@@ -320,12 +347,29 @@ func (m *Manager) Publish(typ string, data any) int {
 	return n
 }
 
+// PublishCommand рассылает команду чата плагинам, которые её объявили и получили chat.command.read. Возвращает, скольким доставлено.
+func (m *Manager) PublishCommand(c ChatCommand) int {
+	m.mu.RLock()
+	ps := make([]*Plugin, 0, len(m.plugins))
+	for _, p := range m.plugins {
+		ps = append(ps, p)
+	}
+	m.mu.RUnlock()
+	n := 0
+	for _, p := range ps {
+		if p.DeliverCommand(c) {
+			n++
+		}
+	}
+	return n
+}
+
 // Wants — есть ли хоть один плагин, готовый принять событие: по нему можно решить, нужен ли хосту EventSub.
 func (m *Manager) Wants(typ string) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, p := range m.plugins {
-		if p.meta.Subscribes(typ) && (typ != EventRedemption || p.granted(PermRedeem)) {
+		if p.meta.Subscribes(typ) && (typ != EventRedemption || p.granted(PermRedeem)) && (typ != EventChatCommand || p.granted(PermChatCommandRead)) {
 			return true
 		}
 	}

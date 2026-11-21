@@ -8,6 +8,7 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 
+	"github.com/compico/overlaycomposer/internal/chat"
 	"github.com/compico/overlaycomposer/internal/twitch"
 	"github.com/compico/overlaycomposer/internal/wasmplugins"
 )
@@ -226,8 +227,56 @@ func (s *Server) twitchCreateReward(c fiber.Ctx) error {
 
 // SyncWasm приводит мост EventSub в соответствие с плагинами: вызывать после запуска и после изменений прав.
 func (s *Server) SyncWasm() {
-	if s.redeem == nil || s.d.Wasm == nil {
+	if s.d.Wasm == nil {
 		return
 	}
-	s.redeem.Sync(s.d.Wasm.Wants(wasmplugins.EventRedemption))
+	if s.redeem != nil {
+		s.redeem.Sync(s.d.Wasm.Wants(wasmplugins.EventRedemption))
+	}
+	s.syncChatCommands()
+}
+
+// chatCommandKey — ключ подписки агрегатора команд в chat.Service.
+type chatCommandKey struct{}
+
+// syncChatCommands подписывается на чат канала по умолчанию, пока хоть один плагин хочет команды (chat.command.read выдано),
+// и отписывается, когда таких не осталось: без команд в плагинах чат ради них не читается.
+func (s *Server) syncChatCommands() {
+	if s.d.Chat == nil {
+		return
+	}
+	want := s.d.Wasm.Wants(wasmplugins.EventChatCommand)
+	s.cmdMu.Lock()
+	defer s.cmdMu.Unlock()
+	switch {
+	case want && !s.cmdSub:
+		if _, err := s.d.Chat.Subscribe(chatCommandKey{}, "", s.onChatCommand); err != nil {
+			slog.Debug("wasm: команды чата недоступны", "err", err) // канал не задан — повторим при следующей синхронизации
+			return
+		}
+		s.cmdSub = true
+	case !want && s.cmdSub:
+		s.d.Chat.UnsubscribeAll(chatCommandKey{})
+		s.cmdSub = false
+	}
+}
+
+// onChatCommand — агрегатор: из потока сообщений выбирает команды («!np арг…») и раздаёт их плагинам, которые их объявили.
+// Действия (/me) и сообщения самого бота командами не считаются.
+func (s *Server) onChatCommand(ev chat.Event) {
+	if ev.Name != "message" || ev.Message == nil || s.d.Wasm == nil {
+		return
+	}
+	m := ev.Message
+	if m.Action || m.FromBot {
+		return
+	}
+	name, args, ok := chat.ParseCommand(m.Text)
+	if !ok {
+		return
+	}
+	s.d.Wasm.PublishCommand(wasmplugins.ChatCommand{
+		Command: name, Args: args, Channel: m.Channel, UserID: m.UserID, User: m.Login, DisplayName: m.DisplayName,
+		MessageID: m.ID, IsBroadcaster: m.IsBroadcaster, IsMod: m.IsMod, IsVip: m.IsVip, IsSub: m.IsSub, Timestamp: m.Timestamp,
+	})
 }

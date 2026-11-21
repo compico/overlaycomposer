@@ -26,7 +26,10 @@ import { type Api, httpApi } from "./lib/api.ts";
 import { createNotificationsModel } from "./features/notifications/model.ts";
 import { mountNotifications } from "./features/notifications/view.ts";
 import { createStoreModel } from "./features/store/model.ts";
+import { deprecationFor } from "./features/store/deprecated.ts";
 import { mountStore } from "./features/store/view.ts";
+import { createWasmStoreModel } from "./features/store/wasm.ts";
+import { mountWasmStore } from "./features/store/wasm-view.ts";
 import { PERM_TEXT } from "./lib/permissions.ts";
 import { copyText, COPY_ICON } from "./lib/clipboard.ts";
 import { createAppModel } from "./features/app/model.ts";
@@ -42,6 +45,10 @@ import { createDeckModel } from "./features/deck/model.ts";
 import { mountDeck } from "./features/deck/view.ts";
 import { createDevicesModel } from "./features/devices/model.ts";
 import { mountDevices } from "./features/devices/view.ts";
+import { createBundleModel } from "./features/settings-bundle/model.ts";
+import { createCloudModel } from "./features/cloud/model.ts";
+import { mountCloud } from "./features/cloud/view.ts";
+import { mountSettingsBundle } from "./features/settings-bundle/view.ts";
 import { createObsImportModel } from "./features/obs-import/model.ts";
 import { mountObsImport } from "./features/obs-import/view.ts";
 import { mountSceneBinding } from "./features/scene-binding/view.ts";
@@ -252,6 +259,22 @@ async function afterPluginChange() {
   renderProps();
 }
 
+const storeModel = createStoreModel({ api, afterChange: afterPluginChange });
+const wasmModel = createWasmModel(api);
+// Автономные (wasm) плагины: установка, версии и обновления — в окне Plugins, под списком установленных.
+const wasmStore = mountWasmStore($("wasmStoreBox"), createWasmStoreModel({ api, afterChange: () => wasmModel.load() }), {
+  ui: { toast, fail },
+  openPlugins: () => { $<HTMLDialogElement>("storeDialog").close(); showWasmStore(); },
+});
+const selectWasmTab = mountTabs($("wasmDialog"), (name) => { if (name === "store") void wasmStore.load(); });
+/** Открыть окно Plugins (если закрыто) на вкладке Store. */
+function showWasmStore() {
+  const dlg = $<HTMLDialogElement>("wasmDialog");
+  if (!dlg.open) $("pluginsBtn").click();
+  selectWasmTab("store");
+}
+$("wasmStoreRefreshBtn").addEventListener("click", () => void wasmStore.load(true));
+$("wasmSourcesBtn").addEventListener("click", () => pluginStore.open());
 const pluginStore = mountStore(
   {
     openBtn: $("openStoreBtn"), dialog: $<HTMLDialogElement>("storeDialog"), body: $("storeBody"), refreshBtn: $("storeRefreshBtn"),
@@ -259,24 +282,38 @@ const pluginStore = mountStore(
     tokenInput: $<HTMLInputElement>("storeToken"), tokenSave: $("storeTokenSave"), tokenClear: $<HTMLButtonElement>("storeTokenClear"),
     openPluginsBtn: $("openPluginsBtn"),
   },
-  createStoreModel({ api, afterChange: afterPluginChange }),
+  storeModel,
   {
     ui: { toast, fail },
     usedBy: (id) => sources.filter((x) => x.type === "plugin" && x.data.plugin === id).length,
     pluginName: (id) => plugins.find((x) => x.id === id)?.name,
     openPluginsFolder: () => api("/api/app/open", "POST", { what: "plugins" }),
+    openPlugins: () => { $<HTMLDialogElement>("storeDialog").close(); showWasmStore(); },
   },
 );
 
-const wasmModel = createWasmModel(api);
 mountWasmPlugins(
   { openBtn: $("pluginsBtn"), dialog: $<HTMLDialogElement>("wasmDialog"), body: $("wasmBody"), reloadBtn: $("wasmReloadBtn"), folderBtn: $("wasmFolderBtn"), status: $("wasmStatus"),
     settings: { dialog: $<HTMLDialogElement>("wasmSettingsDialog"), title: $("wasmSettingsTitle"), form: $("wasmSettingsForm"), frameBox: $("wasmSettingsFrame") } },
   wasmModel,
-  { ui: { toast, fail }, openFolder: () => api("/api/app/open", "POST", { what: "plugins" }), host: pluginHost },
+  {
+    ui: { toast, fail }, openFolder: () => api("/api/app/open", "POST", { what: "plugins" }), host: pluginHost,
+    onOpen: () => selectWasmTab("installed"),
+    deprecations: {
+      find: (id) => {
+        const sources = storeModel.get().data?.sources ?? [];
+        const dep = deprecationFor(sources, "wasm", id);
+        return dep ? { dep, sources } : null;
+      },
+      subscribe: (cb) => { storeModel.subscribe(cb); },
+      refresh: () => { if (!storeModel.get().loading) void storeModel.load(); },
+      openStore: () => pluginStore.open(),
+      openWasmStore: showWasmStore,
+    },
+  },
 );
-mountTabs($("settingsDialog"));
-mountDeck(
+mountTabs($("settingsDialog"), (name) => { if (name === "backup") void cloudBackup.load(); });
+const deck = mountDeck(
   { openBtn: $("deckBtn"), editorMain: document.querySelector("main:not(#deckMain)") as HTMLElement, deckMain: $("deckMain"),
     hideInDeck: [$("saveBtn"), $("dirtyBadge"), $("sceneBadge"), $("canvasSize")],
     groupList: $("deckGroupList"), addGroupBtn: $("deckAddGroupBtn"), sizeBtns: $("deckSizeBtns"), tileList: $("deckTileList"),
@@ -412,6 +449,26 @@ const obsImport = mountObsImport(
 );
 const loadImportScenes = obsImport.load;
 
+// ---------- export / import of settings (features/settings-bundle) ----------
+
+const bundleModel = createBundleModel(api);
+const bundleUi = mountSettingsBundle(
+  { exportBox: $("bkExportBox"), exportBtn: $<HTMLButtonElement>("bkExportBtn"), importBtn: $<HTMLButtonElement>("bkImportBtn"), file: $<HTMLInputElement>("bkFile") },
+  bundleModel,
+  {
+    ui: { toast, fail },
+    async afterImport() {
+      await Promise.all([loadSources(), loadLayouts()]);
+      if (layout) await openLayout(layout.id, true).catch(() => {});
+    },
+  },
+);
+const cloudBackup = mountCloud({ box: $("bkCloudBox") }, createCloudModel(api), {
+  ui: { toast, fail },
+  sections: () => bundleUi.chosenSections(),
+  async openImport(text) { bundleUi.openImportDialog(text, await bundleModel.plan(text)); },
+});
+
 // ---------- save ----------
 
 async function save() {
@@ -429,6 +486,7 @@ $("saveBtn").addEventListener("click", save);
 mountKeyboard({
   context: () => ({ hasSelection: !!selected(), selectionLocked: !!selected()?.locked, hasClip: copy.hasClip() }),
   run(cmd) {
+    if (deck.isActive()) return; // в режиме deck редактор раскладок скрыт: его горячие клавиши не должны менять скрытые слои
     const o = selected();
     switch (cmd.type) {
       case "save": void save(); break;
@@ -509,5 +567,5 @@ setTimeout(() => void appModel.load(), 15000);
 mountNotifications(
   { bell: $("bellBtn"), count: $("bellCount"), panel: $("notifPanel"), dialog: $<HTMLDialogElement>("notifDialog"), detail: $("notifDetail"), actions: $("notifActions") },
   createNotificationsModel(api),
-  { ui: { toast, fail }, openStore: pluginStore.open, openSettings: () => $("settingsBtn").click() },
+  { ui: { toast, fail }, openStore: pluginStore.open, openPlugins: showWasmStore, openSettings: () => $("settingsBtn").click() },
 );

@@ -1,5 +1,8 @@
 import { el } from "../../lib/dom.ts";
 import type { Ui } from "../../lib/ui.ts";
+import { deprecationBlock } from "../store/deprecated-view.ts";
+import type { Deprecation } from "../store/deprecated.ts";
+import type { StoreEntry, StoreSource } from "../store/model.ts";
 import {
   buildConfig, configFields, formValues, missingGrants, needsAttention, permissionText, toggleGrant, twitchLine, validateNewReward,
   type ConfigField, type Reward, type WasmInfo, type WasmModel, type WasmPlugin,
@@ -33,6 +36,21 @@ export interface WasmPorts {
   ui: Ui;
   openFolder(): Promise<unknown>;
   host?: FrameHost;
+  /** Окно открывают — подгрузить каталог магазина автономных плагинов. */
+  onOpen?(): void;
+  /** Устаревшие плагины из каталога магазина (deprecated.json источников): окно показывает баннер и путь на замену. */
+  deprecations?: {
+    /** Запись об устаревании wasm-плагина с этим id (по уже загруженному каталогу) и источники — для поиска замены. */
+    find(id: string): { dep: Deprecation; sources: StoreSource[] } | null;
+    /** Подписка на обновление каталога (после его загрузки баннеры надо перерисовать). */
+    subscribe(cb: () => void): void;
+    /** Окно открыли — подгрузить каталог (из кэша сервера, если свежий). */
+    refresh(): void;
+    /** Замена — виджет из каталога: открыть магазин. */
+    openStore(entry: StoreEntry): void;
+    /** Замена — автономный плагин: показать магазин автономных плагинов. */
+    openWasmStore(): void;
+  };
 }
 
 /** URL страницы настроек плагина: /plugins/<id>/ui/<путь>. */
@@ -138,6 +156,8 @@ export function mountWasmPlugins(refs: WasmRefs, model: WasmModel, ports: WasmPo
     const kids: (Node | string)[] = [head];
     kids.push(el("div", { class: "hint", textContent: [m.id, m.author, p.file].filter(Boolean).join(" · ") }));
     if (m.description) kids.push(el("div", { textContent: m.description }));
+    const dep = ports.deprecations?.find(m.id);
+    if (dep) kids.push(deprecationBlock(dep.dep, dep.sources, { install: (e) => ports.deprecations?.openStore(e), openPlugins: () => ports.deprecations?.openWasmStore() }));
     if (p.lastError) kids.push(el("div", { class: "hint warn", textContent: `${p.lastError}${p.restarts ? ` (restarts: ${p.restarts})` : ""}` }));
     const perms = m.permissions ?? [];
     const miss = missingGrants(p);
@@ -231,7 +251,10 @@ export function mountWasmPlugins(refs: WasmRefs, model: WasmModel, ports: WasmPo
   }
 
   model.subscribe(render);
+  ports.deprecations?.subscribe(() => { if (refs.dialog.open) render(model.get()); });
   refs.openBtn.addEventListener("click", async () => {
+    ports.deprecations?.refresh();
+    ports.onOpen?.();
     rewards = null;
     drafts.clear();
     await model.load();
