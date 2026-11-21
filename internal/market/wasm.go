@@ -191,6 +191,8 @@ type WasmEntry struct {
 	UpdateAvailable  bool     `json:"updateAvailable"`            // в каталоге версия новее установленной
 	AddedPermissions []string `json:"addedPermissions,omitempty"` // права последней версии, которых нет у установленной
 	Blocked          string   `json:"blocked,omitempty"`          // "foreign": плагин с таким id уже стоит, но не из магазина (или из другого источника)
+
+	Deprecated *Deprecation `json:"deprecated,omitempty"` // объявлен устаревшим в deprecated.json источника (kind "wasm")
 }
 
 // WasmSource — источник и его wasm-плагины (или ошибка загрузки).
@@ -226,6 +228,10 @@ func (m *Market) WasmCatalog(ctx context.Context, refresh bool) []WasmSource {
 			sv.Error = err.Error()
 		} else if list != nil {
 			sv.Plugins = m.markWasmInstalled(src, list)
+			// Записи deprecated.json лежат в архиве репозитория (кэш общий с каталогом виджетов); не получилось — каталог показываем без них.
+			if _, dep, err := m.loadAll(ctx, r, refresh, src); err == nil {
+				markWasmDeprecated(sv.Plugins, dep)
+			}
 		}
 		out = append(out, sv)
 	}
@@ -395,4 +401,17 @@ func oneLine(s string, max int, def string) string {
 		return def
 	}
 	return s
+}
+
+// markWasmDeprecated помечает устаревшие плагины и ставит их после актуальных (порядок внутри групп — по id, как был).
+func markWasmDeprecated(list []WasmEntry, dep []Deprecation) {
+	for i := range list {
+		for j := range dep {
+			if dep[j].Kind == KindWasm && dep[j].ID == list[i].ID {
+				list[i].Deprecated = &dep[j]
+				break
+			}
+		}
+	}
+	sort.SliceStable(list, func(a, b int) bool { return list[a].Deprecated == nil && list[b].Deprecated != nil })
 }

@@ -5,6 +5,7 @@ import type { Ui } from "../../lib/ui.ts";
 import type { WasmEntry, WasmStoreModel, WasmStoreState } from "./wasm.ts";
 import { defaultSelection, parseLockFile, replacementText, statusLabel } from "./wasm-lock.ts";
 import type { WasmLockPlanItem } from "./wasm.ts";
+import { deprecationBlock } from "./deprecated-view.ts";
 import { changesBetween, installAction, versionChoices, type WasmChange } from "./wasm-versions.ts";
 
 export interface WasmStorePorts {
@@ -117,6 +118,9 @@ export function mountWasmStore(box: HTMLElement, model: WasmStoreModel, ports: W
       el("span", { class: "hint", textContent: "plugins.lock.json: which standalone plugins (version, sha256) are installed" }));
   }
 
+  /** Строки каталога по id: кнопка замены у устаревшего плагина прокручивает к строке замены. */
+  const rows = new Map<string, HTMLElement>();
+
   function entryRow(p: WasmEntry): HTMLElement {
     const choices = versionChoices(p.versions);
     const select = el("select", { title: "Version", style: "max-width:150px" }) as HTMLSelectElement;
@@ -176,18 +180,25 @@ export function mountWasmStore(box: HTMLElement, model: WasmStoreModel, ports: W
     const perms = p.noInfo ? "No metadata in this release (older release): permissions are shown after install"
       : p.permissions?.length ? `Asks for: ${p.permissions.map(permText).join("; ")}` : "Asks for no permissions";
     const state = p.installed ? ` — installed ${p.installedVersion}${p.updateAvailable ? " (update available)" : ""}` : "";
-    return el("div", { class: "row", style: "align-items:flex-start;justify-content:space-between;border-top:1px solid var(--line);padding-top:6px" },
+    const dep = p.deprecated
+      ? [deprecationBlock(p.deprecated, [], { install: () => {}, openPlugins: () => rows.get(p.deprecated?.replacedBy?.id ?? "")?.scrollIntoView({ block: "nearest" }) })]
+      : [];
+    const row = el("div", { class: "row", style: "align-items:flex-start;justify-content:space-between;border-top:1px solid var(--line);padding-top:6px" },
       el("div", { style: "flex:1;min-width:0" },
-        el("div", { textContent: `${p.name} ${p.version}${state}` }),
+        el("div", { textContent: `${p.name} ${p.version}${state}${p.deprecated ? " — deprecated" : ""}` }),
         el("div", { class: "hint", textContent: [p.author, p.description].filter(Boolean).join(" — ") }),
-        el("div", { class: "hint", textContent: perms })),
+        el("div", { class: "hint", textContent: perms }),
+        ...dep),
       el("div", { class: "row", style: "gap:6px;flex-wrap:wrap;justify-content:flex-end" }, ...controls));
+    rows.set(p.id, row);
+    return row;
   }
 
   function render(s: WasmStoreState) {
     if (s.loading && !s.sources.length) { box.replaceChildren(el("div", { class: "empty", textContent: "Loading…" })); return; }
     if (s.error) { box.replaceChildren(el("div", { class: "hint warn", textContent: `Standalone plugins are unavailable: ${s.error}` })); return; }
     const parts: HTMLElement[] = [];
+    rows.clear();
     if (!s.sources.some((x) => x.plugins.length || x.error)) {
       parts.push(el("div", { class: "hint", textContent: "No standalone plugins found in your sources. Add a GitHub repository that publishes them (for example compico/oc-plugins) under Sources…, then press Refresh." }));
     }
