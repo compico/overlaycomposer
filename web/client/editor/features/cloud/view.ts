@@ -95,7 +95,7 @@ export function mountCloud(refs: CloudRefs, model: CloudModel, ports: CloudPorts
       gBtn.disabled = !g?.available;
       parts.push(
         el("div", { class: "row", style: "gap:6px;align-items:center" }, gBtn,
-          el("span", { class: "hint", textContent: g?.available ? "Files go to a folder named “Overlay Composer” in your Drive; the app sees only files it created." : "Not available in this build (no Google OAuth client)." })),
+          el("span", { class: "hint", textContent: g?.available ? "Files go to a hidden app folder in your Drive: they are not shown among your files and only this app can read them." : "Not available in this build (no Google OAuth client)." })),
         el("div", { class: "hint", textContent: "or use a synchronized folder:" }),
       );
       const input = el("input", { type: "text", placeholder: "Full path, e.g. C:\\Users\\you\\Dropbox\\overlay-composer", style: "flex:1;min-width:0", value: status.folder ?? "" }) as HTMLInputElement;
