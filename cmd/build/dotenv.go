@@ -30,16 +30,29 @@ func parseDotEnv(text string) map[string]string {
 	return out
 }
 
-// loadDotEnv читает .env в корне репозитория (если он есть) и задаёт переменные окружения, которых ещё нет: то, что уже
-// передано снаружи (например, секреты CI), важнее файла. Файл в git не попадает (.gitignore) — туда кладут локальные ключи.
-func loadDotEnv(path string) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return
+// googleKeys — единственное, что сборка берёт из .env: лишние строки файла игнорируются.
+var googleKeys = []string{"GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"}
+
+// googleCreds — ключи Google для сборки: сначала окружение (секреты CI), затем .env в корне репозитория (если он есть).
+// Значения держатся в этой карте и уходят прямо в -ldflags: в окружение процесса (os.Setenv) они не попадают,
+// а в логе сборки заменяются на *** (см. redact).
+func googleCreds(dotEnvPath string) map[string]string {
+	var file map[string]string
+	if raw, err := os.ReadFile(dotEnvPath); err == nil {
+		file = parseDotEnv(string(raw))
 	}
-	for k, v := range parseDotEnv(string(raw)) {
-		if _, set := os.LookupEnv(k); !set {
-			_ = os.Setenv(k, v)
+	return pick(googleKeys, os.LookupEnv, file)
+}
+
+// pick берёт перечисленные ключи: из окружения (env важнее), иначе из файла.
+func pick(keys []string, lookup func(string) (string, bool), file map[string]string) map[string]string {
+	out := map[string]string{}
+	for _, k := range keys {
+		if v, ok := lookup(k); ok && v != "" {
+			out[k] = v
+		} else if v := file[k]; v != "" {
+			out[k] = v
 		}
 	}
+	return out
 }
