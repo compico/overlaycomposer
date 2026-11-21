@@ -182,6 +182,7 @@ func buildBin(root, which string) error {
 	if err := os.MkdirAll(out, 0o755); err != nil {
 		return err
 	}
+	loadDotEnv(filepath.Join(root, ".env")) // локальные ключи (GOOGLE_CLIENT_ID/SECRET) без правок команды сборки
 	version := gitVersion(root)
 	// Релизная сборка (CI): версия — тег релиза, и включается проверка обновлений. Локально этого нет.
 	release := os.Getenv("OC_RELEASE") == "1"
