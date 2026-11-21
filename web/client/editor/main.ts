@@ -257,13 +257,20 @@ async function afterPluginChange() {
 
 const storeModel = createStoreModel({ api, afterChange: afterPluginChange });
 const wasmModel = createWasmModel(api);
-// Автономные (wasm) плагины — отдельный раздел в том же окне магазина, под списком обычных плагинов.
-const wasmStoreBox = document.createElement("div");
-$("storeBody").after(wasmStoreBox);
-const wasmStore = mountWasmStore(wasmStoreBox, createWasmStoreModel({ api, afterChange: () => wasmModel.load() }), {
+// Автономные (wasm) плагины: установка, версии и обновления — в окне Plugins, под списком установленных.
+const wasmStore = mountWasmStore($("wasmStoreBox"), createWasmStoreModel({ api, afterChange: () => wasmModel.load() }), {
   ui: { toast, fail },
-  openPlugins: () => { $<HTMLDialogElement>("storeDialog").close(); $("pluginsBtn").click(); },
+  openPlugins: () => { $<HTMLDialogElement>("storeDialog").close(); showWasmStore(); },
 });
+/** Открыть окно Plugins (если закрыто) и показать магазин автономных плагинов. */
+function showWasmStore() {
+  const dlg = $<HTMLDialogElement>("wasmDialog");
+  if (!dlg.open) $("pluginsBtn").click();
+  void wasmStore.load();
+  $("wasmStoreBox").scrollIntoView({ block: "nearest" });
+}
+$("wasmStoreRefreshBtn").addEventListener("click", () => void wasmStore.load(true));
+$("wasmSourcesBtn").addEventListener("click", () => pluginStore.open());
 const pluginStore = mountStore(
   {
     openBtn: $("openStoreBtn"), dialog: $<HTMLDialogElement>("storeDialog"), body: $("storeBody"), refreshBtn: $("storeRefreshBtn"),
@@ -277,8 +284,7 @@ const pluginStore = mountStore(
     usedBy: (id) => sources.filter((x) => x.type === "plugin" && x.data.plugin === id).length,
     pluginName: (id) => plugins.find((x) => x.id === id)?.name,
     openPluginsFolder: () => api("/api/app/open", "POST", { what: "plugins" }),
-    onOpen: () => void wasmStore.load(),
-    onRefresh: () => void wasmStore.load(true),
+    openPlugins: () => { $<HTMLDialogElement>("storeDialog").close(); showWasmStore(); },
   },
 );
 
@@ -288,6 +294,7 @@ mountWasmPlugins(
   wasmModel,
   {
     ui: { toast, fail }, openFolder: () => api("/api/app/open", "POST", { what: "plugins" }), host: pluginHost,
+    onOpen: () => void wasmStore.load(),
     deprecations: {
       find: (id) => {
         const sources = storeModel.get().data?.sources ?? [];
@@ -297,6 +304,7 @@ mountWasmPlugins(
       subscribe: (cb) => { storeModel.subscribe(cb); },
       refresh: () => { if (!storeModel.get().loading) void storeModel.load(); },
       openStore: () => pluginStore.open(),
+      openWasmStore: showWasmStore,
     },
   },
 );
@@ -534,5 +542,5 @@ setTimeout(() => void appModel.load(), 15000);
 mountNotifications(
   { bell: $("bellBtn"), count: $("bellCount"), panel: $("notifPanel"), dialog: $<HTMLDialogElement>("notifDialog"), detail: $("notifDetail"), actions: $("notifActions") },
   createNotificationsModel(api),
-  { ui: { toast, fail }, openStore: pluginStore.open, openSettings: () => $("settingsBtn").click() },
+  { ui: { toast, fail }, openStore: pluginStore.open, openPlugins: showWasmStore, openSettings: () => $("settingsBtn").click() },
 );

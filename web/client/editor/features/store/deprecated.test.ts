@@ -28,7 +28,7 @@ test("deprecationFor: источник установки в приоритет�
   assert.equal(deprecationFor([{ repo: "x/y", plugins: [] }], "widget", "old"), null); // старый сервер без поля deprecated
 });
 
-test("alternativeFor: виджет из каталога ставится, установленный — уже стоит, wasm — ссылка", () => {
+test("alternativeFor: виджет из каталога ставится, установленный — уже стоит, wasm — магазин автономных плагинов", () => {
   const d = dep({ replacedBy: { id: "new", kind: "widget", repo: "a/b" } });
   const fresh = alternativeFor(d, [src({ plugins: [entry()] })]);
   assert.deepEqual(fresh && { t: fresh.type, l: fresh.label }, { t: "install", l: "Install New" });
@@ -40,7 +40,7 @@ test("alternativeFor: виджет из каталога ставится, ус�
   assert.deepEqual(alternativeFor(d, [src()]), { type: "link", label: "Get new", url: "https://github.com/a/b" });
   assert.equal(alternativeFor(d, [src({ plugins: [entry({ blocked: "foreign" })] })])?.type, "link");
   const w = dep({ replacedBy: { id: "tools", kind: "wasm", repo: "a/b", url: "https://github.com/a/b/releases?q=tools-v" } });
-  assert.deepEqual(alternativeFor(w, [src()]), { type: "link", label: "Get tools", url: "https://github.com/a/b/releases?q=tools-v" });
+  assert.deepEqual(alternativeFor(w, [src()]), { type: "store", label: "Get tools in the plugin store", id: "tools" });
   assert.equal(alternativeFor(dep(), [src()]), null);
 });
 

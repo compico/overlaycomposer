@@ -188,6 +188,9 @@ export function mountWasmStore(box: HTMLElement, model: WasmStoreModel, ports: W
     if (s.loading && !s.sources.length) { box.replaceChildren(el("div", { class: "empty", textContent: "Loading…" })); return; }
     if (s.error) { box.replaceChildren(el("div", { class: "hint warn", textContent: `Standalone plugins are unavailable: ${s.error}` })); return; }
     const parts: HTMLElement[] = [];
+    if (!s.sources.some((x) => x.plugins.length || x.error)) {
+      parts.push(el("div", { class: "hint", textContent: "No standalone plugins found in your sources. Add a GitHub repository that publishes them (for example compico/oc-plugins) under Sources…, then press Refresh." }));
+    }
     for (const src of s.sources) {
       if (!src.error && !src.plugins.length) continue; // в этом источнике автономных плагинов нет
       parts.push(el("div", { style: "margin-top:12px" }, el("strong", { textContent: `${src.repo} — standalone plugins` })));
