@@ -45,6 +45,8 @@ import { createDeckModel } from "./features/deck/model.ts";
 import { mountDeck } from "./features/deck/view.ts";
 import { createDevicesModel } from "./features/devices/model.ts";
 import { mountDevices } from "./features/devices/view.ts";
+import { createBundleModel } from "./features/settings-bundle/model.ts";
+import { mountSettingsBundle } from "./features/settings-bundle/view.ts";
 import { createObsImportModel } from "./features/obs-import/model.ts";
 import { mountObsImport } from "./features/obs-import/view.ts";
 import { mountSceneBinding } from "./features/scene-binding/view.ts";
@@ -436,6 +438,20 @@ const obsImport = mountObsImport(
   },
 );
 const loadImportScenes = obsImport.load;
+
+// ---------- export / import of settings (features/settings-bundle) ----------
+
+mountSettingsBundle(
+  { exportBox: $("bkExportBox"), exportBtn: $<HTMLButtonElement>("bkExportBtn"), importBtn: $<HTMLButtonElement>("bkImportBtn"), file: $<HTMLInputElement>("bkFile") },
+  createBundleModel(api),
+  {
+    ui: { toast, fail },
+    async afterImport() {
+      await Promise.all([loadSources(), loadLayouts()]);
+      if (layout) await openLayout(layout.id, true).catch(() => {});
+    },
+  },
+);
 
 // ---------- save ----------
 

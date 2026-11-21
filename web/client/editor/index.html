@@ -363,6 +363,7 @@
           <button type="button" class="stab sel" role="tab" data-stab="obs">OBS</button>
           <button type="button" class="stab" role="tab" data-stab="network">Network</button>
           <button type="button" class="stab" role="tab" data-stab="twitch">Twitch</button>
+          <button type="button" class="stab" role="tab" data-stab="backup">Backup</button>
           <button type="button" class="stab" role="tab" data-stab="app">Application</button>
         </nav>
         <div class="scontent">
@@ -443,6 +444,17 @@
           <div class="hint">Changing the application disconnects the connected accounts (their tokens belong to the old one).</div>
         </details>
       </div>
+        </section>
+        <section class="spane" data-spane="backup" role="tabpanel" hidden>
+      <strong style="font-size:12px">Export settings</strong>
+      <div class="hint">One file with the parts you tick. It never contains Twitch accounts, passwords or the store token.</div>
+      <div id="bkExportBox"></div>
+      <div class="row"><button type="button" id="bkExportBtn">Download settings file</button></div>
+      <hr style="border-color:var(--line)">
+      <strong style="font-size:12px">Import settings</strong>
+      <div class="hint">Choose a file: you will see what it contains and pick what to import. Nothing changes until you confirm, and the current settings are backed up first (data folder → backups).</div>
+      <div class="row"><button type="button" id="bkImportBtn">Import from file…</button></div>
+      <input type="file" id="bkFile" accept="application/json,.json" hidden>
         </section>
         <section class="spane" data-spane="app" role="tabpanel" hidden>
       <strong style="font-size:12px">Application</strong>
