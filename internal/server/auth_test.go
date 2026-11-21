@@ -41,7 +41,7 @@ func newAuthApp(t *testing.T) (*fiber.App, *auth.Manager) {
 }
 
 func do(t *testing.T, app *fiber.App, req *http.Request) (int, string, *http.Response) {
-	resp, err := app.Test(req)
+	resp, err := appTest(app, req)
 	if err != nil {
 		t.Fatal(err)
 	}
