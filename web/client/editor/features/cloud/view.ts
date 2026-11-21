@@ -25,7 +25,7 @@ export function mountCloud(refs: CloudRefs, model: CloudModel, ports: CloudPorts
   const act = (btn: HTMLButtonElement, fn: () => Promise<unknown>) => {
     btn.addEventListener("click", async () => {
       btn.disabled = true;
-      try { await fn(); } catch (e) { ui.fail(e); } finally { btn.disabled = false; }
+      try { await fn(); } catch (e) { ui.fail(e); await load(); /* подключение могло сброситься (токен устарел) */ } finally { btn.disabled = false; }
     });
     return btn;
   };

@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -38,6 +39,8 @@ const appData = "appDataFolder"
 var (
 	// ErrNotConfigured — в этой сборке нет OAuth-клиента Google.
 	ErrNotConfigured = errors.New("Google Drive is not available in this build (no OAuth client)")
+	// ErrScope — у сохранённого токена нет нужного разрешения (подключали с другим scope): подключиться заново.
+	ErrScope = errors.New("Google Drive access is out of date: connect Google Drive again")
 	// ErrBadState — неизвестный или просроченный state: подключение нужно начать заново.
 	ErrBadState = errors.New("unknown or expired state, start the connection again")
 )
@@ -167,6 +170,9 @@ func (d *Drive) Complete(ctx context.Context, state, code, redirect string) erro
 	if err != nil {
 		return err
 	}
+	if !hasScope(tok.Scope, googleScope) {
+		return errors.New("Google Drive access was not granted: tick the permission to store app data and connect again")
+	}
 	if tok.Refresh == "" {
 		return errors.New("Google did not return a refresh token; remove the app in your Google account permissions and connect again")
 	}
@@ -183,6 +189,7 @@ func (d *Drive) Complete(ctx context.Context, state, code, redirect string) erro
 type tokenResp struct {
 	Access    string `json:"access_token"`
 	Refresh   string `json:"refresh_token"`
+	Scope     string `json:"scope"`
 	ExpiresIn int    `json:"expires_in"`
 	Error     string `json:"error"`
 }
@@ -279,6 +286,15 @@ func (d *Drive) call(ctx context.Context, method, u, contentType string, body []
 		if resp.StatusCode == http.StatusUnauthorized && attempt == 0 {
 			resp.Body.Close()
 			continue
+		}
+		if resp.StatusCode == http.StatusForbidden {
+			b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<12))
+			resp.Body.Close()
+			if bytes.Contains(b, []byte("insufficientScopes")) {
+				_ = d.Disconnect() // токен выдан с другим scope: он бесполезен, подключиться нужно заново
+				return nil, ErrScope
+			}
+			return nil, fmt.Errorf("Google Drive: 403 %s", bytes.TrimSpace(b))
 		}
 		return resp, nil
 	}
@@ -460,4 +476,17 @@ func (d *Drive) Delete(ctx context.Context, id string) error {
 		return apiErr(resp)
 	}
 	return nil
+}
+
+// hasScope — есть ли want в списке scope из ответа Google (разделены пробелами). Пустой список (старые ответы) не считается отказом.
+func hasScope(granted, want string) bool {
+	if granted == "" {
+		return true
+	}
+	for _, s := range strings.Fields(granted) {
+		if s == want {
+			return true
+		}
+	}
+	return false
 }
