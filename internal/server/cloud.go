@@ -35,6 +35,7 @@ func (s *Server) cloudRoutes() {
 	app.Delete("/api/cloud", s.localOnly, s.appGuard, s.cloudDisconnect)
 	app.Post("/api/cloud/google/start", s.localOnly, s.appGuard, s.googleStart)
 	app.Get("/auth/google/callback", s.localOnly, s.googleCallback)
+	app.Get("/auth/google/done", s.localOnly, s.googleDone)
 	app.Get("/api/cloud/files", s.localOnly, s.cloudList)
 	app.Post("/api/cloud/upload", s.localOnly, s.appGuard, s.cloudUpload)
 	app.Get("/api/cloud/files/:id", s.localOnly, s.cloudDownload)
@@ -135,28 +136,48 @@ func (s *Server) googleStart(c fiber.Ctx) error {
 	return c.JSON(fiber.Map{"url": u})
 }
 
-// GET /auth/google/callback — сюда Google возвращает пользователя после согласия.
+// GET /auth/google/callback — сюда Google возвращает пользователя после согласия. Код и state не должны оставаться в адресной
+// строке и истории: ответ обрабатывается и сразу перенаправляется на чистый адрес /auth/google/done.
 func (s *Server) googleCallback(c fiber.Ctx) error {
+	c.Set("Referrer-Policy", "no-referrer")
+	c.Set("Cache-Control", "no-store")
+	done := func(status string) error {
+		return c.Redirect().Status(fiber.StatusSeeOther).To("/auth/google/done?status=" + status)
+	}
 	d := s.googleDrive()
 	if d == nil {
-		return s.cloudResult(c, fiber.StatusBadRequest, "Could not connect", cloud.ErrNotConfigured.Error())
+		return done("failed")
 	}
 	if e := c.Query("error"); e != "" {
-		return s.cloudResult(c, fiber.StatusBadRequest, "Google denied access", e)
+		slog.Warn("облако: Google не дал доступ", "error", e)
+		return done("denied")
 	}
 	state, code := strings.Clone(c.Query("state")), strings.Clone(c.Query("code")) // Fiber переиспользует буферы запроса
 	if err := d.Complete(c.Context(), state, code, s.googleRedirectURI()); err != nil {
 		slog.Warn("облако: подключение Google Drive не удалось", "err", err)
-		return s.cloudResult(c, fiber.StatusBadRequest, "Could not connect", err.Error())
+		return done("failed")
 	}
 	if err := s.d.Store.SetSetting(cloudProviderKey, "google"); err != nil {
-		return serverErr(c, err)
+		slog.Warn("облако: не сохранён выбранный провайдер", "err", err)
+		return done("failed")
 	}
 	s.cloudMu.Lock()
 	s.cloudProv, s.cloudDir, s.cloudLoaded = d, "", true
 	s.cloudMu.Unlock()
 	slog.Info("облако: Google Drive подключён")
-	return s.cloudResult(c, fiber.StatusOK, "Google Drive connected", "You can close this tab and return to Overlay Composer.")
+	return done("ok")
+}
+
+// GET /auth/google/done — итог подключения; текст фиксированный (детали ошибки — в логе приложения).
+func (s *Server) googleDone(c fiber.Ctx) error {
+	title, msg, status := "Could not connect Google Drive", "Close this tab and try again in Overlay Composer. Details are in the app log.", fiber.StatusBadRequest
+	switch c.Query("status") {
+	case "ok":
+		title, msg, status = "Google Drive connected", "You can close this tab and return to Overlay Composer.", fiber.StatusOK
+	case "denied":
+		title, msg = "Google Drive was not connected", "Access was not granted. You can close this tab."
+	}
+	return s.cloudResult(c, status, title, msg)
 }
 
 func (s *Server) cloudResult(c fiber.Ctx, status int, title, msg string) error {
