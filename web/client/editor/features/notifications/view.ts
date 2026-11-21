@@ -1,8 +1,7 @@
 // Представление центра уведомлений (ванильный DOM). Получает модель и «порты» — всё, что нужно снаружи.
 import { el } from "../../lib/dom.ts";
 import type { Ui } from "../../lib/ui.ts";
-import { deprecationText, replacementUrl, type Deprecation } from "../store/deprecated.ts";
-import { openExternal } from "../store/deprecated-view.ts";
+import { deprecationText, type Deprecation } from "../store/deprecated.ts";
 import type { NotificationsModel, NotifItem, PluginChange } from "./model.ts";
 
 /** Элементы, которыми владеет представление (во фреймворке — собственная разметка компонента). */
@@ -19,6 +18,8 @@ export interface NotificationsPorts {
   ui: Ui;
   /** Открыть магазин плагинов (кнопка в окне обновления плагина). */
   openStore(): void;
+  /** Открыть окно Plugins с магазином автономных плагинов (замена устаревшего wasm-плагина). */
+  openPlugins(): void;
   /** Открыть настройки (кнопка в уведомлении «переподключите аккаунт Twitch»). */
   openSettings(): void;
 }
@@ -99,16 +100,15 @@ export function mountNotifications(refs: NotificationsRefs, model: Notifications
       const r = dep.replacedBy;
       if (r) {
         refs.detail.append(el("div", { class: "hint" }, `Replacement: ${r.id} (${r.kind === "wasm" ? "plugin" : "widget plugin"}, ${r.repo})`));
-        const url = replacementUrl(r);
-        // Замена-виджет ставится из магазина; wasm-плагин магазин не ставит — ведём на страницу, где его взять.
-        if (r.kind === "widget") {
+        // Замена-виджет ставится из магазина виджетов, замена-wasm — из магазина автономных плагинов в окне Plugins.
+        if (r.kind === "wasm") {
+          const open = el("button", { type: "button", class: "primary" }, `Open plugin store to get ${r.id}`);
+          open.addEventListener("click", () => { refs.dialog.close(); ports.openPlugins(); });
+          refs.actions.append(open);
+        } else if (r.kind === "widget") {
           const open = el("button", { type: "button", class: "primary" }, `Open widget store to get ${r.id}`);
           open.addEventListener("click", () => { refs.dialog.close(); ports.openStore(); });
           refs.actions.append(open);
-        } else if (url) {
-          const get = el("button", { type: "button", class: "primary", title: url }, `Get ${r.id}`);
-          get.addEventListener("click", () => openExternal(url));
-          refs.actions.append(get);
         }
       }
       refs.detail.append(el("div", { class: "hint" }, "The plugin keeps working until you remove it."));

@@ -10,7 +10,8 @@ export interface Deprecation { id: string; kind: PluginKind; since?: string; rea
 export type Alternative =
   | { type: "install"; label: string; entry: StoreEntry }   // замена-виджет есть в каталоге: ставится кнопкой
   | { type: "installed"; label: string }                    // замена уже установлена
-  | { type: "link"; label: string; url: string };           // wasm или чужой репозиторий: страница, где её взять
+  | { type: "store"; label: string; id: string }            // замена-wasm: ставится из магазина автономных плагинов в окне Plugins
+  | { type: "link"; label: string; url: string };           // замена-виджет из чужого репозитория: страница, где её взять
 
 const GITHUB_REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
@@ -49,6 +50,7 @@ export function alternativeFor(dep: Deprecation, sources: StoreSource[]): Altern
       return { type: "install", label: e.installed ? `Update ${e.name}` : `Install ${e.name}`, entry: e };
     }
   }
+  if (r.kind === "wasm") return { type: "store", label: `Get ${r.id} in the plugin store`, id: r.id };
   const url = replacementUrl(r);
   return url ? { type: "link", label: `Get ${r.id}`, url } : null;
 }

@@ -328,7 +328,13 @@
         <button type="button" id="wasmReloadBtn" title="Pick up new or changed .wasm files">Rescan</button>
       </div>
       <div class="hint" id="wasmStatus" style="white-space:pre-wrap"></div>
-      <div id="wasmBody" style="max-height:60vh;overflow:auto"></div>
+      <div id="wasmBody" style="max-height:40vh;overflow:auto"></div>
+      <div class="row" style="margin-top:12px;align-items:center;justify-content:space-between">
+        <strong>Get and update plugins</strong>
+        <span class="row"><button type="button" id="wasmStoreRefreshBtn" title="Check the sources for new versions">Refresh</button>
+        <button type="button" id="wasmSourcesBtn" title="Add or remove GitHub repositories, set a token for private ones">Sources…</button></span>
+      </div>
+      <div id="wasmStoreBox" style="max-height:45vh;overflow:auto"></div>
       <div class="row" style="justify-content:flex-end;margin-top:12px"><button value="close">Close</button></div>
     </form>
   </dialog>

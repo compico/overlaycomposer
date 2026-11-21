@@ -6,6 +6,8 @@ import type { StoreEntry, StoreSource } from "./model.ts";
 export interface DeprecationActions {
   /** Поставить замену-виджет из каталога (в окне, где магазина нет, — открыть магазин). */
   install(entry: StoreEntry): void | Promise<unknown>;
+  /** Замена — автономный плагин: показать магазин автономных плагинов (окно Plugins). */
+  openPlugins(): void;
 }
 
 /** https-ссылка открывается в новой вкладке без доступа к окну редактора. */
@@ -22,7 +24,8 @@ export function deprecationBlock(dep: Deprecation, sources: StoreSource[], actio
     return box;
   }
   const b = el("button", { type: "button", class: "primary", style: "margin-top:4px", textContent: alt.label });
-  if (alt.type === "install") b.addEventListener("click", () => { b.disabled = true; void Promise.resolve(actions.install(alt.entry)).finally(() => { b.disabled = false; }); });
+  if (alt.type === "store") b.addEventListener("click", () => actions.openPlugins());
+  else if (alt.type === "install") b.addEventListener("click", () => { b.disabled = true; void Promise.resolve(actions.install(alt.entry)).finally(() => { b.disabled = false; }); });
   else {
     b.title = alt.url;
     b.addEventListener("click", () => openExternal(alt.url));

@@ -28,6 +28,8 @@ export interface StorePorts {
   pluginName(id: string): string | undefined;
   openPluginsFolder(): Promise<unknown>;
   /** Окно открыли (перечитать и то, что магазин показывает рядом, например автономные плагины). */
+  /** Замена устаревшего виджета — автономный плагин: показать его магазин (окно Plugins). */
+  openPlugins?(): void;
   onOpen?(): void;
   /** Кнопка «↻»: заново получить каталоги. */
   onRefresh?(): void;
@@ -56,6 +58,7 @@ export function mountStore(refs: StoreRefs, model: StoreModel, ports: StorePorts
           ui.toast(`${e.name} installed. Add it via Add Source → widget plugin.`);
         } catch (err) { ui.fail(err); }
       },
+      openPlugins: () => ports.openPlugins?.(),
     };
     refs.tokenSummary.textContent = d.hasToken ? "Private repositories — GitHub token is set" : "Private repositories (GitHub token)";
     refs.tokenClear.toggleAttribute("disabled", !d.hasToken);
