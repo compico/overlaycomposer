@@ -46,6 +46,8 @@ import { mountDeck } from "./features/deck/view.ts";
 import { createDevicesModel } from "./features/devices/model.ts";
 import { mountDevices } from "./features/devices/view.ts";
 import { createBundleModel } from "./features/settings-bundle/model.ts";
+import { createCloudModel } from "./features/cloud/model.ts";
+import { mountCloud } from "./features/cloud/view.ts";
 import { mountSettingsBundle } from "./features/settings-bundle/view.ts";
 import { createObsImportModel } from "./features/obs-import/model.ts";
 import { mountObsImport } from "./features/obs-import/view.ts";
@@ -310,7 +312,7 @@ mountWasmPlugins(
     },
   },
 );
-mountTabs($("settingsDialog"));
+mountTabs($("settingsDialog"), (name) => { if (name === "backup") void cloudBackup.load(); });
 const deck = mountDeck(
   { openBtn: $("deckBtn"), editorMain: document.querySelector("main:not(#deckMain)") as HTMLElement, deckMain: $("deckMain"),
     hideInDeck: [$("saveBtn"), $("dirtyBadge"), $("sceneBadge"), $("canvasSize")],
@@ -449,9 +451,10 @@ const loadImportScenes = obsImport.load;
 
 // ---------- export / import of settings (features/settings-bundle) ----------
 
-mountSettingsBundle(
+const bundleModel = createBundleModel(api);
+const bundleUi = mountSettingsBundle(
   { exportBox: $("bkExportBox"), exportBtn: $<HTMLButtonElement>("bkExportBtn"), importBtn: $<HTMLButtonElement>("bkImportBtn"), file: $<HTMLInputElement>("bkFile") },
-  createBundleModel(api),
+  bundleModel,
   {
     ui: { toast, fail },
     async afterImport() {
@@ -460,6 +463,11 @@ mountSettingsBundle(
     },
   },
 );
+const cloudBackup = mountCloud({ box: $("bkCloudBox") }, createCloudModel(api), {
+  ui: { toast, fail },
+  sections: () => bundleUi.chosenSections(),
+  async openImport(text) { bundleUi.openImportDialog(text, await bundleModel.plan(text)); },
+});
 
 // ---------- save ----------
 

@@ -22,6 +22,7 @@ import (
 	"github.com/compico/overlaycomposer/internal/auth"
 	"github.com/compico/overlaycomposer/internal/bundle"
 	"github.com/compico/overlaycomposer/internal/chat"
+	"github.com/compico/overlaycomposer/internal/cloud"
 	"github.com/compico/overlaycomposer/internal/config"
 	"github.com/compico/overlaycomposer/internal/events"
 	"github.com/compico/overlaycomposer/internal/hub"
@@ -83,6 +84,11 @@ type Server struct {
 
 	bundleOnce sync.Once // экспорт/импорт настроек (settings.go)
 	bundleSvc  *bundle.Service
+
+	cloudMu     sync.Mutex // облако для файлов настроек (cloud.go)
+	cloudProv   cloud.Provider
+	cloudDir    string
+	cloudLoaded bool
 
 	redeem *wasmplugins.Bridge // EventSub для wasm-плагинов; nil — без Twitch или без wasm
 
@@ -182,6 +188,7 @@ func (s *Server) routes() {
 	s.deckRoutes()
 	s.marketRoutes()
 	s.settingsRoutes()
+	s.cloudRoutes()
 	s.notifyRoutes()
 	s.wasmRoutes()
 
