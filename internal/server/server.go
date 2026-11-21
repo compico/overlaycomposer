@@ -33,6 +33,7 @@ import (
 	"github.com/compico/overlaycomposer/internal/paths"
 	"github.com/compico/overlaycomposer/internal/plugins"
 	"github.com/compico/overlaycomposer/internal/proxy"
+	"github.com/compico/overlaycomposer/internal/secret"
 	"github.com/compico/overlaycomposer/internal/store"
 	"github.com/compico/overlaycomposer/internal/twitch"
 	"github.com/compico/overlaycomposer/internal/wasmplugins"
@@ -69,6 +70,7 @@ type Deps struct {
 	Events  *events.Broker       // события плагинов (pub/sub); nil — подписки недоступны
 	Market  *market.Market
 	Notify  *notify.Center
+	Box     *secret.Box // шифрование секретов в базе (токен Google Drive); nil — Google Drive недоступен
 	// CheckPlugins запускает проверку обновлений плагинов (force — по кнопке); nil — недоступно.
 	CheckPlugins func(ctx context.Context, force bool) error
 	App          App
@@ -89,6 +91,8 @@ type Server struct {
 	cloudProv   cloud.Provider
 	cloudDir    string
 	cloudLoaded bool
+	driveOnce   sync.Once
+	drive       *cloud.Drive
 
 	redeem *wasmplugins.Bridge // EventSub для wasm-плагинов; nil — без Twitch или без wasm
 

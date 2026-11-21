@@ -1,8 +1,9 @@
-// Блок «Cloud folder» во вкладке Backup (ванильный DOM). Подтверждения и тосты — здесь: это UI, а не модель.
+// Блок «Cloud storage» (Google Drive или папка) во вкладке Backup (ванильный DOM). Подтверждения и тосты — здесь: это UI, а не модель.
 import { el } from "../../lib/dom.ts";
+import { openExternal } from "../store/deprecated-view.ts";
 import { isConflict } from "../../lib/api.ts";
 import type { Ui } from "../../lib/ui.ts";
-import { fileLabel, type CloudFile, type CloudModel, type CloudStatus } from "./model.ts";
+import { fileLabel, providerLabel, type CloudFile, type CloudModel, type CloudStatus } from "./model.ts";
 
 export interface CloudRefs { box: HTMLElement }
 
@@ -18,6 +19,8 @@ export function mountCloud(refs: CloudRefs, model: CloudModel, ports: CloudPorts
   const { ui } = ports;
   let status: CloudStatus = { provider: "", connected: false };
   let files: CloudFile[] = [];
+  let waiting: ReturnType<typeof setInterval> | undefined; // опрос статуса, пока пользователь соглашается на странице Google
+  const stopWaiting = () => { if (waiting !== undefined) clearInterval(waiting); waiting = undefined; };
 
   const act = (btn: HTMLButtonElement, fn: () => Promise<unknown>) => {
     btn.addEventListener("click", async () => {
@@ -27,7 +30,22 @@ export function mountCloud(refs: CloudRefs, model: CloudModel, ports: CloudPorts
     return btn;
   };
 
+  async function connectGoogle() {
+    openExternal(await model.googleStart()); // https-адрес Google; noopener внутри
+    ui.toast("Finish connecting in the browser tab that opened…");
+    stopWaiting();
+    const until = Date.now() + 3 * 60_000;
+    waiting = setInterval(async () => {
+      try {
+        const s = await model.status();
+        if (s.connected && s.provider === "google") { stopWaiting(); ui.toast("Google Drive connected"); await load(); }
+        else if (Date.now() > until) stopWaiting();
+      } catch { stopWaiting(); }
+    }, 2000);
+  }
+
   async function load() {
+    stopWaiting();
     try {
       status = await model.status();
       files = status.connected ? await model.list() : [];
@@ -68,10 +86,18 @@ export function mountCloud(refs: CloudRefs, model: CloudModel, ports: CloudPorts
 
   function render() {
     const parts: HTMLElement[] = [
-      el("strong", { style: "font-size:12px", textContent: "Cloud folder" }),
-      el("div", { class: "hint", textContent: "Keep settings files in a folder that Dropbox, OneDrive, Google Drive for desktop or Syncthing synchronizes — your settings then travel between computers. Nothing is uploaded or changed automatically." }),
+      el("strong", { style: "font-size:12px", textContent: "Cloud storage" }),
+      el("div", { class: "hint", textContent: "Keep settings files in Google Drive or in a folder that Dropbox, OneDrive or Syncthing synchronizes — your settings then travel between computers. Nothing is uploaded or changed automatically." }),
     ];
     if (!status.connected) {
+      const g = status.google;
+      const gBtn = act(el("button", { type: "button", class: "primary", textContent: "Connect Google Drive" }) as HTMLButtonElement, connectGoogle);
+      gBtn.disabled = !g?.available;
+      parts.push(
+        el("div", { class: "row", style: "gap:6px;align-items:center" }, gBtn,
+          el("span", { class: "hint", textContent: g?.available ? "Files go to a folder named “Overlay Composer” in your Drive; the app sees only files it created." : "Not available in this build (no Google OAuth client)." })),
+        el("div", { class: "hint", textContent: "or use a synchronized folder:" }),
+      );
       const input = el("input", { type: "text", placeholder: "Full path, e.g. C:\\Users\\you\\Dropbox\\overlay-composer", style: "flex:1;min-width:0", value: status.folder ?? "" }) as HTMLInputElement;
       const connect = act(el("button", { type: "button", textContent: "Connect" }) as HTMLButtonElement, async () => {
         if (!input.value.trim()) return;
@@ -88,11 +114,11 @@ export function mountCloud(refs: CloudRefs, model: CloudModel, ports: CloudPorts
         await load();
       });
       parts.push(
-        el("div", { class: "hint", style: "word-break:break-all", textContent: `Folder: ${status.folder ?? ""}` }),
+        el("div", { class: "hint", style: "word-break:break-all", textContent: providerLabel(status) }),
         el("div", { class: "row", style: "gap:6px" }, upBtn, refresh, off),
         el("div", { class: "hint", textContent: "Upload adds a new file with the parts ticked in “Export settings”; Replace overwrites a file you choose." }),
       );
-      if (!files.length) parts.push(el("div", { class: "hint", textContent: "No settings files in the folder yet." }));
+      if (!files.length) parts.push(el("div", { class: "hint", textContent: "No settings files yet." }));
       for (const f of files) parts.push(fileRow(f));
     }
     refs.box.replaceChildren(...parts);

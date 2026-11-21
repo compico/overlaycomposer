@@ -182,6 +182,7 @@ func buildBin(root, which string) error {
 	if err := os.MkdirAll(out, 0o755); err != nil {
 		return err
 	}
+	loadDotEnv(filepath.Join(root, ".env")) // локальные ключи (GOOGLE_CLIENT_ID/SECRET) без правок команды сборки
 	version := gitVersion(root)
 	// Релизная сборка (CI): версия — тег релиза, и включается проверка обновлений. Локально этого нет.
 	release := os.Getenv("OC_RELEASE") == "1"
@@ -192,6 +193,12 @@ func buildBin(root, which string) error {
 		ldflags := "-s -w -X main.version=" + version
 		if release {
 			ldflags += " -X main.channel=release"
+		}
+		// OAuth-клиент Google Drive (тип Desktop; секрет такого клиента не конфиденциален, но в репозиторий его не кладём).
+		// Нет переменных — сборка без Google Drive: в редакторе подключение недоступно, остальное работает.
+		if id := os.Getenv("GOOGLE_CLIENT_ID"); id != "" {
+			const pkg = "github.com/compico/overlaycomposer/internal/cloud."
+			ldflags += " -X " + pkg + "GoogleClientID=" + id + " -X " + pkg + "GoogleClientSecret=" + os.Getenv("GOOGLE_CLIENT_SECRET")
 		}
 		if t.goos == "windows" {
 			ldflags += " -H=windowsgui" // GUI-подсистема: консольное окно не появляется

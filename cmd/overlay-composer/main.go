@@ -240,6 +240,7 @@ func run() int {
 	srv = server.New(server.Deps{
 		Paths: p, Cfg: cfgStore, Running: cfg, Store: st, Hub: h, Obs: obsClient, Proxy: px,
 		Auth:         authMgr,
+		Box:          box,
 		Twitch:       twMgr,
 		Chat:         chatSvc,
 		KV:           kvSvc,

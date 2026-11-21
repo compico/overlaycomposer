@@ -17,6 +17,8 @@ func cloudEnv(t *testing.T) *Server {
 	s.app.Delete("/cloud", s.cloudDisconnect)
 	s.app.Get("/cloud/files", s.cloudList)
 	s.app.Post("/cloud/upload", s.cloudUpload)
+	s.app.Post("/cloud/google/start", s.googleStart)
+	s.app.Get("/google/callback", s.googleCallback)
 	s.app.Get("/cloud/files/:id", s.cloudDownload)
 	s.app.Delete("/cloud/files/:id", s.cloudDelete)
 	s.cloudLoaded = true // Store в тесте нет: сохранённой папки не ищем
@@ -119,5 +121,18 @@ func TestCloudFileName(t *testing.T) {
 				t.Errorf("%q → %q, want %q", host, got, want)
 			}
 		}
+	}
+}
+
+func TestGoogleDriveUnavailableWithoutClient(t *testing.T) {
+	s := cloudEnv(t) // нет базы и ключа шифрования: Google Drive не создаётся
+	if code, out := call(t, s, "GET", "/cloud", ""); code != 200 || !strings.Contains(out, `"google":{"available":false,"connected":false}`) {
+		t.Fatalf("status: %d %s", code, out)
+	}
+	if code, out := call(t, s, "POST", "/cloud/google/start", ""); code != 400 || !strings.Contains(out, "not available") {
+		t.Fatalf("start: %d %s", code, out)
+	}
+	if code, _ := call(t, s, "GET", "/google/callback?code=x&state=y", ""); code != 400 {
+		t.Fatalf("callback без клиента: %d", code)
 	}
 }
