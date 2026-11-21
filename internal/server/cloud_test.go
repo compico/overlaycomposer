@@ -19,6 +19,7 @@ func cloudEnv(t *testing.T) *Server {
 	s.app.Post("/cloud/upload", s.cloudUpload)
 	s.app.Post("/cloud/google/start", s.googleStart)
 	s.app.Get("/google/callback", s.googleCallback)
+	s.app.Get("/google/done", s.googleDone)
 	s.app.Get("/cloud/files/:id", s.cloudDownload)
 	s.app.Delete("/cloud/files/:id", s.cloudDelete)
 	s.cloudLoaded = true // Store в тесте нет: сохранённой папки не ищем
@@ -132,7 +133,16 @@ func TestGoogleDriveUnavailableWithoutClient(t *testing.T) {
 	if code, out := call(t, s, "POST", "/cloud/google/start", ""); code != 400 || !strings.Contains(out, "not available") {
 		t.Fatalf("start: %d %s", code, out)
 	}
-	if code, _ := call(t, s, "GET", "/google/callback?code=x&state=y", ""); code != 400 {
-		t.Fatalf("callback без клиента: %d", code)
+	if code, _ := call(t, s, "GET", "/google/callback?code=x&state=y", ""); code != 303 {
+		t.Fatalf("callback без клиента должен перенаправлять: %d", code)
+	}
+	if code, out := call(t, s, "GET", "/google/done?status=failed", ""); code != 400 || strings.Contains(out, "code=") {
+		t.Fatalf("done failed: %d %s", code, out)
+	}
+	if code, out := call(t, s, "GET", "/google/done?status=ok", ""); code != 200 || !strings.Contains(out, "Google Drive connected") {
+		t.Fatalf("done ok: %d %s", code, out)
+	}
+	if code, out := call(t, s, "GET", "/google/done?status=<script>", ""); code != 400 || strings.Contains(out, "<script>") {
+		t.Fatalf("done не должен отражать параметры: %d %s", code, out)
 	}
 }

@@ -60,7 +60,7 @@ func deckReq(t *testing.T, s *Server, method, path, body string, hdr bool) (int,
 	if hdr {
 		req.Header.Set("X-Overlay-Composer", "1")
 	}
-	resp, err := s.app.Test(req)
+	resp, err := appTest(s.app, req)
 	if err != nil {
 		t.Fatal(err)
 	}

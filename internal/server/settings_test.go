@@ -60,7 +60,7 @@ func settingsEnv(t *testing.T, data map[string]string) (*Server, string) {
 
 func call(t *testing.T, s *Server, method, path, body string) (int, string) {
 	t.Helper()
-	resp, err := s.app.Test(httptest.NewRequest(method, path, strings.NewReader(body)))
+	resp, err := appTest(s.app, httptest.NewRequest(method, path, strings.NewReader(body)))
 	if err != nil {
 		t.Fatal(err)
 	}

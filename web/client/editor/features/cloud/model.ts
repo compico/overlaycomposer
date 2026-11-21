@@ -47,7 +47,7 @@ export function formatSize(n: number): string {
 
 /** Название подключения для интерфейса. */
 export function providerLabel(s: CloudStatus): string {
-  if (s.provider === "google") return `Google Drive (folder “Overlay Composer”)`;
+  if (s.provider === "google") return "Google Drive (hidden app folder)";
   if (s.provider === "folder") return `Folder: ${s.folder ?? ""}`;
   return "Not connected";
 }
