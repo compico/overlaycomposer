@@ -28,14 +28,12 @@ var (
 	GoogleClientSecret string
 )
 
-// drive.file: приложение видит только файлы, которые создало само, остальной Drive для него недоступен. Файлы лежат в обычной
-// папке «Overlay Composer» — пользователь видит их в Drive и может скачать вручную. Scope несекретный (проверка приложения не нужна).
-const googleScope = "https://www.googleapis.com/auth/drive.file"
+// drive.appdata: скрытая папка приложения (appDataFolder). Файлы не видны в интерфейсе Drive и доступны только этому
+// OAuth-клиенту; остальных файлов пользователя приложение не видит. Scope несекретный (проверка приложения не нужна).
+const googleScope = "https://www.googleapis.com/auth/drive.appdata"
 
-// DriveFolderName — папка в корне Drive, где лежат файлы бандлов.
-const DriveFolderName = "Overlay Composer"
-
-const folderMime = "application/vnd.google-apps.folder"
+// appData — псевдо-id папки приложения в Drive API.
+const appData = "appDataFolder"
 
 var (
 	// ErrNotConfigured — в этой сборке нет OAuth-клиента Google.
@@ -70,7 +68,7 @@ type TokenStore interface {
 	Save(token string) error
 }
 
-// Drive — провайдер Google Drive (папка «Overlay Composer», scope drive.file).
+// Drive — провайдер Google Drive (скрытая папка приложения, scope drive.appdata).
 type Drive struct {
 	cfg    GoogleConfig
 	http   *http.Client
@@ -83,7 +81,6 @@ type Drive struct {
 	access  string
 	expires time.Time
 	pending map[string]pendingAuth
-	folder  string // id папки бандлов (после первого поиска или создания)
 }
 
 type pendingAuth struct {
@@ -251,7 +248,7 @@ func (d *Drive) Connect(ctx context.Context) error {
 
 func (d *Drive) Disconnect() error {
 	d.mu.Lock()
-	d.refresh, d.loaded, d.access, d.folder = "", true, "", ""
+	d.refresh, d.loaded, d.access = "", true, ""
 	d.mu.Unlock()
 	return d.tokens.Save("")
 }
@@ -313,7 +310,7 @@ const fileFields = "id,name,size,modifiedTime,appProperties"
 
 // query — files.list с запросом q; fields — поля файла.
 func (d *Drive) query(ctx context.Context, q, order string) ([]driveFile, error) {
-	v := url.Values{"q": {q}, "orderBy": {order}, "pageSize": {"200"}, "fields": {"files(" + fileFields + ")"}}
+	v := url.Values{"spaces": {appData}, "q": {q}, "orderBy": {order}, "pageSize": {"200"}, "fields": {"files(" + fileFields + ")"}}
 	resp, err := d.call(ctx, http.MethodGet, d.cfg.APIURL+"/files?"+v.Encode(), "", nil)
 	if err != nil {
 		return nil, err
@@ -331,52 +328,9 @@ func (d *Drive) query(ctx context.Context, q, order string) ([]driveFile, error)
 	return out.Files, nil
 }
 
-// folderID — id папки бандлов: найти (видны только созданные приложением) и при create создать. Пусто — папки ещё нет.
-func (d *Drive) folderID(ctx context.Context, create bool) (string, error) {
-	d.mu.Lock()
-	id := d.folder
-	d.mu.Unlock()
-	if id != "" {
-		return id, nil
-	}
-	found, err := d.query(ctx, "name = '"+DriveFolderName+"' and mimeType = '"+folderMime+"' and trashed = false", "createdTime")
-	if err != nil {
-		return "", err
-	}
-	if len(found) > 0 {
-		id = found[0].ID
-	} else if create {
-		raw, _ := json.Marshal(map[string]string{"name": DriveFolderName, "mimeType": folderMime})
-		resp, err := d.call(ctx, http.MethodPost, d.cfg.APIURL+"/files?fields="+url.QueryEscape(fileFields), "application/json", raw)
-		if err != nil {
-			return "", err
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			return "", apiErr(resp)
-		}
-		var f driveFile
-		if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&f); err != nil {
-			return "", err
-		}
-		id = f.ID
-	}
-	if id != "" && !driveIDRe.MatchString(id) {
-		return "", errors.New("Google Drive returned an unexpected folder id")
-	}
-	d.mu.Lock()
-	d.folder = id
-	d.mu.Unlock()
-	return id, nil
-}
-
-// list — файлы бандлов в папке (нет папки — нет файлов).
+// list — файлы бандлов в папке приложения.
 func (d *Drive) list(ctx context.Context) ([]driveFile, error) {
-	folder, err := d.folderID(ctx, false)
-	if err != nil || folder == "" {
-		return nil, err
-	}
-	return d.query(ctx, "'"+folder+"' in parents and trashed = false and mimeType != '"+folderMime+"'", "modifiedTime desc")
+	return d.query(ctx, "trashed = false", "modifiedTime desc")
 }
 
 func (d *Drive) List(ctx context.Context) ([]Remote, error) {
@@ -424,10 +378,6 @@ func (d *Drive) Put(ctx context.Context, name string, data []byte, expect string
 	if len(data) > MaxFileSize {
 		return Remote{}, fmt.Errorf("the file is larger than %d MB", MaxFileSize>>20)
 	}
-	folder, err := d.folderID(ctx, true)
-	if err != nil {
-		return Remote{}, err
-	}
 	files, err := d.list(ctx)
 	if err != nil {
 		return Remote{}, err
@@ -448,7 +398,7 @@ func (d *Drive) Put(ctx context.Context, name string, data []byte, expect string
 	meta := map[string]any{"name": name, "appProperties": map[string]string{"sha256": Fingerprint(data)}}
 	method, u := http.MethodPost, d.cfg.UploadURL+"/files?uploadType=multipart&fields="+url.QueryEscape(fileFields)
 	if cur == nil {
-		meta["parents"] = []string{folder}
+		meta["parents"] = []string{appData}
 	} else {
 		method, u = http.MethodPatch, d.cfg.UploadURL+"/files/"+cur.ID+"?uploadType=multipart&fields="+url.QueryEscape(fileFields)
 	}

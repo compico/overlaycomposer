@@ -24,16 +24,15 @@ func (m *memTokens) Save(t string) error   { m.v = t; return nil }
 
 type fakeFile struct {
 	id, name string
-	isDir    bool
-	parent   string
-	data     []byte
-	props    map[string]string
+
+	data  []byte
+	props map[string]string
 }
 
 // fakeGoogle — минимум Google: токены и Drive API (appDataFolder).
 type fakeGoogle struct {
 	mu        sync.Mutex
-	files     []*fakeFile // включая папки (isDir)
+	files     []*fakeFile
 	next      int
 	refreshes int
 	revoked   bool // refresh отвечает invalid_grant
@@ -99,39 +98,22 @@ func (g *fakeGoogle) authed(w http.ResponseWriter, r *http.Request) bool {
 }
 
 func (f *fakeFile) json() map[string]any {
-	return map[string]any{"id": f.id, "name": f.name, "mimeType": map[bool]string{true: folderMime, false: "application/json"}[f.isDir], "size": strconv.Itoa(len(f.data)), "modifiedTime": time.Now().UTC().Format(time.RFC3339), "appProperties": f.props}
+	return map[string]any{"id": f.id, "name": f.name, "size": strconv.Itoa(len(f.data)), "modifiedTime": time.Now().UTC().Format(time.RFC3339), "appProperties": f.props}
 }
 
 func (g *fakeGoogle) list(w http.ResponseWriter, r *http.Request) {
 	if !g.authed(w, r) {
 		return
 	}
-	if r.Method == http.MethodPost { // создание папки (JSON без содержимого)
-		var meta struct{ Name, MimeType string }
-		_ = json.NewDecoder(r.Body).Decode(&meta)
-		g.mu.Lock()
-		defer g.mu.Unlock()
-		g.next++
-		f := &fakeFile{id: "dir" + strconv.Itoa(g.next), name: meta.Name, isDir: meta.MimeType == folderMime}
-		g.files = append(g.files, f)
-		_ = json.NewEncoder(w).Encode(f.json())
+	if r.URL.Query().Get("spaces") != "appDataFolder" {
+		w.WriteHeader(400)
 		return
 	}
-	q := r.URL.Query().Get("q")
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	out := []map[string]any{}
 	for _, f := range g.files {
-		switch {
-		case strings.Contains(q, "name = '"+DriveFolderName+"'"):
-			if f.isDir && f.name == DriveFolderName {
-				out = append(out, f.json())
-			}
-		case strings.Contains(q, "' in parents"):
-			if !f.isDir && strings.HasPrefix(q, "'"+f.parent+"'") {
-				out = append(out, f.json())
-			}
-		}
+		out = append(out, f.json())
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{"files": out})
 }
@@ -198,12 +180,12 @@ func (g *fakeGoogle) upload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		if len(meta.Parents) != 1 || !strings.HasPrefix(meta.Parents[0], "dir") {
+		if len(meta.Parents) != 1 || meta.Parents[0] != "appDataFolder" {
 			w.WriteHeader(400)
 			return
 		}
 		g.next++
-		f = &fakeFile{id: "id" + strconv.Itoa(g.next), parent: meta.Parents[0]}
+		f = &fakeFile{id: "id" + strconv.Itoa(g.next)}
 		g.files = append(g.files, f)
 	}
 	f.name, f.data, f.props = meta.Name, data, meta.Props
@@ -302,8 +284,8 @@ func TestDrivePutGetListDeleteAndConflicts(t *testing.T) {
 	if err != nil || r2.ID != r.ID || r2.Fingerprint != Fingerprint([]byte("two")) {
 		t.Fatalf("замена известной версии: %+v %v", r2, err)
 	}
-	if n := len(g.files); n != 2 { // папка и один файл
-		t.Fatalf("после замены записей: %d", n)
+	if len(g.files) != 1 {
+		t.Fatalf("замена создала второй файл: %d", len(g.files))
 	}
 	list, err := d.List(ctx)
 	if err != nil || len(list) != 1 || list[0].ID != r.ID {
