@@ -220,7 +220,7 @@ func TestOriginGuard(t *testing.T) {
 		if origin != "" {
 			req.Header.Set("Origin", origin)
 		}
-		resp, err := app.Test(req)
+		resp, err := appTest(app, req)
 		if err != nil {
 			t.Fatal(err)
 		}
