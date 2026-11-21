@@ -311,7 +311,7 @@ mountWasmPlugins(
   },
 );
 mountTabs($("settingsDialog"));
-mountDeck(
+const deck = mountDeck(
   { openBtn: $("deckBtn"), editorMain: document.querySelector("main:not(#deckMain)") as HTMLElement, deckMain: $("deckMain"),
     hideInDeck: [$("saveBtn"), $("dirtyBadge"), $("sceneBadge"), $("canvasSize")],
     groupList: $("deckGroupList"), addGroupBtn: $("deckAddGroupBtn"), sizeBtns: $("deckSizeBtns"), tileList: $("deckTileList"),
@@ -478,6 +478,7 @@ $("saveBtn").addEventListener("click", save);
 mountKeyboard({
   context: () => ({ hasSelection: !!selected(), selectionLocked: !!selected()?.locked, hasClip: copy.hasClip() }),
   run(cmd) {
+    if (deck.isActive()) return; // в режиме deck редактор раскладок скрыт: его горячие клавиши не должны менять скрытые слои
     const o = selected();
     switch (cmd.type) {
       case "save": void save(); break;
