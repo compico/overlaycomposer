@@ -184,3 +184,21 @@ func TestHTTPReleasesListAndAsset(t *testing.T) {
 		t.Fatalf("токен не передан API: %v", auth)
 	}
 }
+
+func TestMarkWasmDeprecatedSortsLast(t *testing.T) {
+	list := []WasmEntry{{ID: "osu-skills"}, {ID: "music"}, {ID: "osu-tools"}}
+	markWasmDeprecated(list, []Deprecation{
+		{ID: "osu-skills", Kind: KindWasm, Reason: "merged"},
+		{ID: "music", Kind: KindWidget, Reason: "widget with the same id is not the wasm plugin"},
+	})
+	var ids []string
+	for _, e := range list {
+		ids = append(ids, e.ID)
+	}
+	if got := strings.Join(ids, ","); got != "music,osu-tools,osu-skills" {
+		t.Fatalf("порядок %s", got)
+	}
+	if list[2].Deprecated == nil || list[2].Deprecated.Reason != "merged" || list[0].Deprecated != nil || list[1].Deprecated != nil {
+		t.Fatalf("пометки: %+v", list)
+	}
+}

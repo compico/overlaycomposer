@@ -1,6 +1,7 @@
 // Автономные (wasm) плагины в магазине: каталог из релизов источников, установка, обновление, смена версии. Без DOM.
 import type { Api } from "../../lib/api.ts";
 import { createStore, type Readable } from "../../lib/store.ts";
+import type { Deprecation } from "./deprecated.ts";
 import type { WasmChange, WasmVersion } from "./wasm-versions.ts";
 
 export interface WasmEntry {
@@ -15,6 +16,8 @@ export interface WasmEntry {
   /** Права последней версии, которых нет у установленной. */
   addedPermissions?: string[];
   blocked?: "foreign";
+  /** Объявлен устаревшим в deprecated.json источника. */
+  deprecated?: Deprecation;
 }
 export interface WasmSource { repo: string; error?: string; plugins: WasmEntry[] }
 
