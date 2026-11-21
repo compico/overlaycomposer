@@ -130,7 +130,7 @@ export function mountSettingsBundle(refs: BundleRefs, model: BundleModel, ports:
     dialog.showModal();
   }
 
-  return { openImportDialog };
+  return { openImportDialog, chosenSections: chosen };
 }
 
 const order = (name: string): number => {
