@@ -193,6 +193,12 @@ func buildBin(root, which string) error {
 		if release {
 			ldflags += " -X main.channel=release"
 		}
+		// OAuth-клиент Google Drive (тип Desktop; секрет такого клиента не конфиденциален, но в репозиторий его не кладём).
+		// Нет переменных — сборка без Google Drive: в редакторе подключение недоступно, остальное работает.
+		if id := os.Getenv("GOOGLE_CLIENT_ID"); id != "" {
+			const pkg = "github.com/compico/overlaycomposer/internal/cloud."
+			ldflags += " -X " + pkg + "GoogleClientID=" + id + " -X " + pkg + "GoogleClientSecret=" + os.Getenv("GOOGLE_CLIENT_SECRET")
+		}
 		if t.goos == "windows" {
 			ldflags += " -H=windowsgui" // GUI-подсистема: консольное окно не появляется
 			if err := windowsIcon(root, t.goarch); err != nil {

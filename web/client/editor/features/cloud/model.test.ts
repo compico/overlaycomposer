@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { fakeApi } from "../../lib/fakeapi.test-helper.ts";
-import { createCloudModel, fileLabel, formatSize } from "./model.ts";
+import { createCloudModel, fileLabel, formatSize, providerLabel } from "./model.ts";
 
 test("formatSize и fileLabel", () => {
   assert.equal(formatSize(12), "12 B");
@@ -17,6 +17,7 @@ test("модель: запросы и тела", async () => {
     "GET /api/cloud": () => ({ provider: "folder", folder: "/x", connected: true }),
     "PUT /api/cloud": () => ({ provider: "folder", folder: "/y", connected: true }),
     "DELETE /api/cloud": () => ({ provider: "", connected: false }),
+    "POST /api/cloud/google/start": () => ({ url: "https://accounts.google.com/x" }),
     "GET /api/cloud/files": () => ({ files: [{ id: "oc-settings-a.json", name: "oc-settings-a.json", size: 1, modTime: "", fingerprint: "f" }] }),
     "POST /api/cloud/upload": () => ({ id: "n", name: "n", size: 1, modTime: "", fingerprint: "g" }),
     "GET /api/cloud/files/oc-settings-a.json": () => ({ id: "oc-settings-a.json", text: '{"format":1}' }),
@@ -34,5 +35,12 @@ test("модель: запросы и тела", async () => {
   assert.equal(await m.download("oc-settings-a.json"), '{"format":1}');
   await m.remove("oc-settings-a.json");
   assert.equal((await m.disconnect()).connected, false);
-  assert.equal(calls.length, 8);
+  assert.equal(await m.googleStart(), "https://accounts.google.com/x");
+  assert.equal(calls.length, 9);
+});
+
+test("providerLabel", () => {
+  assert.match(providerLabel({ provider: "google", connected: true }), /^Google Drive/);
+  assert.equal(providerLabel({ provider: "folder", folder: "/x", connected: true }), "Folder: /x");
+  assert.equal(providerLabel({ provider: "", connected: false }), "Not connected");
 });

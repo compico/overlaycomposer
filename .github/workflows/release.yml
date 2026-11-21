@@ -40,6 +40,9 @@ jobs:
         env:
           OC_RELEASE: "1" # включает проверку обновлений в собранном приложении
           OC_VERSION: ${{ steps.ver.outputs.tag }}
+          # OAuth-клиент Google Drive (Settings → Secrets and variables → Actions); без них сборка без Google Drive
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
         run: go run ./cmd/build bin all
       - name: Релиз
         env:

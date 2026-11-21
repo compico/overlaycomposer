@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"html"
 	"log/slog"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,13 +21,20 @@ import (
 // Syncthing). Файл настроек собирает и применяет тот же сервис, что и ручной экспорт/импорт (settings.go); здесь он только лежит и
 // забирается. Только с этого компьютера. Ничего не делается само: кнопки «Upload / Download» в редакторе.
 
-const cloudFolderKey = "cloud_folder"
+const (
+	cloudFolderKey   = "cloud_folder"
+	cloudProviderKey = "cloud_provider" // "folder" | "google"; пусто при сохранённой папке — folder (до появления Google Drive)
+	driveTokenKey    = "cloud_google_refresh"
+	driveTokenAAD    = "cloud:google:refresh"
+)
 
 func (s *Server) cloudRoutes() {
 	app := s.app
 	app.Get("/api/cloud", s.localOnly, s.cloudStatus)
 	app.Put("/api/cloud", s.localOnly, s.appGuard, s.cloudConnect)
 	app.Delete("/api/cloud", s.localOnly, s.appGuard, s.cloudDisconnect)
+	app.Post("/api/cloud/google/start", s.localOnly, s.appGuard, s.googleStart)
+	app.Get("/auth/google/callback", s.localOnly, s.googleCallback)
 	app.Get("/api/cloud/files", s.localOnly, s.cloudList)
 	app.Post("/api/cloud/upload", s.localOnly, s.appGuard, s.cloudUpload)
 	app.Get("/api/cloud/files/:id", s.localOnly, s.cloudDownload)
@@ -39,7 +48,10 @@ func (s *Server) cloudProvider() cloud.Provider {
 	if !s.cloudLoaded {
 		s.cloudLoaded = true
 		if s.d.Store != nil {
-			if dir, ok, err := s.d.Store.Setting(cloudFolderKey); err == nil && ok && dir != "" {
+			kind, _, _ := s.d.Store.Setting(cloudProviderKey)
+			if kind == "google" && s.googleDrive() != nil {
+				s.cloudProv = s.googleDrive()
+			} else if dir, ok, err := s.d.Store.Setting(cloudFolderKey); err == nil && ok && dir != "" {
 				f := cloud.NewFolder(dir)
 				if err := f.Connect(context.Background()); err != nil {
 					slog.Warn("облако: папка недоступна", "dir", dir, "err", err)
@@ -65,13 +77,95 @@ func cloudErr(c fiber.Ctx, err error) error {
 
 func (s *Server) cloudStatus(c fiber.Ctx) error {
 	p := s.cloudProvider()
+	google := fiber.Map{"available": s.googleDrive() != nil && s.googleDrive().Configured(), "connected": s.googleDrive() != nil && s.googleDrive().Connected()}
 	if p == nil {
-		return c.JSON(fiber.Map{"provider": "", "connected": false})
+		return c.JSON(fiber.Map{"provider": "", "connected": false, "google": google})
 	}
 	s.cloudMu.Lock()
 	dir := s.cloudDir
 	s.cloudMu.Unlock()
-	return c.JSON(fiber.Map{"provider": p.Name(), "folder": dir, "connected": p.Connected()})
+	return c.JSON(fiber.Map{"provider": p.Name(), "folder": dir, "connected": p.Connected(), "google": google})
+}
+
+// driveTokens хранит refresh-токен Google в настройках БД, зашифрованным ключом приложения.
+type driveTokens struct{ s *Server }
+
+func (t driveTokens) Load() (string, error) {
+	v, ok, err := t.s.d.Store.Setting(driveTokenKey)
+	if err != nil || !ok || v == "" {
+		return "", err
+	}
+	plain, _, err := t.s.d.Box.Open(v, driveTokenAAD)
+	if err != nil { // ключ потерян или заменён: считаем, что подключения нет, подключиться можно заново
+		slog.Warn("облако: токен Google не расшифровался, подключитесь заново", "err", err)
+		return "", nil
+	}
+	return plain, nil
+}
+
+func (t driveTokens) Save(tok string) error {
+	return t.s.d.Store.SetSetting(driveTokenKey, t.s.d.Box.Seal(tok, driveTokenAAD))
+}
+
+// googleDrive — провайдер Google Drive; nil, если нет базы или ключа шифрования. Создаётся один раз.
+func (s *Server) googleDrive() *cloud.Drive {
+	s.driveOnce.Do(func() {
+		if s.d.Store != nil && s.d.Box != nil {
+			s.drive = cloud.NewDrive(cloud.GoogleConfig{ClientID: cloud.GoogleClientID, ClientSecret: cloud.GoogleClientSecret}, driveTokens{s})
+		}
+	})
+	return s.drive
+}
+
+// googleRedirectURI — loopback-адрес этого приложения (для клиента типа Desktop Google принимает любой порт).
+func (s *Server) googleRedirectURI() string {
+	return "http://127.0.0.1:" + strconv.Itoa(s.d.Running.Port) + "/auth/google/callback"
+}
+
+// POST /api/cloud/google/start — адрес страницы согласия Google; редактор открывает его в браузере.
+func (s *Server) googleStart(c fiber.Ctx) error {
+	d := s.googleDrive()
+	if d == nil {
+		return bad(c, cloud.ErrNotConfigured.Error())
+	}
+	u, err := d.AuthURL(s.googleRedirectURI())
+	if err != nil {
+		return cloudErr(c, err)
+	}
+	return c.JSON(fiber.Map{"url": u})
+}
+
+// GET /auth/google/callback — сюда Google возвращает пользователя после согласия.
+func (s *Server) googleCallback(c fiber.Ctx) error {
+	d := s.googleDrive()
+	if d == nil {
+		return s.cloudResult(c, fiber.StatusBadRequest, "Could not connect", cloud.ErrNotConfigured.Error())
+	}
+	if e := c.Query("error"); e != "" {
+		return s.cloudResult(c, fiber.StatusBadRequest, "Google denied access", e)
+	}
+	state, code := strings.Clone(c.Query("state")), strings.Clone(c.Query("code")) // Fiber переиспользует буферы запроса
+	if err := d.Complete(c.Context(), state, code, s.googleRedirectURI()); err != nil {
+		slog.Warn("облако: подключение Google Drive не удалось", "err", err)
+		return s.cloudResult(c, fiber.StatusBadRequest, "Could not connect", err.Error())
+	}
+	if err := s.d.Store.SetSetting(cloudProviderKey, "google"); err != nil {
+		return serverErr(c, err)
+	}
+	s.cloudMu.Lock()
+	s.cloudProv, s.cloudDir, s.cloudLoaded = d, "", true
+	s.cloudMu.Unlock()
+	slog.Info("облако: Google Drive подключён")
+	return s.cloudResult(c, fiber.StatusOK, "Google Drive connected", "You can close this tab and return to Overlay Composer.")
+}
+
+func (s *Server) cloudResult(c fiber.Ctx, status int, title, msg string) error {
+	c.Status(status)
+	c.Set("Cache-Control", "no-store")
+	return s.htmlString(c, `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Overlay Composer — Google Drive</title>
+<body style="margin:0;background:#15171c;color:#e6e8ee;font-family:sans-serif;text-align:center;padding:60px 16px">
+<h1 style="font-size:20px">`+html.EscapeString(title)+`</h1><p style="color:#9aa3b2">`+html.EscapeString(msg)+`</p></body>`)
 }
 
 // PUT /api/cloud {folder} — подключить папку (создаётся, если её нет) и запомнить.
@@ -91,6 +185,9 @@ func (s *Server) cloudConnect(c fiber.Ctx) error {
 		if err := s.d.Store.SetSetting(cloudFolderKey, dir); err != nil {
 			return serverErr(c, err)
 		}
+		if err := s.d.Store.SetSetting(cloudProviderKey, "folder"); err != nil {
+			return serverErr(c, err)
+		}
 	}
 	s.cloudMu.Lock()
 	s.cloudProv, s.cloudDir, s.cloudLoaded = f, dir, true
@@ -104,8 +201,11 @@ func (s *Server) cloudDisconnect(c fiber.Ctx) error {
 		_ = p.Disconnect()
 	}
 	if s.d.Store != nil {
-		if err := s.d.Store.SetSetting(cloudFolderKey, ""); err != nil {
-			return serverErr(c, err)
+		// выбранная папка забывается; токен Google удаляет Disconnect провайдера (выше). Провайдер больше не выбран.
+		for _, k := range []string{cloudFolderKey, cloudProviderKey} {
+			if err := s.d.Store.SetSetting(k, ""); err != nil {
+				return serverErr(c, err)
+			}
 		}
 	}
 	s.cloudMu.Lock()
