@@ -1,5 +1,6 @@
 import { el } from "../../lib/dom.ts";
 import type { Ui } from "../../lib/ui.ts";
+import { isDeleteTile } from "./keys.ts";
 import { isConflict, type DeckModel, type DeckState } from "./model.ts";
 import { findTile, groupWidth, sizesFor, tileTitle, unusedScenes, MAX_FOLDER_SCENES, MAX_LABEL, MAX_NAME, type DeckGroup, type DeckTile } from "./ops.ts";
 
@@ -35,7 +36,7 @@ const sizeKey = (s: { w: number; h: number }) => `${s.w}×${s.h}`;
  * Режим «Deck» редактора: слева группы и добавление плиток, в центре холст (группы слева направо, как на планшете),
  * справа свойства выбранной плитки или группы. Состояние — в модели, здесь только DOM.
  */
-export function mountDeck(refs: DeckRefs, model: DeckModel, ports: DeckPorts): void {
+export function mountDeck(refs: DeckRefs, model: DeckModel, ports: DeckPorts): { isActive(): boolean } {
   const { ui } = ports;
   let active = false;
   let curGroup: string | null = null; // группа, в которую добавляются плитки и свойства которой видны
@@ -276,6 +277,15 @@ export function mountDeck(refs: DeckRefs, model: DeckModel, ports: DeckPorts): v
     refs.openBtn.textContent = on ? "← Overlay editor" : "▦ Deck";
   }
 
+  addEventListener("keydown", (e) => {
+    if (!active) return;
+    const t = e.target as HTMLElement;
+    const sel = model.get().selected;
+    if (!isDeleteTile({ key: e.key, mod: e.ctrlKey || e.metaKey, alt: e.altKey, tag: t.tagName, editable: t.isContentEditable, dialogOpen: !!document.querySelector("dialog[open]") }, sel)) return;
+    e.preventDefault();
+    if (sel) model.removeTile(sel);
+  });
+
   refs.openBtn.addEventListener("click", async () => {
     if (active) {
       if (model.get().dirty && !confirm("Discard unsaved deck changes?")) return;
@@ -309,4 +319,5 @@ export function mountDeck(refs: DeckRefs, model: DeckModel, ports: DeckPorts): v
   });
 
   window.addEventListener("beforeunload", (e) => { if (model.get().dirty) e.preventDefault(); });
+  return { isActive: () => active };
 }
