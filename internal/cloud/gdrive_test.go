@@ -31,14 +31,16 @@ type fakeFile struct {
 
 // fakeGoogle — минимум Google: токены и Drive API (appDataFolder).
 type fakeGoogle struct {
-	mu        sync.Mutex
-	files     []*fakeFile
-	next      int
-	refreshes int
-	revoked   bool // refresh отвечает invalid_grant
-	staleOnce bool // первый запрос к API получает 401
-	lastForm  url.Values
-	srv       *httptest.Server
+	mu         sync.Mutex
+	files      []*fakeFile
+	next       int
+	refreshes  int
+	revoked    bool   // refresh отвечает invalid_grant
+	staleOnce  bool   // первый запрос к API получает 401
+	scopeless  bool   // API отвечает 403 insufficientScopes
+	grantScope string // scope в ответе на обмен кода (пусто — как у старых ответов)
+	lastForm   url.Values
+	srv        *httptest.Server
 }
 
 func newFakeGoogle(t *testing.T) *fakeGoogle {
@@ -70,7 +72,7 @@ func (g *fakeGoogle) token(w http.ResponseWriter, r *http.Request) {
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid_grant"})
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "acc-0", "refresh_token": "ref-1", "expires_in": 3600})
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "acc-0", "refresh_token": "ref-1", "expires_in": 3600, "scope": g.grantScope})
 	case "refresh_token":
 		if g.revoked || r.PostForm.Get("refresh_token") != "ref-1" {
 			w.WriteHeader(400)
@@ -88,6 +90,11 @@ func (g *fakeGoogle) authed(w http.ResponseWriter, r *http.Request) bool {
 	if g.staleOnce {
 		g.staleOnce = false
 		w.WriteHeader(401)
+		return false
+	}
+	if g.scopeless {
+		w.WriteHeader(403)
+		_, _ = w.Write([]byte(`{"error":{"errors":[{"reason":"insufficientScopes"}]}}`))
 		return false
 	}
 	if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer acc-") {
@@ -339,5 +346,34 @@ func TestDriveRevokedAccessDisconnects(t *testing.T) {
 	}
 	if d.Connected() || tk.v != "" {
 		t.Fatal("токен не забыт после отзыва доступа")
+	}
+}
+
+func TestDriveForgetsTokenWithOldScope(t *testing.T) {
+	g := newFakeGoogle(t)
+	d, tk := connectedDrive(t, g)
+	g.mu.Lock()
+	g.scopeless = true
+	g.mu.Unlock()
+	if _, err := d.List(context.Background()); !errors.Is(err, ErrScope) {
+		t.Fatalf("List с токеном старого scope: %v", err)
+	}
+	if d.Connected() || tk.v != "" {
+		t.Fatal("токен со старым scope не забыт")
+	}
+}
+
+func TestDriveRejectsMissingScopeOnConnect(t *testing.T) {
+	g := newFakeGoogle(t)
+	g.grantScope = "openid https://www.googleapis.com/auth/drive.file"
+	tk := &memTokens{}
+	d := NewDrive(g.cfg(), tk)
+	authURL, _ := d.AuthURL("http://127.0.0.1:8000/cb")
+	u, _ := url.Parse(authURL)
+	if err := d.Complete(context.Background(), u.Query().Get("state"), "good-code", "http://127.0.0.1:8000/cb"); err == nil || tk.v != "" {
+		t.Fatalf("токен без drive.appdata принят: %v %q", err, tk.v)
+	}
+	if !hasScope(googleScope+" openid", googleScope) || hasScope("openid", googleScope) || !hasScope("", googleScope) {
+		t.Fatal("hasScope")
 	}
 }
