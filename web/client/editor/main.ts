@@ -262,12 +262,12 @@ const wasmStore = mountWasmStore($("wasmStoreBox"), createWasmStoreModel({ api, 
   ui: { toast, fail },
   openPlugins: () => { $<HTMLDialogElement>("storeDialog").close(); showWasmStore(); },
 });
-/** Открыть окно Plugins (если закрыто) и показать магазин автономных плагинов. */
+const selectWasmTab = mountTabs($("wasmDialog"), (name) => { if (name === "store") void wasmStore.load(); });
+/** Открыть окно Plugins (если закрыто) на вкладке Store. */
 function showWasmStore() {
   const dlg = $<HTMLDialogElement>("wasmDialog");
   if (!dlg.open) $("pluginsBtn").click();
-  void wasmStore.load();
-  $("wasmStoreBox").scrollIntoView({ block: "nearest" });
+  selectWasmTab("store");
 }
 $("wasmStoreRefreshBtn").addEventListener("click", () => void wasmStore.load(true));
 $("wasmSourcesBtn").addEventListener("click", () => pluginStore.open());
@@ -294,7 +294,7 @@ mountWasmPlugins(
   wasmModel,
   {
     ui: { toast, fail }, openFolder: () => api("/api/app/open", "POST", { what: "plugins" }), host: pluginHost,
-    onOpen: () => void wasmStore.load(),
+    onOpen: () => selectWasmTab("installed"),
     deprecations: {
       find: (id) => {
         const sources = storeModel.get().data?.sources ?? [];
