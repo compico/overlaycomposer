@@ -32,7 +32,7 @@ h1{font-size:16px;margin:0;font-weight:600}
 <div id="rows"></div>
 <script>
 (function () {
-  var MIN = -60, VMIN = -60, VMAX = 6, CLIP = -1, HOLD = 1500, FALL = 40, PFALL = 20;
+  var MIN = -60, VMIN = -60, VMAX = 0, CLIP = -1, HOLD = 1500, FALL = 40, PFALL = 20;
   var rowsEl = document.getElementById("rows"), stEl = document.getElementById("st");
   var rows = {}, order = "", ws = null, frames = 0, shown = 0, online = false, count = 0;
 
@@ -45,7 +45,7 @@ h1{font-size:16px;margin:0;font-weight:600}
     var r = { name: name, level: MIN, target: MIN, hold: MIN, holdAt: 0, hotAt: 0, dragging: false, lastSend: 0 };
     r.root = el("div", "row"); r.nm = el("div", "nm", name); r.nm.title = name;
     r.mt = el("button", "mt", "Mute"); r.mt.type = "button";
-    r.mt.onclick = function () { send({ t: "mute", name: name, muted: !r.muted }); };
+    r.mt.onclick = function () { send({ t: "toggle", name: name }); };
     r.bar = el("div", "bar"); r.cv = el("div", "cv"); r.pk = el("div", "pk");
     r.bar.appendChild(r.cv); r.bar.appendChild(r.pk);
     var mw = el("div", "mw"); mw.appendChild(r.bar);

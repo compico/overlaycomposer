@@ -15,7 +15,7 @@ import (
 
 // PoC микшера (#234): страница /mixer-poc и её WebSocket. Только с этого компьютера: это проверка идеи, не готовая функция.
 // Сервер подписывается на уровни OBS, пока страница открыта, и шлёт кадры {"online":true,"inputs":[…]}; команды страницы
-// ({"t":"mute","name":…,"muted":bool}, {"t":"vol","name":…,"db":число}) выполняются только для активных источников.
+// ({"t":"toggle","name":…}, {"t":"mute","name":…,"muted":bool}, {"t":"vol","name":…,"db":число, не выше 0}) выполняются только для активных источников.
 const mixerPocPing = 20 * time.Second
 
 type mixerPocFrame struct {
@@ -128,13 +128,15 @@ func (s *Server) serveMixerPoc(c *websocket.Conn) {
 		}
 		var cerr error
 		switch m.T {
+		case "toggle":
+			cerr = o.ToggleInputMute(m.Name)
 		case "mute":
 			cerr = o.SetInputMute(m.Name, m.Muted)
 		case "vol":
 			cerr = o.SetInputVolumeDB(m.Name, m.DB)
 		}
 		if cerr != nil {
-			slog.Debug("mixer-poc: команда не выполнена", "type", m.T, "err", cerr)
+			slog.Warn("mixer-poc: команда не выполнена", "type", m.T, "err", cerr)
 		}
 	}
 }

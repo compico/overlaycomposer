@@ -40,11 +40,13 @@ type mixer struct {
 // ErrInputNotActive — источника нет среди активных (его не показывает микшер).
 var ErrInputNotActive = errors.New("audio input is not active")
 
-// Пределы громкости OBS в дБ.
+// Пределы громкости, которые разрешает микшер, в дБ. Выше 0 дБ не поднимаем: усиление легко приводит к клиппингу.
 const (
 	minVolumeDB = -100.0
-	maxVolumeDB = 26.0
+	maxVolumeDB = 0.0
 )
+
+func clampVolumeDB(db float64) float64 { return math.Min(math.Max(db, minVolumeDB), maxVolumeDB) }
 
 func dbFromMul(x float64) float64 {
 	if !(x > 1e-5) { // и NaN
@@ -247,7 +249,7 @@ func (c *Client) SetInputMute(name string, muted bool) error {
 	return nil
 }
 
-// SetInputVolumeDB задаёт громкость активного источника в дБ (в пределах, которые принимает OBS).
+// SetInputVolumeDB задаёт громкость активного источника в дБ (не выше 0).
 func (c *Client) SetInputVolumeDB(name string, db float64) error {
 	if math.IsNaN(db) || math.IsInf(db, 0) {
 		return errors.New("bad volume")
@@ -255,9 +257,20 @@ func (c *Client) SetInputVolumeDB(name string, db float64) error {
 	if !c.mixerActive(name) {
 		return ErrInputNotActive
 	}
-	db = math.Min(math.Max(db, minVolumeDB), maxVolumeDB)
+	db = clampVolumeDB(db)
 	if _, ok := c.Request("SetInputVolume", map[string]any{"inputName": name, "inputVolumeDb": db}); !ok {
 		return errors.New("OBS did not confirm the volume change")
+	}
+	return nil
+}
+
+// ToggleInputMute переключает mute активного источника по настоящему состоянию в OBS, а не по тому, что видела страница.
+func (c *Client) ToggleInputMute(name string) error {
+	if !c.mixerActive(name) {
+		return ErrInputNotActive
+	}
+	if _, ok := c.Request("ToggleInputMute", map[string]any{"inputName": name}); !ok {
+		return errors.New("OBS did not confirm the mute change")
 	}
 	return nil
 }

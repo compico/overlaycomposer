@@ -85,3 +85,11 @@ func TestMixerMuteAndVolumeEventsAreRememberedButStillReachTheGeneralHandler(t *
 		t.Fatalf("%+v", last)
 	}
 }
+
+func TestVolumeIsNeverRaisedAboveZero(t *testing.T) {
+	for in, want := range map[float64]float64{6: 0, 0: 0, -3.5: -3.5, -250: -100} {
+		if got := clampVolumeDB(in); got != want {
+			t.Errorf("clampVolumeDB(%v) = %v, want %v", in, got, want)
+		}
+	}
+}
