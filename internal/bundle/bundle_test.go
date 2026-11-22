@@ -205,7 +205,7 @@ func TestWriteBackupKeepsLast(t *testing.T) {
 	base := time.Date(2026, 11, 20, 9, 0, 0, 0, time.UTC)
 	var last string
 	for i := 0; i < 5; i++ {
-		p, err := WriteBackup(dir, f, base.Add(time.Duration(i)*time.Second), 3)
+		p, err := WriteBackup(dir, f, base.Add(time.Duration(i)*time.Second), 3, KindManual)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -221,5 +221,77 @@ func TestWriteBackupKeepsLast(t *testing.T) {
 	data, _ := os.ReadFile(last)
 	if _, err := Parse(data); err != nil {
 		t.Fatalf("бэкап читается как бандл: %v", err)
+	}
+}
+
+func TestBackupListReadDeleteAndKinds(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "backups")
+	if list, err := ListBackups(dir); err != nil || len(list) != 0 {
+		t.Fatalf("нет каталога: %v %v", list, err)
+	}
+	f := File{Format: Format, Sections: map[string]json.RawMessage{}, Checksums: map[string]string{}}
+	base := time.Date(2026, 11, 21, 19, 0, 0, 0, time.UTC)
+	for i, k := range []string{KindAuto, KindManual, KindImport} {
+		if _, err := WriteBackup(dir, f, base.Add(time.Duration(i)*time.Minute), 0, k); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := WriteBackup(dir, f, base, 0, "weird"); err == nil {
+		t.Fatal("неизвестный вид принят")
+	}
+	// ранний бэкап без вида в имени — это бэкап перед импортом
+	_ = os.WriteFile(filepath.Join(dir, "oc-settings-20260101-000000.000.json"), []byte("{}"), 0o600)
+	_ = os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("x"), 0o600)
+	list, err := ListBackups(dir)
+	if err != nil || len(list) != 4 {
+		t.Fatalf("%+v %v", list, err)
+	}
+	if list[0].Kind != KindImport || list[1].Kind != KindManual || list[2].Kind != KindAuto || list[3].Kind != KindImport {
+		t.Fatalf("порядок или виды: %+v", list)
+	}
+	if !list[0].ModTime.Equal(base.Add(2 * time.Minute)) {
+		t.Fatalf("время из имени: %v", list[0].ModTime)
+	}
+	if data, err := ReadBackup(dir, list[1].Name); err != nil || len(data) == 0 {
+		t.Fatalf("ReadBackup: %v", err)
+	}
+	for _, bad := range []string{"../x.json", "notes.txt", "oc-settings-x.json", "oc-settings-20260101-000000.000-evil.json"} {
+		if _, err := ReadBackup(dir, bad); err == nil {
+			t.Errorf("ReadBackup(%q) принят", bad)
+		}
+		if err := DeleteBackup(dir, bad); err == nil {
+			t.Errorf("DeleteBackup(%q) принят", bad)
+		}
+	}
+	if err := DeleteBackup(dir, list[0].Name); err != nil {
+		t.Fatal(err)
+	}
+	if list, _ := ListBackups(dir); len(list) != 3 {
+		t.Fatalf("после удаления: %d", len(list))
+	}
+}
+
+func TestAutosaveOnlyWhenChanged(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "backups")
+	mk := func(sum string) File {
+		return File{Format: Format, CreatedAt: time.Now().String(), Sections: map[string]json.RawMessage{}, Checksums: map[string]string{"layouts": sum, "deck": "d"}}
+	}
+	now := time.Date(2026, 11, 21, 19, 0, 0, 0, time.UTC)
+	sig1, wrote, err := Autosave(dir, mk("a"), "", now, 30)
+	if err != nil || !wrote {
+		t.Fatalf("первый снимок: %v %v", wrote, err)
+	}
+	if _, wrote, _ := Autosave(dir, mk("a"), sig1, now.Add(time.Minute), 30); wrote {
+		t.Fatal("снимок без изменений")
+	}
+	sig2, wrote, _ := Autosave(dir, mk("b"), sig1, now.Add(2*time.Minute), 30)
+	if !wrote || sig2 == sig1 {
+		t.Fatal("изменение не замечено")
+	}
+	if list, _ := ListBackups(dir); len(list) != 2 {
+		t.Fatalf("файлов: %d", len(list))
+	}
+	if Signature(mk("a")) != Signature(File{Checksums: map[string]string{"deck": "d", "layouts": "a"}}) {
+		t.Fatal("отпечаток зависит от порядка или времени создания")
 	}
 }

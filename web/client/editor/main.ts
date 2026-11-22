@@ -46,6 +46,8 @@ import { mountDeck } from "./features/deck/view.ts";
 import { createDevicesModel } from "./features/devices/model.ts";
 import { mountDevices } from "./features/devices/view.ts";
 import { createBundleModel } from "./features/settings-bundle/model.ts";
+import { createSnapshotsModel } from "./features/snapshots/model.ts";
+import { mountSnapshots } from "./features/snapshots/view.ts";
 import { createCloudModel } from "./features/cloud/model.ts";
 import { mountCloud } from "./features/cloud/view.ts";
 import { mountSettingsBundle } from "./features/settings-bundle/view.ts";
@@ -312,7 +314,7 @@ mountWasmPlugins(
     },
   },
 );
-mountTabs($("settingsDialog"), (name) => { if (name === "backup") void cloudBackup.load(); });
+mountTabs($("settingsDialog"), (name) => { if (name === "backup") { void localSnapshots.load(); void cloudBackup.load(); } });
 const deck = mountDeck(
   { openBtn: $("deckBtn"), editorMain: document.querySelector("main:not(#deckMain)") as HTMLElement, deckMain: $("deckMain"),
     hideInDeck: [$("saveBtn"), $("dirtyBadge"), $("sceneBadge"), $("canvasSize")],
@@ -463,6 +465,10 @@ const bundleUi = mountSettingsBundle(
     },
   },
 );
+const localSnapshots = mountSnapshots({ box: $("bkSnapBox") }, createSnapshotsModel(api), {
+  ui: { toast, fail },
+  async openImport(text) { bundleUi.openImportDialog(text, await bundleModel.plan(text)); },
+});
 const cloudBackup = mountCloud({ box: $("bkCloudBox") }, createCloudModel(api), {
   ui: { toast, fail },
   sections: () => bundleUi.chosenSections(),
