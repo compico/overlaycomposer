@@ -64,8 +64,15 @@ func WriteBackup(dir string, f File, now time.Time, keep int, kind string) (stri
 	if err != nil {
 		return "", err
 	}
-	name := fmt.Sprintf("%s%s-%s.json", backupPrefix, now.UTC().Format("20060102-150405.000"), kind)
-	path := filepath.Join(dir, name)
+	// Имя — по времени с миллисекундами; два снимка в одну миллисекунду не должны затереть друг друга: время сдвигается вперёд, пока имя занято.
+	var path string
+	for {
+		path = filepath.Join(dir, fmt.Sprintf("%s%s-%s.json", backupPrefix, now.UTC().Format("20060102-150405.000"), kind))
+		if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
+			break
+		}
+		now = now.Add(time.Millisecond)
+	}
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return "", err
