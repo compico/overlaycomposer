@@ -27,8 +27,6 @@ export interface ConfigPorts {
   ui: Ui;
   /** Диалог открывается: подгрузить остальные разделы настроек (приложение, импорт, устройства, Twitch). */
   onOpen(): void;
-  /** Раз в 2 с, пока диалог открыт: обновить зависящие от сервера разделы. */
-  onTick(): void;
   onClose(): void;
   /** «Listen on» изменён (или заполнен): пересчитать подсказки, зависящие от адреса. */
   onHostChange(): void;
@@ -38,7 +36,6 @@ export interface ConfigPorts {
 
 export function mountConfig(refs: ConfigRefs, model: ConfigModel, ports: ConfigPorts) {
   const { ui } = ports;
-  let timer = 0;
 
   function showStatus(c: ConfigView) {
     refs.status.className = `hint ${c.obs.connected ? "" : "warn"}`;
@@ -66,7 +63,7 @@ export function mountConfig(refs: ConfigRefs, model: ConfigModel, ports: ConfigP
   refs.host.addEventListener("change", updateHostWarn);
   refs.obsEnabled.addEventListener("change", () => { refs.obsWsBox.hidden = !refs.obsEnabled.checked; });
 
-  refs.dialog.addEventListener("close", () => { clearInterval(timer); ports.onClose(); });
+  refs.dialog.addEventListener("close", () => ports.onClose());
 
   refs.reconnectBtn.addEventListener("click", async () => {
     try {
@@ -100,8 +97,6 @@ export function mountConfig(refs: ConfigRefs, model: ConfigModel, ports: ConfigP
       refs.port.value = String(c.port);
       ports.onOpen();
       refs.dialog.showModal();
-      clearInterval(timer);
-      timer = setInterval(() => { void model.refresh(); ports.onTick(); }, 2000) as unknown as number;
     } catch (e) { ui.fail(e); }
   });
 

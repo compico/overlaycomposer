@@ -31,6 +31,7 @@ func (s *Server) twitchRoutes() {
 				s.d.Chat.Reload()
 			}
 			s.SyncTwitchNotifications()
+			s.stateChanged("twitch")
 		})
 	}
 }
@@ -92,6 +93,7 @@ func (s *Server) twitchSetApp(c fiber.Ctx) error {
 	if err := s.d.Twitch.SetApp(b.ClientID, b.ClientSecret); err != nil {
 		return bad(c, err.Error())
 	}
+	s.stateChanged("twitch")
 	return s.twitchStatus(c)
 }
 
@@ -139,6 +141,7 @@ func (s *Server) twitchResetApp(c fiber.Ctx) error {
 		s.d.Chat.Reload()
 	}
 	s.SyncTwitchNotifications()
+	s.stateChanged("twitch")
 	return s.twitchStatus(c)
 }
 
@@ -148,6 +151,7 @@ func (s *Server) twitchDisconnect(c fiber.Ctx) error {
 	case err == nil:
 		s.d.Chat.Reload()
 		s.SyncTwitchNotifications()
+		s.stateChanged("twitch")
 		return c.JSON(fiber.Map{"ok": true})
 	case errors.Is(err, twitch.ErrBadRole):
 		return bad(c, err.Error())
@@ -170,6 +174,7 @@ func (s *Server) twitchCallback(c fiber.Ctx) error {
 	slog.Info("twitch: аккаунт подключён", "role", acc.Role, "login", acc.Login)
 	s.d.Chat.Reload() // соединения для отправки пересоздадутся уже с новым аккаунтом
 	s.SyncTwitchNotifications()
+	s.stateChanged("twitch")
 	return s.twitchResult(c, fiber.StatusOK, "Connected as "+acc.Login, "Role: "+acc.Role+". You can close this tab and return to Overlay Composer.")
 }
 

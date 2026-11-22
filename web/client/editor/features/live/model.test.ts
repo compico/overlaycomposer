@@ -10,6 +10,7 @@ function setup(cur: { id: string; dirty: boolean } | null) {
     setActive: (id) => log.push(`active:${id}`),
     obs: (i) => log.push(`obs:${i.connected}`),
     scene: (n) => log.push(`scene:${n}`),
+    stateChanged: (t) => log.push(`state:${t}`),
     loadLayouts: async () => { log.push("layouts"); },
     loadSources: async () => { log.push("sources"); },
     reloadCurrent: async () => { log.push("reload"); },
@@ -24,7 +25,14 @@ test("hello / obs:status / scene:changed", async () => {
   await handle({ type: "hello", obs, layoutId: "L1" });
   await handle({ type: "obs:status", obs });
   await handle({ type: "scene:changed", scene: "Game", layoutId: null });
-  assert.deepEqual(log, ["active:L1", "obs:true", "obs:true", "active:null", "scene:Game"]);
+  assert.deepEqual(log, ["active:L1", "obs:true", "obs:true", "state:config", "active:null", "scene:Game"]);
+});
+
+test("state:changed передаёт раздел, который нужно перечитать", async () => {
+  const { log, handle } = setup(null);
+  await handle({ type: "state:changed", topic: "devices" });
+  await handle({ type: "state:changed", topic: "twitch" });
+  assert.deepEqual(log, ["state:devices", "state:twitch"]);
 });
 
 test("scene:changed без имени сцены не трогает бейдж", async () => {

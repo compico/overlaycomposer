@@ -150,6 +150,13 @@ func (s *Server) configView() configView {
 	}
 }
 
+// stateChanged сообщает редактору, что изменилось состояние (config, devices, twitch): он заново запросит его по REST.
+func (s *Server) stateChanged(topic string) {
+	if s.d.Hub != nil {
+		s.d.Hub.StateChanged(topic)
+	}
+}
+
 func (s *Server) putConfig(c fiber.Ctx) error {
 	var p config.Patch
 	if !body(c, &p) {
@@ -173,6 +180,7 @@ func (s *Server) configApplied(prev, next config.Config) {
 		s.d.Obs.Reconnect(next.Obs.URL, next.Obs.Password)
 	}
 	s.d.Hub.BroadcastObsStatus()
+	s.stateChanged("config")
 }
 
 // ---- layouts ----

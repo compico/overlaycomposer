@@ -376,3 +376,18 @@ func TestStoppedWithoutWaitIsHarmless(t *testing.T) {
 	h.HandleMessage(p, []byte(`{"type":"app:stopped"}`))
 	h.HandleMessage(p, []byte(`{"type":"app:stopped","id":"x"}`))
 }
+
+func TestStateChangedBroadcastsTopicOnly(t *testing.T) {
+	h, _, _, c := newHub()
+	c.reset()
+	h.StateChanged("devices")
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.msgs) != 1 {
+		t.Fatalf("ожидалось 1 сообщение, пришло %d", len(c.msgs))
+	}
+	m := c.msgs[0]
+	if m["type"] != "state:changed" || m["topic"] != "devices" || len(m) != 2 {
+		t.Fatalf("неожиданное сообщение: %v", m)
+	}
+}
