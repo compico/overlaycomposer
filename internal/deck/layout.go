@@ -49,6 +49,7 @@ func sizeOK(w, h int) bool {
 const (
 	ActionScene  = "scene"  // сменить сцену OBS (Scene)
 	ActionPlugin = "plugin" // действие wasm-плагина (Plugin, PluginAction): плагин объявляет их в Meta.Actions
+	ActionMute   = "mute"   // переключить mute источника звука OBS (Input)
 	ActionFolder = "folder" // папка со сценами (Scenes): нажатие открывает выбор, сервер принимает только сцены из списка
 )
 
@@ -104,6 +105,8 @@ type Tile struct {
 type Action struct {
 	Type  string `json:"type"`
 	Scene string `json:"scene,omitempty"`
+	// Input — имя аудиоисточника OBS для ActionMute.
+	Input string `json:"input,omitempty"`
 	// Scenes — избранные сцены папки (ActionFolder), 1..MaxFolderScenes, без повторов.
 	Scenes []string `json:"scenes,omitempty"`
 	// Plugin и PluginAction — id плагина и его объявленного действия. Что именно вызвать (маршрут, тело), решает сервер по Meta плагина;
@@ -229,6 +232,10 @@ func (l *Layout) Validate() error {
 			case ActionScene:
 				if !validSceneName(t.Action.Scene) {
 					return fmt.Errorf("tile %q: scene name 1..200 characters", t.ID)
+				}
+			case ActionMute:
+				if !validSceneName(t.Action.Input) {
+					return fmt.Errorf("tile %q: audio input name 1..200 characters", t.ID)
 				}
 			case ActionFolder:
 				if err := validFolder(t.Action.Scenes); err != nil {

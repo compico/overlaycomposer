@@ -156,23 +156,46 @@ export function mountDeck(refs: DeckRefs, model: DeckModel, ports: DeckPorts): {
     // «Что делает плитка»: сцена OBS или действие плагина (их объявляют установленные wasm-плагины). Выбор кодируется строкой value.
     const isPlugin = t.action.type === "plugin";
     const isFolder = t.action.type === "folder";
-    const current = isPlugin ? `plugin:${t.action.plugin}:${t.action.pluginAction}` : isFolder ? "folder" : "scene";
+    const isMute = t.action.type === "mute";
+    const current = isPlugin ? `plugin:${t.action.plugin}:${t.action.pluginAction}` : isFolder ? "folder" : isMute ? "mute" : "scene";
     const known = st.pluginActions.some((a) => `plugin:${a.plugin}:${a.id}` === current);
     const byPlugin = new Map<string, typeof st.pluginActions>();
     for (const a of st.pluginActions) byPlugin.set(a.plugin, [...(byPlugin.get(a.plugin) ?? []), a]);
     const what = el("select", { style: "width:100%" },
       el("option", { value: "scene", selected: current === "scene" }, "Switch OBS scene"),
       el("option", { value: "folder", selected: isFolder }, "Folder of scenes"),
+      el("option", { value: "mute", selected: isMute }, "Mute an audio source"),
       ...[...byPlugin.values()].map((list) => el("optgroup", { label: list[0].pluginName || list[0].plugin },
         ...list.map((a) => el("option", { value: `plugin:${a.plugin}:${a.id}`, selected: `plugin:${a.plugin}:${a.id}` === current }, a.title)))),
       // Плагин удалён или отключён: плитка остаётся, но честно говорит, что работать не будет.
       ...(isPlugin && !known ? [el("option", { value: current, selected: true }, `${t.action.plugin}: ${t.action.pluginAction} (plugin not available)`)] : []));
     what.addEventListener("change", () => {
       if (what.value === "folder") { model.updateTile(t.id, { folder: [t.action.scene || st.scenes[0] || ""].filter(Boolean) }); return; }
+      if (what.value === "mute") { model.updateTile(t.id, { mute: st.inputs[0] ?? "" }); return; }
       if (what.value === "scene") { model.updateTile(t.id, { scene: unusedScenes(layout, st.scenes)[0] ?? st.scenes[0] ?? "" }); return; }
       const a = st.pluginActions.find((x) => `plugin:${x.plugin}:${x.id}` === what.value);
       if (a) model.updateTile(t.id, { pluginAction: a });
     });
+    // Источник звука — из общего микшера OBS. Нет связи с OBS — имя вводят вручную (сервер проверит его при нажатии).
+    let input: HTMLInputElement | HTMLSelectElement | null = null;
+    if (isMute) {
+      const cur = t.action.input ?? "";
+      if (st.inputs.length === 0) {
+        input = el("input", { type: "text", value: cur, placeholder: "Audio source name", style: "width:100%" });
+      } else {
+        const names = !cur || st.inputs.includes(cur) ? st.inputs : [cur, ...st.inputs];
+        input = el("select", { style: "width:100%" },
+          ...(cur ? [] : [el("option", { value: "", selected: true }, "— choose a source —")]),
+          ...names.map((n) => el("option", { value: n, selected: n === cur }, n)));
+      }
+      const field = input;
+      field.addEventListener("change", () => model.updateTile(t.id, { mute: field.value }));
+    }
+    const muteHint = isMute
+      ? el("div", { class: "hint" }, st.inputs.length === 0
+        ? "The source list is unavailable (OBS is not connected?). Type the source name exactly as in the OBS mixer."
+        : "Tap to mute or unmute this source in the OBS mixer. The tile is highlighted while the source is muted.")
+      : "";
     const pluginHint = isPlugin
       ? el("div", { class: "hint" }, known ? "Runs when the plugin is running. A plugin that isn't running makes the tile show an error." : "Install or enable the plugin, or pick another function.")
       : "";
@@ -215,7 +238,7 @@ export function mountDeck(refs: DeckRefs, model: DeckModel, ports: DeckPorts): {
       el("label", {}, "Title"), label,
       el("h3", {}, "Function"),
       el("label", {}, "What it does"), what,
-      ...(isPlugin ? [pluginHint] : isFolder ? [folderBox] : [el("label", {}, "Scene"), scene, sceneHint]),
+      ...(isPlugin ? [pluginHint] : isFolder ? [folderBox] : isMute ? [el("label", {}, "Audio source"), input!, muteHint] : [el("label", {}, "Scene"), scene, sceneHint]),
       ...(isFolder ? [] : [el("label", { class: "chk", style: "display:flex;gap:6px;align-items:center;margin-top:8px" }, confirmBox, "Ask for a second tap (risky actions)")]),
       el("h3", {}, "Look"),
       el("label", {}, "Size"), sizes,

@@ -51,6 +51,7 @@ func TestValidateAcceptsGoodLayoutAndRejectsBadOnes(t *testing.T) {
 		"чужая иконка":            func(l *Layout) { l.Groups[0].Tiles[0].Icon = "skull" },
 		"неизвестное действие":    func(l *Layout) { l.Groups[0].Tiles[0].Action.Type = "exec" },
 		"пустая сцена":            func(l *Layout) { l.Groups[0].Tiles[0].Action.Scene = "" },
+		"mute без источника":      func(l *Layout) { l.Groups[0].Tiles[0].Action = Action{Type: ActionMute} },
 		"плагин без действия":     func(l *Layout) { l.Groups[0].Tiles[0].Action = Action{Type: ActionPlugin, Plugin: "music"} },
 		"действие без плагина":    func(l *Layout) { l.Groups[0].Tiles[0].Action = Action{Type: ActionPlugin, PluginAction: "pause"} },
 		"id плагина со слэшем": func(l *Layout) {
@@ -308,5 +309,19 @@ func TestRenderFolderHasOverlayAndHighlight(t *testing.T) {
 		if !strings.Contains(s, want) {
 			t.Errorf("нет %q", want)
 		}
+	}
+}
+
+func TestMuteTileIsValidAndHighlightedWhenMuted(t *testing.T) {
+	l := Layout{Groups: []Group{{ID: "g", Tiles: []Tile{
+		{ID: "mic", W: 1, H: 1, Icon: "mic", Action: Action{Type: ActionMute, Input: "Mic/Aux"}},
+	}}}}
+	if err := l.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	on, _ := Render(ViewData{Layout: l, Online: true, Muted: map[string]bool{"Mic/Aux": true}})
+	off, _ := Render(ViewData{Layout: l, Online: true})
+	if !strings.Contains(string(on), "c-steel on") || strings.Contains(string(off), "c-steel on") {
+		t.Fatal("плитка mute подсвечена только пока источник заглушён")
 	}
 }

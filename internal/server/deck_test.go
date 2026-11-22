@@ -26,11 +26,27 @@ type fakeDeckObs struct {
 	scenes    []string
 	set       []string
 	err       error
+	inputs    []string
+	muted     map[string]bool // имя → заглушён; ключи — известные аудиоисточники
+	toggled   []string
 }
 
-func (f *fakeDeckObs) Connected() bool      { return f.connected }
-func (f *fakeDeckObs) CurrentScene() string { return f.scene }
-func (f *fakeDeckObs) Scenes() []string     { return f.scenes }
+func (f *fakeDeckObs) Connected() bool       { return f.connected }
+func (f *fakeDeckObs) CurrentScene() string  { return f.scene }
+func (f *fakeDeckObs) Scenes() []string      { return f.scenes }
+func (f *fakeDeckObs) AudioInputs() []string { return f.inputs }
+func (f *fakeDeckObs) Muted(n string) bool   { return f.muted[n] }
+func (f *fakeDeckObs) ToggleMute(n string) error {
+	if f.err != nil {
+		return f.err
+	}
+	if _, ok := f.muted[n]; !ok {
+		return obs.ErrUnknownInput
+	}
+	f.muted[n] = !f.muted[n]
+	f.toggled = append(f.toggled, n)
+	return nil
+}
 func (f *fakeDeckObs) SetScene(n string) error {
 	if f.err != nil {
 		return f.err
@@ -371,5 +387,39 @@ func TestDeckFolderPressAcceptsOnlyListedScenes(t *testing.T) {
 	o.scene = "Secret"
 	if st := s.deckStateNow(); len(st.On) != 0 || len(st.Text) != 0 {
 		t.Fatalf("сцена не из папки: %+v", st)
+	}
+}
+
+func TestDeckMuteTileTogglesOnlyKnownAudioInput(t *testing.T) {
+	s, o := deckEnv(t)
+	o.inputs = []string{"Mic"}
+	o.muted = map[string]bool{"Mic": false}
+	layout := `{"rev":0,"groups":[{"id":"main","tiles":[
+ {"id":"mic","x":0,"y":0,"w":1,"h":1,"icon":"mic","action":{"type":"mute","input":"Mic"}},
+ {"id":"ghost","x":1,"y":0,"w":1,"h":1,"action":{"type":"mute","input":"Gone"}}]}]}`
+	if code, b, _ := deckReq(t, s, "PUT", "/api/deck/layout", layout, true); code != 200 {
+		t.Fatalf("save: %d %s", code, b)
+	}
+	press := func(id string) int {
+		code, _, _ := deckReq(t, s, "POST", "/api/deck/press", `{"tile":"`+id+`"}`, true)
+		return code
+	}
+	if code := press("mic"); code != 200 || !reflect.DeepEqual(o.toggled, []string{"Mic"}) {
+		t.Fatalf("mute: %d %v", code, o.toggled)
+	}
+	if code := press("ghost"); code != 404 {
+		t.Fatalf("неизвестный источник должен давать 404, получили %d", code)
+	}
+	// заглушённый источник подсвечивает плитку и на странице, и в состоянии для устройств
+	_, html, _ := deckReq(t, s, "GET", "/deck", "", false)
+	if !strings.Contains(html, `data-id="mic"`) || !strings.Contains(html, "c-steel on") {
+		t.Fatalf("плитка mute должна быть подсвечена: %s", html)
+	}
+	if st := s.deckStateNow(); !reflect.DeepEqual(st.On, []string{"mic"}) {
+		t.Fatalf("on: %v", st.On)
+	}
+	code, b, _ := deckReq(t, s, "GET", "/api/deck/layout", "", false)
+	if code != 200 || !strings.Contains(b, `"inputs":["Mic"]`) {
+		t.Fatalf("список источников в ответе раскладки: %d %s", code, b)
 	}
 }

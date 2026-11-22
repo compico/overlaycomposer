@@ -12,7 +12,7 @@ export interface DeckTile {
   color?: string;
   icon?: string;
   confirm?: boolean;
-  action: { type: string; scene?: string; scenes?: string[]; plugin?: string; pluginAction?: string };
+  action: { type: string; scene?: string; scenes?: string[]; input?: string; plugin?: string; pluginAction?: string };
 }
 
 /** Действие wasm-плагина, которое можно повесить на плитку (список даёт сервер по Meta.Actions установленных плагинов). */
@@ -24,7 +24,7 @@ export const MAX_FOLDER_SCENES = 8;
 /** Название плитки для списков и подсказок: подпись, иначе сцена, иначе папка, иначе плагин и действие. */
 export function tileTitle(t: DeckTile): string {
   if (!t.label && t.action.type === "folder") return `Folder (${t.action.scenes?.length ?? 0})`;
-  return t.label || t.action.scene || (t.action.plugin ? `${t.action.plugin}: ${t.action.pluginAction ?? ""}` : "");
+  return t.label || t.action.scene || t.action.input || (t.action.plugin ? `${t.action.plugin}: ${t.action.pluginAction ?? ""}` : "");
 }
 
 export interface DeckGroup {
@@ -151,6 +151,8 @@ export type TilePatch = Partial<Pick<DeckTile, "label" | "color" | "icon" | "con
   folder?: string[];
   /** Повесить действие плагина: пустые подпись и значок заполняются из объявления, опасное действие включает «второе касание». */
   pluginAction?: PluginAction;
+  /** Сделать плитку «mute»: имя аудиоисточника OBS (может быть пустым, пока не выбран). Пустые подпись и значок заполняются. */
+  mute?: string;
 };
 
 /** Изменить свойства плитки. Размер меняется, только если новая плитка помещается (иначе null). Пустые значения убираются из данных. */
@@ -179,6 +181,12 @@ export function updateTile(l: DeckLayout, id: string, patch: TilePatch, grid: De
     tile.action = { type: "folder", scenes };
     delete tile.confirm; // папка только открывает список: второе касание ей не нужно
     if (!tile.label) tile.label = "Scenes";
+  }
+  if (patch.mute !== undefined) {
+    const input = patch.mute.trim();
+    tile.action = { type: "mute", input };
+    if (!tile.label && input) tile.label = [...input].slice(0, MAX_LABEL).join("");
+    if (!tile.icon) tile.icon = "mic";
   }
   const a = patch.pluginAction;
   if (a) {
