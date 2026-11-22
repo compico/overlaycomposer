@@ -43,6 +43,7 @@ type Client struct {
 	conn      *websocket.Conn
 	reqSeq    int
 	pending   map[string]chan map[string]any
+	mix       mixer // микшер (meters.go)
 
 	writeMu sync.Mutex // запись в сокет — только по одному
 
@@ -262,8 +263,11 @@ func (c *Client) session(ctx context.Context, url, password string) (identified 
 			c.setConnected(true)
 			slog.Info("obs: connected")
 			go c.afterIdentified()
+			go c.resubscribeMixer()
 		case 5: // событие
-			c.handleEvent(m.D)
+			if !c.mixerEvent(m.D) {
+				c.handleEvent(m.D)
+			}
 		case 7: // ответ на запрос
 			c.deliver(m.D)
 		}

@@ -191,6 +191,7 @@ func (s *Server) routes() {
 	s.twitchRoutes()
 	s.storageRoutes()
 	s.deckRoutes()
+	s.mixerPocRoutes()
 	s.marketRoutes()
 	s.settingsRoutes()
 	s.cloudRoutes()
