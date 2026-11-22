@@ -10,7 +10,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 )
 
-func TestMixerPocIsLocalOnlyAndSelfContained(t *testing.T) {
+func TestMixerPocPageIsSelfContainedAndWebSocketNeedsUpgrade(t *testing.T) {
 	s := &Server{}
 	s.app = fiber.New()
 	s.mixerPocRoutes()
@@ -22,12 +22,8 @@ func TestMixerPocIsLocalOnlyAndSelfContained(t *testing.T) {
 	defer s.app.Shutdown()
 	base := "http://" + ln.Addr().String()
 
-	get := func(path string, hdr map[string]string) (*http.Response, string) {
-		req, _ := http.NewRequest("GET", base+path, nil)
-		for k, v := range hdr {
-			req.Header.Set(k, v)
-		}
-		resp, err := http.DefaultClient.Do(req)
+	get := func(path string) (*http.Response, string) {
+		resp, err := http.Get(base + path)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -35,17 +31,15 @@ func TestMixerPocIsLocalOnlyAndSelfContained(t *testing.T) {
 		b, _ := io.ReadAll(resp.Body)
 		return resp, string(b)
 	}
-	resp, body := get("/mixer-poc", nil)
+	resp, body := get("/mixer-poc")
 	if resp.StatusCode != 200 || !strings.Contains(body, "/api/mixer-poc/ws") || !strings.Contains(resp.Header.Get("Content-Security-Policy"), "default-src 'none'") {
 		t.Fatalf("%d %v", resp.StatusCode, resp.Header)
 	}
-	if strings.Contains(body, "http://") || strings.Contains(body, "https://") && !strings.Contains(body, `"https:"`) {
+	if strings.Contains(body, "http://") || strings.Contains(body, "https://") {
 		t.Fatal("страница не должна ходить на внешние адреса")
 	}
-	if resp, _ := get("/mixer-poc", map[string]string{"X-Forwarded-For": "10.0.0.5"}); resp.StatusCode != 403 {
-		t.Fatalf("через прокси страница недоступна: %d", resp.StatusCode)
-	}
-	if resp, _ := get("/api/mixer-poc/ws", map[string]string{"X-Forwarded-For": "10.0.0.5"}); resp.StatusCode != 403 {
-		t.Fatalf("WebSocket только локально: %d", resp.StatusCode)
+	// доступ чужим закрывает общий authGuard (как для /deck), а обычный GET без апгрейда до WebSocket не принимается
+	if resp, _ := get("/api/mixer-poc/ws"); resp.StatusCode != fiber.StatusUpgradeRequired {
+		t.Fatalf("WebSocket без апгрейда: %d", resp.StatusCode)
 	}
 }

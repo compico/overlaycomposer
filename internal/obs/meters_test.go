@@ -93,3 +93,25 @@ func TestVolumeIsNeverRaisedAboveZero(t *testing.T) {
 		}
 	}
 }
+
+func TestMonitorModesCycleAndFollowEvents(t *testing.T) {
+	if nextMonitor("none") != "both" || nextMonitor("both") != "only" || nextMonitor("only") != "none" || nextMonitor("?") != "none" {
+		t.Fatal("порядок: выкл → наушники и эфир → только наушники → выкл")
+	}
+	for _, m := range []string{"none", "both", "only"} {
+		if monitorFromOBS(monitorToOBS(m)) != m {
+			t.Fatalf("%s не переживает преобразование", m)
+		}
+	}
+	c := New("", "")
+	var last []MixerInput
+	defer c.WatchMixer(func(in []MixerInput) { last = in })()
+	a := levels(0.5)
+	a["inputName"] = "Music"
+	c.mixerEvent(meterEvent(a))
+	c.mixerEvent(map[string]any{"eventType": "InputAudioMonitorTypeChanged", "eventData": map[string]any{"inputName": "Music", "monitorType": "OBS_MONITORING_TYPE_MONITOR_ONLY"}})
+	c.mixerEvent(meterEvent(a))
+	if len(last) != 1 || last[0].Monitor != "only" {
+		t.Fatalf("%+v", last)
+	}
+}

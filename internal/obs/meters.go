@@ -20,12 +20,49 @@ type MixerInput struct {
 	Peak     float64 `json:"peak"`
 	Muted    bool    `json:"muted"`
 	VolumeDB float64 `json:"volumeDb"`
+	// Monitor — прослушивание в наушниках: none — выключено, both — слышно и в наушниках, и в эфире, only — только в наушниках.
+	Monitor string `json:"monitor"`
 }
 
 type inputState struct {
 	muted   bool
 	volDB   float64
-	settled bool // начальные mute и громкость уже запрошены у OBS
+	monitor string // none | both | only
+	settled bool   // начальные mute, громкость и прослушивание уже запрошены у OBS
+}
+
+// Типы прослушивания OBS и их короткие имена для страницы.
+var monitorTypes = map[string]string{
+	"OBS_MONITORING_TYPE_NONE":               "none",
+	"OBS_MONITORING_TYPE_MONITOR_ONLY":       "only",
+	"OBS_MONITORING_TYPE_MONITOR_AND_OUTPUT": "both",
+}
+
+func monitorFromOBS(t string) string {
+	if m, ok := monitorTypes[t]; ok {
+		return m
+	}
+	return "none"
+}
+
+func monitorToOBS(m string) string {
+	for k, v := range monitorTypes {
+		if v == m {
+			return k
+		}
+	}
+	return "OBS_MONITORING_TYPE_NONE"
+}
+
+// nextMonitor — порядок переключения кнопкой: выкл → наушники и эфир → только наушники → выкл.
+func nextMonitor(m string) string {
+	switch m {
+	case "none":
+		return "both"
+	case "both":
+		return "only"
+	}
+	return "none"
 }
 
 type mixer struct {
@@ -140,6 +177,14 @@ func (c *Client) mixerEvent(d map[string]any) bool {
 			st.muted = muted
 		}
 		c.mix.mu.Unlock()
+	case "InputAudioMonitorTypeChanged":
+		name, _ := data["inputName"].(string)
+		t, _ := data["monitorType"].(string)
+		c.mix.mu.Lock()
+		if st := c.mix.state[name]; st != nil {
+			st.monitor = monitorFromOBS(t)
+		}
+		c.mix.mu.Unlock()
 	case "InputVolumeChanged":
 		name, _ := data["inputName"].(string)
 		db, _ := data["inputVolumeDb"].(float64)
@@ -179,14 +224,14 @@ func (c *Client) meters(data map[string]any) {
 		}
 		st := m.state[name]
 		if st == nil {
-			st = &inputState{}
+			st = &inputState{monitor: "none"}
 			m.state[name] = st
 		}
 		if !st.settled {
 			st.settled = true
 			load = append(load, name)
 		}
-		list = append(list, MixerInput{Name: name, Peak: dbFromMul(peak), Muted: st.muted, VolumeDB: st.volDB})
+		list = append(list, MixerInput{Name: name, Peak: dbFromMul(peak), Muted: st.muted, VolumeDB: st.volDB, Monitor: st.monitor})
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i].Name < list[j].Name })
 	m.active = list
@@ -205,8 +250,9 @@ func (c *Client) meters(data map[string]any) {
 
 // loadInputState читает у OBS начальные mute и громкость источника, который впервые появился среди активных.
 func (c *Client) loadInputState(name string) {
-	var muted, hasMute, hasVol bool
+	var muted, hasMute, hasVol, hasMon bool
 	var db float64
+	var mon string
 	if r, ok := c.Request("GetInputMute", map[string]any{"inputName": name}); ok {
 		muted, _ = r["inputMuted"].(bool)
 		hasMute = true
@@ -214,6 +260,10 @@ func (c *Client) loadInputState(name string) {
 	if r, ok := c.Request("GetInputVolume", map[string]any{"inputName": name}); ok {
 		db, _ = r["inputVolumeDb"].(float64)
 		hasVol = true
+	}
+	if r, ok := c.Request("GetInputAudioMonitorType", map[string]any{"inputName": name}); ok {
+		t, _ := r["monitorType"].(string)
+		mon, hasMon = monitorFromOBS(t), true
 	}
 	c.mix.mu.Lock()
 	defer c.mix.mu.Unlock()
@@ -223,6 +273,9 @@ func (c *Client) loadInputState(name string) {
 		}
 		if hasVol {
 			st.volDB = db
+		}
+		if hasMon {
+			st.monitor = mon
 		}
 	}
 }
@@ -271,6 +324,23 @@ func (c *Client) ToggleInputMute(name string) error {
 	}
 	if _, ok := c.Request("ToggleInputMute", map[string]any{"inputName": name}); !ok {
 		return errors.New("OBS did not confirm the mute change")
+	}
+	return nil
+}
+
+// CycleInputMonitor переключает прослушивание активного источника по текущему состоянию в OBS (см. nextMonitor).
+func (c *Client) CycleInputMonitor(name string) error {
+	if !c.mixerActive(name) {
+		return ErrInputNotActive
+	}
+	c.mix.mu.Lock()
+	cur := "none"
+	if st := c.mix.state[name]; st != nil {
+		cur = st.monitor
+	}
+	c.mix.mu.Unlock()
+	if _, ok := c.Request("SetInputAudioMonitorType", map[string]any{"inputName": name, "monitorType": monitorToOBS(nextMonitor(cur))}); !ok {
+		return errors.New("OBS did not confirm the monitoring change")
 	}
 	return nil
 }
