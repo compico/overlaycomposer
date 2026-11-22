@@ -91,6 +91,7 @@ type Server struct {
 	cloudProv   cloud.Provider
 	cloudDir    string
 	cloudLoaded bool
+	kvImpl      kvStore // подмена БД настроек в тестах (см. snapshots.go)
 	driveOnce   sync.Once
 	drive       *cloud.Drive
 

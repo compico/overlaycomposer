@@ -432,6 +432,12 @@ func run() int {
 	if r := h.NotifyStopping(stopGrace); r.Waited {
 		slog.Info("плагины уведомлены об остановке", "pages", r.Notified, "noAnswer", r.TimedOut)
 	}
+	// Автоснимок настроек при закрытии (если включён и настройки изменились); не дольше пары секунд.
+	{
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		srv.AutoSnapshot(ctx)
+		cancel()
+	}
 	obsClient.Stop()
 	srv.Shutdown()
 	slog.Info("остановлено")
