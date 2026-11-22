@@ -59,6 +59,9 @@ func (s *Server) deckStateNow() deckStateData {
 	if st.Online {
 		for _, g := range l.Groups {
 			for _, t := range g.Tiles {
+				if t.Action.Type == deck.ActionMute && s.deckObs().Muted(t.Action.Input) {
+					st.On = append(st.On, t.ID)
+				}
 				if t.Action.HasScene(st.Scene) {
 					st.On = append(st.On, t.ID)
 					if t.Action.Type == deck.ActionFolder { // на плитке папки — название активной сцены

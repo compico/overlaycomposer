@@ -176,3 +176,16 @@ test("updateTile: папка со сценами", () => {
   l = updateTile(l, "t1", { scene: "Game" }, grid)!;
   assert.deepEqual(l.groups[0].tiles[0].action, { type: "scene", scene: "Game" });
 });
+
+test("плитка mute: источник, подпись и значок по умолчанию, пользовательские не затираются", () => {
+  let l = addTile(base(), "g1", S11, { scene: "Game", label: "" }, grid)!.layout;
+  l = updateTile(l, "t1", { mute: " Mic/Aux " }, grid)!;
+  let t1 = l.groups[0].tiles[0];
+  assert.deepEqual(t1.action, { type: "mute", input: "Mic/Aux" });
+  assert.deepEqual([t1.label, t1.icon], ["Mic/Aux", "mic"]);
+  l = updateTile(l, "t1", { label: "Mic", icon: "ban" }, grid)!;
+  l = updateTile(l, "t1", { mute: "Desktop Audio" }, grid)!;
+  t1 = l.groups[0].tiles[0];
+  assert.deepEqual([t1.label, t1.icon, t1.action.input], ["Mic", "ban", "Desktop Audio"]);
+  assert.equal(tileTitle({ ...t1, label: undefined }), "Desktop Audio");
+});

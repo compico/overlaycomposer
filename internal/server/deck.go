@@ -34,6 +34,9 @@ type deckOBS interface {
 	CurrentScene() string
 	Scenes() []string
 	SetScene(name string) error
+	AudioInputs() []string
+	Muted(name string) bool
+	ToggleMute(name string) error
 }
 
 // deckPlugins — то, что панели нужно от wasm-плагинов (в тестах подменяется): список и вызов маршрута.
@@ -129,6 +132,14 @@ func (s *Server) deckPage(c fiber.Ctx) error {
 	v := deck.ViewData{Layout: l}
 	if o := s.deckObs(); o != nil {
 		v.Online, v.Scene = o.Connected(), o.CurrentScene()
+		v.Muted = map[string]bool{}
+		for _, g := range l.Groups {
+			for _, t := range g.Tiles {
+				if t.Action.Type == deck.ActionMute && o.Muted(t.Action.Input) {
+					v.Muted[t.Action.Input] = true
+				}
+			}
+		}
 	}
 	out, err := deck.Render(v)
 	if err != nil {
@@ -155,6 +166,21 @@ func (s *Server) deckSetScene(c fiber.Ctx, scene string) error {
 	if err := o.SetScene(scene); err != nil {
 		if errors.Is(err, obs.ErrUnknownScene) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "scene not found in OBS"})
+		}
+		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{"ok": true})
+}
+
+// deckToggleMute переключает mute источника звука; имя уже проверено по сохранённой раскладке.
+func (s *Server) deckToggleMute(c fiber.Ctx, input string) error {
+	o := s.deckObs()
+	if o == nil || !o.Connected() {
+		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "OBS is not connected"})
+	}
+	if err := o.ToggleMute(input); err != nil {
+		if errors.Is(err, obs.ErrUnknownInput) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "audio input not found in OBS"})
 		}
 		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -192,6 +218,8 @@ func (s *Server) deckPress(c fiber.Ctx) error {
 		return s.deckSetScene(c, b.Scene)
 	case deck.ActionPlugin:
 		return s.deckPluginPress(c, t)
+	case deck.ActionMute:
+		return s.deckToggleMute(c, t.Action.Input)
 	default:
 		return bad(c, "this tile has no press action")
 	}
@@ -269,11 +297,13 @@ func (s *Server) deckPluginActions() []fiber.Map {
 func (s *Server) deckGetLayout(c fiber.Ctx) error {
 	l, saved := s.deckLayout()
 	var scenes []string
+	inputs := []string{}
 	if o := s.deckObs(); o != nil {
 		scenes = o.Scenes()
+		inputs = append(inputs, o.AudioInputs()...)
 	}
 	return c.JSON(fiber.Map{
-		"layout": l, "saved": saved, "scenes": scenes, "palette": deck.Palette, "icons": deck.Icons, "pluginActions": s.deckPluginActions(),
+		"layout": l, "saved": saved, "scenes": scenes, "inputs": inputs, "palette": deck.Palette, "icons": deck.Icons, "pluginActions": s.deckPluginActions(),
 		"grid": fiber.Map{"rows": deck.Rows, "maxGroupCols": deck.MaxGroupCols, "sizes": deck.Sizes},
 	})
 }

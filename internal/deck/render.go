@@ -17,6 +17,8 @@ type ViewData struct {
 	Layout Layout
 	Scene  string // активная сцена OBS (подсветка)
 	Online bool   // есть ли связь с OBS
+	// Muted — заглушённые аудиоисточники OBS: плитки mute для них подсвечены.
+	Muted map[string]bool
 }
 
 type tileView struct {
@@ -81,7 +83,7 @@ func Render(v ViewData) ([]byte, error) {
 			if tv.Folder {
 				out.Folders = append(out.Folders, folderView{ID: t.ID, Scenes: t.Action.Scenes})
 			}
-			tv.On = v.Online && t.Action.HasScene(v.Scene)
+			tv.On = v.Online && (t.Action.HasScene(v.Scene) || (t.Action.Type == ActionMute && v.Muted[t.Action.Input]))
 			gv.Tiles = append(gv.Tiles, tv)
 		}
 		out.Groups = append(out.Groups, gv)
