@@ -295,3 +295,20 @@ func TestAutosaveOnlyWhenChanged(t *testing.T) {
 		t.Fatal("отпечаток зависит от порядка или времени создания")
 	}
 }
+
+func TestWriteBackupSameInstantDoesNotOverwrite(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "backups")
+	f := File{Format: Format, Sections: map[string]json.RawMessage{}, Checksums: map[string]string{}}
+	at := time.Date(2026, 11, 22, 6, 22, 28, 643_000_000, time.UTC)
+	seen := map[string]bool{}
+	for i := 0; i < 3; i++ {
+		p, err := WriteBackup(dir, f, at, 0, KindAuto)
+		if err != nil || seen[p] {
+			t.Fatalf("снимок %d: %q %v (повтор имени: %v)", i, p, err, seen[p])
+		}
+		seen[p] = true
+	}
+	if list, _ := ListBackups(dir); len(list) != 3 {
+		t.Fatalf("файлов %d, ожидалось 3", len(list))
+	}
+}
