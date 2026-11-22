@@ -17,7 +17,7 @@ export function connectLive(opts: LiveOptions): LiveConnection {
   let ws: WebSocket | null = null;
   const connect = () => {
     ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
-    ws.onopen = () => opts.onOpen?.();
+    ws.onopen = () => opts.onOpen?.(); // и при переподключении: за время разрыва события могли быть пропущены
     ws.onmessage = async (ev) => {
       const msg = JSON.parse(ev.data) as ServerMessage;
       if (opts.intercept?.(msg)) return;

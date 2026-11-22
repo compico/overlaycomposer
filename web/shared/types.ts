@@ -185,6 +185,8 @@ export type ServerMessage =
   | { type: "scene:changed"; scene: string; layoutId: string | null }
   | { type: "layout:updated"; layoutId: string }
   | { type: "layouts:changed" }
+  /** Изменилось состояние сервера, которое редактор читает по REST (без данных: их отдают защищённые маршруты). */
+  | { type: "state:changed"; topic: "config" | "devices" | "twitch" }
   | { type: "sources:changed" };
 
 export type ClientMessage =

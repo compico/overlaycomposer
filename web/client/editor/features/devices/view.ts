@@ -50,6 +50,25 @@ export function mountDevices(refs: DevicesRefs, model: DevicesModel, ports: Devi
         : "Pairing is off while the server listens on this computer only. To connect another device (tablet, phone), set “Listen on” to “All network interfaces”, Save and restart.");
   }
 
+  // Обратный отсчёт считаем на месте: по сети его не опрашиваем. Когда код истёк — один раз запрашиваем новый.
+  let leftTimer: ReturnType<typeof setInterval> | undefined;
+  function paintLeft(v: DevicesInfo) {
+    clearInterval(leftTimer);
+    if (!v.remoteEnabled) { refs.left.textContent = ""; return; }
+    const until = Date.now() + v.expiresIn * 1000;
+    const tick = () => {
+      const s = Math.max(0, Math.ceil((until - Date.now()) / 1000));
+      refs.left.textContent = `changes in ${s}s`;
+      if (s === 0) {
+        clearInterval(leftTimer);
+        // Новый код запрашиваем, только пока настройки открыты (и не зацикливаемся, если сервер отдал код с нулевым сроком).
+        if (v.expiresIn > 0 && refs.box.closest("dialog")?.open) void model.load();
+      }
+    };
+    tick();
+    if (until > Date.now()) leftTimer = setInterval(tick, 1000);
+  }
+
   model.subscribe((v) => {
     view = v;
     refs.box.hidden = !v;
@@ -58,7 +77,7 @@ export function mountDevices(refs: DevicesRefs, model: DevicesModel, ports: Devi
     if (!v.remoteEnabled && codeShown) setCodeShown(false);
     paintCode();
     paintHint();
-    refs.left.textContent = v.remoteEnabled ? `changes in ${v.expiresIn}s` : "";
+    paintLeft(v);
     refs.url.textContent = v.pairUrl.replace("127.0.0.1", location.hostname === "127.0.0.1" || location.hostname === "localhost" ? "<this-computer-ip>" : location.hostname);
     refs.list.replaceChildren(...v.devices.map((d) => {
       const seen = new Date(d.lastSeen).toLocaleString();

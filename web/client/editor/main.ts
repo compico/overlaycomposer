@@ -395,7 +395,8 @@ const twitchView = mountTwitch(
 );
 
 mountTwitchBadge($("twitchBadge"), twitchModel, () => $("settingsBtn").click());
-// Проверяем при старте и раз в 5 минут: токен может «протухнуть» уже во время работы.
+// Проверяем при старте и раз в 5 минут: токен может «протухнуть» уже во время работы (это не событие сервера).
+// Остальные изменения приходят по /ws (state:changed), опроса настроек нет.
 void twitchModel.load();
 setInterval(() => void twitchModel.load(), 5 * 60_000);
 
@@ -409,6 +410,7 @@ const devicesView = mountDevices(
   { ui: { toast, fail }, wantsRemote: () => $<HTMLSelectElement>("cfgHost").value !== "127.0.0.1" },
 );
 
+const configModel = createConfigModel(api);
 const settings = mountConfig(
   {
     openBtn: $("settingsBtn"), obsBadge: $("obsBadge"), dialog: $<HTMLDialogElement>("settingsDialog"), status: $("cfgStatus"),
@@ -418,7 +420,7 @@ const settings = mountConfig(
     host: $<HTMLSelectElement>("cfgHost"), hostWarn: $("cfgHostWarn"), port: $<HTMLInputElement>("cfgPort"),
     saveBtn: $("cfgSaveBtn"), reconnectBtn: $("cfgReconnectBtn"),
   },
-  createConfigModel(api),
+  configModel,
   {
     ui: { toast, fail },
     onOpen() {
@@ -428,7 +430,6 @@ const settings = mountConfig(
       twitchView.resetForm();
       void twitchModel.load();
     },
-    onTick() { void devicesModel.load(); void twitchModel.load(); },
     onClose() { devicesView.hideCode(); },
     onHostChange() { devicesView.repaintHint(); },
     onObsInfo: applyObsInfo,
@@ -532,6 +533,12 @@ function connectWs() {
   const handle = createLiveHandler({
     setActive: (id) => editor.setActive(id),
     obs: applyObsInfo,
+    stateChanged: (topic) => {
+      const open = $<HTMLDialogElement>("settingsDialog").open;
+      if (topic === "twitch") void twitchModel.load(); // бейдж в шапке нужен и при закрытых настройках
+      else if (open && topic === "config") void configModel.refresh();
+      else if (open && topic === "devices") void devicesModel.load();
+    },
     scene: (name) => obsStatus.setScene(name),
     loadLayouts, loadSources,
     reloadCurrent: () => editor.reloadCurrent(),
@@ -540,7 +547,12 @@ function connectWs() {
   live = connectLive({
     intercept: (m) => pluginHost.onServerMessage(m as unknown as { type: string }),
     handle,
-    onOpen: () => pluginHost.onConnected(),
+    onOpen: () => {
+      pluginHost.onConnected();
+      // После (пере)подключения события могли потеряться — один раз перечитываем то, что видно на экране.
+      void twitchModel.load();
+      if ($<HTMLDialogElement>("settingsDialog").open) { void configModel.refresh(); void devicesModel.load(); }
+    },
   });
 }
 

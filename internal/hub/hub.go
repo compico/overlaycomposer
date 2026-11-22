@@ -115,6 +115,11 @@ type sceneChangedMsg struct {
 	LayoutID *string `json:"layoutId"`
 }
 
+type stateMsg struct {
+	Type  string `json:"type"`
+	Topic string `json:"topic"`
+}
+
 type layoutMsg struct {
 	Type     string `json:"type"`
 	LayoutID string `json:"layoutId,omitempty"`
@@ -143,6 +148,12 @@ func (h *Hub) Broadcast(msg any) {
 	h.mu.Lock()
 	h.broadcastLocked(msg)
 	h.mu.Unlock()
+}
+
+// StateChanged сообщает редактору, что изменилось состояние на сервере (topic: config, devices, twitch).
+// В сообщении нет данных — редактор сам запрашивает их через защищённые REST-маршруты, поэтому рассылка всем клиентам /ws ничего не раскрывает.
+func (h *Hub) StateChanged(topic string) {
+	h.Broadcast(stateMsg{Type: "state:changed", Topic: topic})
 }
 
 func (h *Hub) SourcesChanged() { h.Broadcast(layoutMsg{Type: "sources:changed"}) }
