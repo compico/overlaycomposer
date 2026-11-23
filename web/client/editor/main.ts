@@ -318,7 +318,7 @@ mountTabs($("settingsDialog"), (name) => { if (name === "backup") { void localSn
 const deck = mountDeck(
   { openBtn: $("deckBtn"), editorMain: document.querySelector("main:not(#deckMain)") as HTMLElement, deckMain: $("deckMain"),
     hideInDeck: [$("saveBtn"), $("dirtyBadge"), $("sceneBadge"), $("canvasSize")],
-    groupList: $("deckGroupList"), addGroupBtn: $("deckAddGroupBtn"), sizeBtns: $("deckSizeBtns"), tileList: $("deckTileList"),
+    groupList: $("deckGroupList"), addGroupBtn: $("deckAddGroupBtn"), addMixerBtn: $<HTMLButtonElement>("deckAddMixerBtn"), sizeBtns: $("deckSizeBtns"), tileList: $("deckTileList"),
     canvas: $("deckCanvas"), props: $("deckProps"), saveBtn: $<HTMLButtonElement>("deckSaveBtn"), resetBtn: $("deckResetBtn"), status: $("deckStatus") },
   createDeckModel(api),
   { ui: { toast, fail } },

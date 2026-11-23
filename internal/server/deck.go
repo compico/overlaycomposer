@@ -37,6 +37,11 @@ type deckOBS interface {
 	AudioInputs() []string
 	Muted(name string) bool
 	ToggleMute(name string) error
+	// Микшер (группа kind=mixer): уровни активных источников и команды им.
+	WatchMixer(fn func([]obs.MixerInput)) (stop func())
+	ToggleInputMute(name string) error
+	ToggleInputMonitor(name string) error
+	SetInputVolumeDB(name string, db float64) error
 }
 
 // deckPlugins — то, что панели нужно от wasm-плагинов (в тестах подменяется): список и вызов маршрута.

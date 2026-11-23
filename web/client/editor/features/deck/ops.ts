@@ -30,6 +30,9 @@ export function tileTitle(t: DeckTile): string {
 export interface DeckGroup {
   id: string;
   name?: string;
+  /** "mixer" — готовый микшер OBS (плиток нет, ширина — cols); пусто — группа плиток. */
+  kind?: "mixer";
+  cols?: number;
   tiles: DeckTile[];
 }
 
@@ -45,10 +48,17 @@ export const MAX_GROUPS = 16;
 export const MAX_TILES = 200;
 export const MAX_LABEL = 40;
 export const MAX_NAME = 24;
+export const MIXER_MIN_COLS = 4;
+export const MIXER_DEFAULT_COLS = 8;
+export const MAX_GROUP_COLS = 16;
 
 const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 
+export const isMixer = (g: DeckGroup): boolean => g.kind === "mixer";
+export const hasMixer = (l: DeckLayout): boolean => l.groups.some(isMixer);
+
 export function groupWidth(g: DeckGroup): number {
+  if (isMixer(g)) return g.cols ?? MIXER_DEFAULT_COLS;
   return g.tiles.reduce((w, t) => Math.max(w, t.x + t.w), 1);
 }
 
@@ -94,6 +104,24 @@ export function addGroup(l: DeckLayout, name = ""): { layout: DeckLayout; id: st
   return { layout, id };
 }
 
+/** Группа-микшер: в раскладке одна, плиток в ней нет. */
+export function addMixerGroup(l: DeckLayout): { layout: DeckLayout; id: string } | null {
+  if (l.groups.length >= MAX_GROUPS || hasMixer(l)) return null;
+  const layout = clone(l);
+  const id = nextId(layout, "g");
+  layout.groups.push({ id, name: "Mixer", kind: "mixer", cols: MIXER_DEFAULT_COLS, tiles: [] });
+  return { layout, id };
+}
+
+/** Ширина группы-микшера в клетках (по границам сервера). */
+export function setMixerCols(l: DeckLayout, id: string, cols: number): DeckLayout | null {
+  const layout = clone(l);
+  const g = layout.groups.find((x) => x.id === id);
+  if (!g || !isMixer(g) || !Number.isFinite(cols)) return null;
+  g.cols = Math.min(MAX_GROUP_COLS, Math.max(MIXER_MIN_COLS, Math.round(cols)));
+  return layout;
+}
+
 export function renameGroup(l: DeckLayout, id: string, name: string): DeckLayout | null {
   const layout = clone(l);
   const g = layout.groups.find((x) => x.id === id);
@@ -132,7 +160,7 @@ export function addTile(l: DeckLayout, groupId: string, size: DeckSize, init: Ti
   if (!grid.sizes.some((s) => s.w === size.w && s.h === size.h)) return null;
   const layout = clone(l);
   const g = layout.groups.find((x) => x.id === groupId);
-  if (!g) return null;
+  if (!g || isMixer(g)) return null;
   const spot = findSpot(g, size, grid);
   if (!spot) return null;
   const id = nextId(layout, "t");
@@ -211,7 +239,7 @@ export function moveTile(l: DeckLayout, id: string, toGroup: string, x: number, 
   const layout = clone(l);
   const found = findTile(layout, id);
   const dest = layout.groups.find((g) => g.id === toGroup);
-  if (!found || !dest) return null;
+  if (!found || !dest || isMixer(dest)) return null;
   const { group, tile } = found;
   if (!fits(dest, { x, y, w: tile.w, h: tile.h }, grid, id)) return null;
   if (group !== dest) {

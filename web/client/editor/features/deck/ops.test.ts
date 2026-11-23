@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  addGroup, addTile, findSpot, groupWidth, moveGroup, moveTile, removeGroup, removeTile, renameGroup, sizesFor, tileTitle, unusedScenes, updateTile,
+  addGroup, addMixerGroup, addTile, findSpot, groupWidth, hasMixer, moveGroup, moveTile, removeGroup, removeTile, renameGroup, setMixerCols, sizesFor, tileTitle, unusedScenes, updateTile, MAX_GROUP_COLS, MIXER_DEFAULT_COLS, MIXER_MIN_COLS,
   type DeckGrid, type DeckLayout,
 } from "./ops.ts";
 
@@ -188,4 +188,20 @@ test("плитка mute: источник, подпись и значок по �
   t1 = l.groups[0].tiles[0];
   assert.deepEqual([t1.label, t1.icon, t1.action.input], ["Mic", "ban", "Desktop Audio"]);
   assert.equal(tileTitle({ ...t1, label: undefined }), "Desktop Audio");
+});
+
+test("группа-микшер: одна на раскладку, ширина в пределах, плиток в ней нет", () => {
+  const l0 = base();
+  const a = addMixerGroup(l0)!;
+  const g = a.layout.groups.find((x) => x.id === a.id)!;
+  assert.deepEqual([g.kind, g.cols, g.tiles.length, groupWidth(g)], ["mixer", MIXER_DEFAULT_COLS, 0, MIXER_DEFAULT_COLS]);
+  assert.equal(hasMixer(a.layout), true);
+  assert.equal(addMixerGroup(a.layout), null, "второй микшер добавить нельзя");
+  assert.equal(setMixerCols(a.layout, a.id, 99)!.groups.find((x) => x.id === a.id)!.cols, MAX_GROUP_COLS);
+  assert.equal(setMixerCols(a.layout, a.id, 1)!.groups.find((x) => x.id === a.id)!.cols, MIXER_MIN_COLS);
+  assert.equal(setMixerCols(a.layout, a.id, NaN), null);
+  assert.equal(setMixerCols(a.layout, l0.groups[0].id, 6), null, "ширина — только у микшера");
+  assert.equal(addTile(a.layout, a.id, S11, { scene: "X" }, grid), null, "в микшер плитки не добавляются");
+  const t = addTile(a.layout, l0.groups[0].id, S11, { scene: "X" }, grid)!;
+  assert.equal(moveTile(t.layout, t.id, a.id, 0, 0, grid), null, "и не переносятся");
 });

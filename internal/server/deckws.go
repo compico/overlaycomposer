@@ -13,7 +13,7 @@ import (
 )
 
 // Состояние панели Deck по WebSocket: GET /api/deck/ws. Сервер сам шлёт кадр {"t":"state",…} при подключении и при каждом
-// изменении (сцена OBS, связь с OBS, ревизия раскладки), клиент ничего не отправляет. Без WebSocket (или если он упал) панель
+// изменении (сцена OBS, связь с OBS, ревизия раскладки); сообщения клиента — только для микшера (см. deckmixer.go). Без WebSocket (или если он упал) панель
 // продолжает работать на опросе GET /api/deck/state — тот же состав полей.
 //
 //	сервер → {"t":"state","rev":3,"online":true,"scene":"Game","on":["game"]}
@@ -202,7 +202,9 @@ func (s *Server) serveDeckWS(c *websocket.Conn) {
 	ch, cancel := s.deckHubOnce().subscribe()
 	defer cancel()
 
-	c.SetReadLimit(256)
+	mix := newDeckMixConn(s)
+	defer mix.close()
+	c.SetReadLimit(1024) // команды микшера несут имя источника (до 200 символов)
 	_ = c.SetReadDeadline(time.Now().Add(deckWSIdle))
 	c.SetPongHandler(func(string) error { return c.SetReadDeadline(time.Now().Add(deckWSIdle)) })
 	done := make(chan struct{})
@@ -220,6 +222,12 @@ func (s *Server) serveDeckWS(c *websocket.Conn) {
 					_ = c.Close()
 					return
 				}
+			case in := <-mix.ch:
+				_ = c.SetWriteDeadline(time.Now().Add(deckWSWrite))
+				if c.WriteMessage(websocket.TextMessage, mix.frame(in)) != nil {
+					_ = c.Close()
+					return
+				}
 			case <-t.C:
 				_ = c.SetWriteDeadline(time.Now().Add(deckWSWrite))
 				if c.WriteMessage(websocket.PingMessage, nil) != nil {
@@ -232,10 +240,12 @@ func (s *Server) serveDeckWS(c *websocket.Conn) {
 		}
 	}()
 	defer func() { close(done); wg.Wait() }()
-	for { // клиент ничего не шлёт; чтение нужно, чтобы замечать закрытие и обрабатывать pong
-		if _, _, err := c.ReadMessage(); err != nil {
+	for { // состояние клиент не запрашивает: чтение нужно, чтобы замечать закрытие, обрабатывать pong и команды микшера
+		_, raw, err := c.ReadMessage()
+		if err != nil {
 			return
 		}
 		_ = c.SetReadDeadline(time.Now().Add(deckWSIdle))
+		mix.handle(raw)
 	}
 }

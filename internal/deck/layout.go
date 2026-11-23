@@ -83,10 +83,20 @@ type Layout struct {
 
 // Group — набор плиток с заголовком. Плитки лежат на сетке группы: x от 0 вправо (ширина группы — по самой правой плитке), y от 0 вниз до Rows.
 type Group struct {
-	ID    string `json:"id"`
-	Name  string `json:"name,omitempty"`
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty"`
+	// Kind — вид группы: пусто — плитки, GroupMixer — готовый микшер OBS (плиток нет, ширина — Cols).
+	Kind  string `json:"kind,omitempty"`
+	Cols  int    `json:"cols,omitempty"`
 	Tiles []Tile `json:"tiles"`
 }
+
+// Группа-микшер: активные источники звука OBS с уровнями, mute, громкостью и прослушиванием. Не настраивается, в раскладке одна.
+const (
+	GroupMixer      = "mixer"
+	MixerMinCols    = 4
+	MixerDefaultCol = 8
+)
 
 type Tile struct {
 	ID    string `json:"id"` // уникален во всей раскладке: нажатие приходит с одним id
@@ -154,6 +164,9 @@ func validFolder(scenes []string) error {
 
 // Width — ширина группы в клетках (минимум 1, чтобы пустая группа оставалась видимой и её можно было наполнить).
 func (g Group) Width() int {
+	if g.Kind == GroupMixer {
+		return g.Cols
+	}
 	w := 1
 	for _, t := range g.Tiles {
 		if t.X+t.W > w {
@@ -187,7 +200,7 @@ func (l *Layout) Validate() error {
 	if len(l.Groups) == 0 || len(l.Groups) > MaxGroups {
 		return fmt.Errorf("groups: 1..%d", MaxGroups)
 	}
-	groups, tiles, total := map[string]bool{}, map[string]bool{}, 0
+	groups, tiles, total, mixers := map[string]bool{}, map[string]bool{}, 0, 0
 	for _, g := range l.Groups {
 		if !idRe.MatchString(g.ID) || groups[g.ID] {
 			return fmt.Errorf("group id %q: a-z, 0-9, -, up to 32 characters, unique", g.ID)
@@ -195,6 +208,24 @@ func (l *Layout) Validate() error {
 		groups[g.ID] = true
 		if utf8.RuneCountInString(g.Name) > MaxName || strings.ContainsAny(g.Name, "\r\n\t") {
 			return fmt.Errorf("group %q: name up to %d characters, one line", g.ID, MaxName)
+		}
+		switch g.Kind {
+		case "":
+			if g.Cols != 0 {
+				return fmt.Errorf("group %q: cols is only for the mixer", g.ID)
+			}
+		case GroupMixer:
+			if mixers++; mixers > 1 {
+				return errors.New("only one mixer group")
+			}
+			if len(g.Tiles) != 0 {
+				return fmt.Errorf("group %q: the mixer has no tiles", g.ID)
+			}
+			if g.Cols < MixerMinCols || g.Cols > MaxGroupCols {
+				return fmt.Errorf("group %q: mixer width %d..%d columns", g.ID, MixerMinCols, MaxGroupCols)
+			}
+		default:
+			return fmt.Errorf("group %q: unknown kind %q", g.ID, g.Kind)
 		}
 		var grid [Rows][MaxGroupCols]bool
 		for _, t := range g.Tiles {
@@ -251,6 +282,16 @@ func (l *Layout) Validate() error {
 		}
 	}
 	return nil
+}
+
+// HasMixer — есть ли в раскладке группа-микшер.
+func (l *Layout) HasMixer() bool {
+	for _, g := range l.Groups {
+		if g.Kind == GroupMixer {
+			return true
+		}
+	}
+	return false
 }
 
 // Tile находит плитку по id во всей раскладке.

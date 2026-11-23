@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -29,6 +30,9 @@ type fakeDeckObs struct {
 	inputs    []string
 	muted     map[string]bool // имя → заглушён; ключи — известные аудиоисточники
 	toggled   []string
+	watchers  int
+	push      func([]obs.MixerInput)
+	mixCmds   []string
 }
 
 func (f *fakeDeckObs) Connected() bool       { return f.connected }
@@ -45,6 +49,23 @@ func (f *fakeDeckObs) ToggleMute(n string) error {
 	}
 	f.muted[n] = !f.muted[n]
 	f.toggled = append(f.toggled, n)
+	return nil
+}
+func (f *fakeDeckObs) WatchMixer(fn func([]obs.MixerInput)) func() {
+	f.watchers++
+	f.push = fn
+	return func() { f.watchers--; f.push = nil }
+}
+func (f *fakeDeckObs) ToggleInputMute(n string) error {
+	f.mixCmds = append(f.mixCmds, "toggle:"+n)
+	return nil
+}
+func (f *fakeDeckObs) ToggleInputMonitor(n string) error {
+	f.mixCmds = append(f.mixCmds, "monitor:"+n)
+	return nil
+}
+func (f *fakeDeckObs) SetInputVolumeDB(n string, db float64) error {
+	f.mixCmds = append(f.mixCmds, fmt.Sprintf("vol:%s:%.1f", n, db))
 	return nil
 }
 func (f *fakeDeckObs) SetScene(n string) error {
@@ -421,5 +442,58 @@ func TestDeckMuteTileTogglesOnlyKnownAudioInput(t *testing.T) {
 	code, b, _ := deckReq(t, s, "GET", "/api/deck/layout", "", false)
 	if code != 200 || !strings.Contains(b, `"inputs":["Mic"]`) {
 		t.Fatalf("список источников в ответе раскладки: %d %s", code, b)
+	}
+}
+
+func TestDeckMixerSubscriptionAndCommandsNeedAMixerGroup(t *testing.T) {
+	s, o := deckEnv(t)
+	m := newDeckMixConn(s)
+	defer m.close()
+
+	// в раскладке по умолчанию микшера нет: подписка и команды игнорируются
+	m.handle([]byte(`{"t":"mixer","on":true}`))
+	m.handle([]byte(`{"t":"mx","a":"toggle","n":"Mic"}`))
+	if o.watchers != 0 || len(o.mixCmds) != 0 {
+		t.Fatalf("без группы-микшера ничего не должно работать: %d %v", o.watchers, o.mixCmds)
+	}
+
+	layout := `{"rev":0,"groups":[{"id":"main","tiles":[]},{"id":"mix","name":"Mixer","kind":"mixer","cols":8,"tiles":[]}]}`
+	if code, b, _ := deckReq(t, s, "PUT", "/api/deck/layout", layout, true); code != 200 {
+		t.Fatalf("save: %d %s", code, b)
+	}
+	m.handle([]byte(`{"t":"mx","a":"toggle","n":"Mic"}`)) // без подписки команды тоже не идут
+	if len(o.mixCmds) != 0 {
+		t.Fatalf("команда без подписки: %v", o.mixCmds)
+	}
+	m.handle([]byte(`{"t":"mixer","on":true}`))
+	m.handle([]byte(`{"t":"mixer","on":true}`)) // повторная подписка не плодит наблюдателей
+	if o.watchers != 1 {
+		t.Fatalf("наблюдателей: %d", o.watchers)
+	}
+	o.push([]obs.MixerInput{{Name: "Mic", Peak: -12, VolumeDB: -3, Monitor: "none"}})
+	if got := string(m.frame(<-m.ch)); got != `{"t":"mixer","inputs":[{"name":"Mic","peak":-12,"muted":false,"volumeDb":-3,"monitor":"none"}]}` {
+		t.Fatalf("кадр: %s", got)
+	}
+
+	time.Sleep(2 * deckMixerMinGap)
+	m.handle([]byte(`{"t":"mx","a":"toggle","n":"Mic"}`))
+	time.Sleep(2 * deckMixerMinGap)
+	m.handle([]byte(`{"t":"mx","a":"monitor","n":"Mic"}`))
+	time.Sleep(2 * deckMixerMinGap)
+	m.handle([]byte(`{"t":"mx","a":"vol","n":"Mic","db":-12.5}`))
+	m.handle([]byte(`{"t":"mx","a":"vol","n":"Mic","db":-1}`)) // слишком часто: пропускается
+	m.handle([]byte(`не json`))
+	if want := []string{"toggle:Mic", "monitor:Mic", "vol:Mic:-12.5"}; !reflect.DeepEqual(o.mixCmds, want) {
+		t.Fatalf("команды: %v", o.mixCmds)
+	}
+
+	m.handle([]byte(`{"t":"mixer","on":false}`))
+	if o.watchers != 0 {
+		t.Fatalf("после отписки наблюдателей: %d", o.watchers)
+	}
+	m.handle([]byte(`{"t":"mixer","on":true}`))
+	m.close() // закрытие соединения снимает подписку
+	if o.watchers != 0 {
+		t.Fatalf("после закрытия наблюдателей: %d", o.watchers)
 	}
 }

@@ -52,8 +52,18 @@ func TestValidateAcceptsGoodLayoutAndRejectsBadOnes(t *testing.T) {
 		"неизвестное действие":    func(l *Layout) { l.Groups[0].Tiles[0].Action.Type = "exec" },
 		"пустая сцена":            func(l *Layout) { l.Groups[0].Tiles[0].Action.Scene = "" },
 		"mute без источника":      func(l *Layout) { l.Groups[0].Tiles[0].Action = Action{Type: ActionMute} },
-		"плагин без действия":     func(l *Layout) { l.Groups[0].Tiles[0].Action = Action{Type: ActionPlugin, Plugin: "music"} },
-		"действие без плагина":    func(l *Layout) { l.Groups[0].Tiles[0].Action = Action{Type: ActionPlugin, PluginAction: "pause"} },
+		"неизвестный вид группы":  func(l *Layout) { l.Groups[1].Kind = "board" },
+		"cols у обычной группы":   func(l *Layout) { l.Groups[1].Cols = 4 },
+		"микшер с плитками": func(l *Layout) {
+			l.Groups[1] = Group{ID: "m", Kind: GroupMixer, Cols: 8, Tiles: []Tile{scene("z", 0, 0, 1, 1, "Z")}}
+		},
+		"микшер слишком узкий":   func(l *Layout) { l.Groups[1] = Group{ID: "m", Kind: GroupMixer, Cols: MixerMinCols - 1} },
+		"микшер слишком широкий": func(l *Layout) { l.Groups[1] = Group{ID: "m", Kind: GroupMixer, Cols: MaxGroupCols + 1} },
+		"два микшера": func(l *Layout) {
+			l.Groups = append(l.Groups, Group{ID: "m1", Kind: GroupMixer, Cols: 8}, Group{ID: "m2", Kind: GroupMixer, Cols: 8})
+		},
+		"плагин без действия":  func(l *Layout) { l.Groups[0].Tiles[0].Action = Action{Type: ActionPlugin, Plugin: "music"} },
+		"действие без плагина": func(l *Layout) { l.Groups[0].Tiles[0].Action = Action{Type: ActionPlugin, PluginAction: "pause"} },
 		"id плагина со слэшем": func(l *Layout) {
 			l.Groups[0].Tiles[0].Action = Action{Type: ActionPlugin, Plugin: "a/b", PluginAction: "pause"}
 		},
@@ -323,5 +333,33 @@ func TestMuteTileIsValidAndHighlightedWhenMuted(t *testing.T) {
 	off, _ := Render(ViewData{Layout: l, Online: true})
 	if !strings.Contains(string(on), "c-steel on") || strings.Contains(string(off), "c-steel on") {
 		t.Fatal("плитка mute подсвечена только пока источник заглушён")
+	}
+}
+
+func TestMixerGroupWidthValidationAndRender(t *testing.T) {
+	l := valid()
+	l.Groups = append(l.Groups, Group{ID: "mix", Name: "Mixer", Kind: GroupMixer, Cols: 6, Tiles: []Tile{}})
+	if err := l.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if !l.HasMixer() || l.Groups[2].Width() != 6 {
+		t.Fatalf("микшер и его ширина: %v %d", l.HasMixer(), l.Groups[2].Width())
+	}
+	plainL := valid()
+	if plainL.HasMixer() {
+		t.Fatal("в обычной раскладке микшера нет")
+	}
+	out, _ := Render(ViewData{Layout: l, Online: true})
+	if strings.Count(string(out), `id="mx"`) != 1 {
+		t.Fatal("страница должна содержать ровно одну область микшера")
+	}
+	plain, _ := Render(ViewData{Layout: plainL, Online: true})
+	if strings.Contains(string(plain), `id="mx"`) {
+		t.Fatal("без группы-микшера области нет")
+	}
+	// группа-микшер переживает разбор JSON
+	back, err := Parse([]byte(`{"rev":1,"groups":[{"id":"m","kind":"mixer","cols":8,"tiles":[]}]}`))
+	if err != nil || back.Groups[0].Cols != 8 {
+		t.Fatalf("%v %+v", err, back)
 	}
 }

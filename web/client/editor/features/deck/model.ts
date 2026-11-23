@@ -2,7 +2,7 @@
 import { ApiError, isConflict, type Api } from "../../lib/api.ts";
 import { createStore, type Readable } from "../../lib/store.ts";
 import {
-  addGroup, addTile, moveGroup, moveTile, removeGroup, removeTile, renameGroup, updateTile, unusedScenes,
+  addGroup, addMixerGroup, addTile, moveGroup, moveTile, removeGroup, removeTile, renameGroup, setMixerCols, updateTile, unusedScenes,
   type DeckGrid, type DeckLayout, type DeckSize, type PluginAction, type TilePatch,
 } from "./ops.ts";
 
@@ -46,6 +46,9 @@ export interface DeckModel extends Readable<DeckState> {
   reset(): Promise<void>;
   select(id: string | null): void;
   addGroup(): string | null;
+  /** Добавить группу-микшер (одна на раскладку); null — уже есть или предел групп. */
+  addMixerGroup(): string | null;
+  setMixerCols(id: string, cols: number): void;
   renameGroup(id: string, name: string): void;
   removeGroup(id: string): void;
   moveGroup(id: string, delta: -1 | 1): void;
@@ -110,6 +113,14 @@ export function createDeckModel(api: Api): DeckModel {
       apply(r.layout, null);
       return r.id;
     },
+    addMixerGroup() {
+      const l = s().layout;
+      const r = l && addMixerGroup(l);
+      if (!r) return null;
+      apply(r.layout, null);
+      return r.id;
+    },
+    setMixerCols: (id, cols) => { const l = s().layout; if (l) apply(setMixerCols(l, id, cols)); },
     renameGroup: (id, name) => { const l = s().layout; if (l) apply(renameGroup(l, id, name)); },
     removeGroup(id) {
       const l = s().layout;

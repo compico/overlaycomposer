@@ -36,6 +36,7 @@ type folderView struct {
 type groupView struct {
 	Name  string
 	Style template.CSS
+	Mixer bool // вместо плиток — микшер; его рисует скрипт по кадрам от сервера
 	Tiles []tileView
 }
 
@@ -70,7 +71,7 @@ func Render(v ViewData) ([]byte, error) {
 	x := padCells
 	for _, g := range v.Layout.Groups {
 		w := float64(g.Width())
-		gv := groupView{Name: g.Name, Style: template.CSS(fmt.Sprintf("left:%.2fem;width:%.2fem", x, w))}
+		gv := groupView{Name: g.Name, Mixer: g.Kind == GroupMixer, Style: template.CSS(fmt.Sprintf("left:%.2fem;width:%.2fem", x, w))}
 		for _, t := range g.Tiles {
 			tv := tileView{
 				ID: t.ID, Label: t.Label, Color: t.Color, Icon: Icons[t.Icon], Confirm: t.Confirm && t.Action.Type != ActionFolder, Plugin: t.Action.Type == ActionPlugin, Folder: t.Action.Type == ActionFolder,
@@ -162,10 +163,38 @@ body.off .t{opacity:.45}
 #dot{position:fixed;right:10px;top:10px;width:12px;height:12px;background:#60a917;z-index:2}
 body.off #dot{background:#e51400}
 #msg{position:fixed;left:0;right:0;bottom:0;padding:10px 16px;background:#e51400;font-size:18px;display:none;z-index:3}
+body.off .mx{opacity:.45}
+.mx{position:absolute;left:.03em;right:.03em;top:.7em;height:4em;overflow-x:hidden;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.mx button,.mx input{font:inherit}
+.mxe{padding:.15em .05em;font-size:.13em;color:#8a93a3}
+.mr{position:relative;height:.9em;margin-bottom:.05em;background:#1b2029;overflow:hidden}
+/* Текст и значки позиционируем абсолютно: иначе крупный шрифт клетки создаёт огромную строку, и содержимое уезжает вниз (у кнопок font-size:0 — текста в них нет) */
+.mn{position:absolute;left:.1em;right:1.7em;top:.02em;height:.22em}
+.mn span{position:absolute;left:0;right:0;top:50%;margin-top:-.62em;font-size:.11em;line-height:1.25;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mt{position:absolute;right:.1em;top:.02em;width:1.6em;height:.22em}
+.mt span{position:absolute;left:0;right:0;top:50%;margin-top:-.62em;font-size:.1em;line-height:1.25;color:#9aa3b2;white-space:nowrap;text-align:right}
+.mt.on span{color:#ffb74d}
+.mb{position:absolute;left:.06em;width:.42em;height:.3em;padding:0;border:0;margin:0;background:#2a3040;color:#cfd5e2;-webkit-appearance:none;appearance:none;font-size:0;line-height:0}
+.mb svg{position:absolute;left:50%;top:50%;width:.2em;height:.2em;margin:-.1em 0 0 -.1em;fill:currentColor;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.mb svg .nf{fill:none}
+.mb.mu{background:#d9534f;color:#fff}.mb.both{background:#26a69a;color:#08211f}.mb.only{background:#ffb74d;color:#2a1b00}
+.mv{position:absolute;left:.54em;right:.06em;top:.25em;height:.3em;margin:0;background:transparent;-webkit-appearance:none;appearance:none}
+.mv::-webkit-slider-runnable-track{height:.07em;border-radius:.03em;background:#3a4256}
+.mv::-webkit-slider-thumb{-webkit-appearance:none;width:.15em;height:.26em;margin-top:-.095em;border-radius:.04em;background:#f4f6fb;border:0}
+.mm{position:absolute;left:.54em;right:.22em;top:.6em;height:.12em;overflow:hidden;background:#0b0d11}
+.mm.muted{opacity:.3}
+.zn{position:absolute;top:0;bottom:0}
+.zn i{position:absolute;left:0;top:0;right:0;bottom:0;-webkit-transform-origin:0 50%;transform-origin:0 50%}
+.zg{background:#1c4a42}.zg i{background:#2fd1b3}.zy{background:#574814}.zy i{background:#ffd23f}.zr{background:#5b2124}.zr i{background:#ff4d4d}
+.tk{position:absolute;top:0;bottom:0;width:1px;background:rgba(255,255,255,.2)}
+.pk{position:absolute;top:0;bottom:0;width:.02em;left:0;background:#fff}
+.ms{position:absolute;left:.54em;right:.22em;top:.73em;height:.14em}
+.ms span{position:absolute;top:0;font-size:.06em;color:#6b7488;-webkit-transform:translateX(-50%);transform:translateX(-50%)}
+.mc{position:absolute;right:.06em;top:.64em;width:.08em;height:.08em;border-radius:50%;background:#2a3040}.mc.hot{background:#ff3b30}
 {{.Palette}}
 </style></head>
 <body class="{{if not .Online}}off{{end}}" data-rev="{{.Rev}}">
-<div id="scroll"><div id="strip" style="{{.Strip}}">{{range .Groups}}<div class="g" style="{{.Style}}"><div class="gn"><span>{{.Name}}</span></div>{{range .Tiles}}<div class="t c-{{.Color}}{{if .On}} on{{end}}" style="{{.Style}}" data-id="{{.ID}}" data-scene="{{.Scene}}"{{if .Folder}} data-folder="1"{{end}}{{if .Confirm}} data-confirm="1"{{end}}><i>{{if .Icon}}<em>{{.Icon}}</em>{{end}}{{if or .Plugin .Folder}}<s></s>{{end}}<b>{{.Label}}</b></i></div>{{end}}</div>{{end}}</div></div>
+<div id="scroll"><div id="strip" style="{{.Strip}}">{{range .Groups}}<div class="g" style="{{.Style}}"><div class="gn"><span>{{.Name}}</span></div>{{if .Mixer}}<div class="mx" id="mx"><div class="mxe">No active audio sources</div></div>{{end}}{{range .Tiles}}<div class="t c-{{.Color}}{{if .On}} on{{end}}" style="{{.Style}}" data-id="{{.ID}}" data-scene="{{.Scene}}"{{if .Folder}} data-folder="1"{{end}}{{if .Confirm}} data-confirm="1"{{end}}><i>{{if .Icon}}<em>{{.Icon}}</em>{{end}}{{if or .Plugin .Folder}}<s></s>{{end}}<b>{{.Label}}</b></i></div>{{end}}</div>{{end}}</div></div>
 <div id="fo">{{range .Folders}}<div class="fl" data-for="{{.ID}}">{{range .Scenes}}<div class="fs" data-scene="{{.}}">{{.}}</div>{{end}}</div>{{end}}</div>
 <span id="dot"></span>
 <div id="msg"></div>
@@ -303,18 +332,145 @@ function connect(){
  if(!window.WebSocket){return;}
  var opened=false;
  try{ws=new WebSocket((location.protocol==="https:"?"wss://":"ws://")+location.host+"/api/deck/ws");}catch(e){ws=null;return;}
- ws.onopen=function(){opened=true;wsUp=true;wsTry=0;};
+ ws.onopen=function(){opened=true;wsUp=true;wsTry=0;mxSub=false;mxWant(!mxHidden());};
  ws.onmessage=function(ev){
   var j=null;try{j=JSON.parse(ev.data);}catch(e){}
   if(j&&j.t==="state"){apply(j);}
+  else if(j&&j.t==="mixer"){mxApply(j.inputs||[]);}
  };
  ws.onclose=function(){
-  wsUp=false;ws=null;
+  wsUp=false;ws=null;mxSub=false;if(mxEl){mxNote("Waiting for the connection…");}
   startPoll(opened?0:2000);
   wsTry++;
   setTimeout(connect,Math.min(30000,2000*wsTry));
  };
 }
+var mxEl=document.getElementById("mx"),mxRows={},mxOrder="",mxSub=false,mxRaf=false,mxPrev=0;
+var MX_MIN=-60,MX_CLIP=-1,MX_HOLD=1500,MX_FALL=40,MX_PFALL=20,MX_TICKS=[-60,-48,-36,-24,-12,0],MX_ZG=20,MX_ZY=9,MX_STEPS=1000,MX_FLOOR=-100;
+var MX_ICON={on:'<svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9z"/><path class="nf" d="M16.5 8.5a5 5 0 010 7M19 6a8.5 8.5 0 010 12"/></svg>',
+ off:'<svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9z"/><path class="nf" d="M17 9l5 6M22 9l-5 6"/></svg>',
+ ph:'<svg viewBox="0 0 24 24"><path class="nf" d="M4 16v-4a8 8 0 0116 0v4"/><rect x="3" y="14" width="5" height="7" rx="1.5"/><rect x="16" y="14" width="5" height="7" rx="1.5"/></svg>'};
+var raf=window.requestAnimationFrame||window.webkitRequestAnimationFrame||function(f){return setTimeout(function(){f(Date.now());},33);};
+function mxHidden(){return document.hidden||document.webkitHidden;}
+function mxSend(o){if(ws&&wsUp){try{ws.send(JSON.stringify(o));}catch(e){}}}
+function mxNode(tag,cls,text){var e=document.createElement(tag);if(cls){e.className=cls;}if(text!=null){e.appendChild(document.createTextNode(text));}return e;}
+function mxNorm(db){return Math.max(0,Math.min(1,(db-MX_MIN)/-MX_MIN));}
+function mxTx(e,v){e.style.webkitTransform=v;e.style.transform=v;}
+// Фейдер OBS кубический: дБ = 60·lg(положение). Первая половина хода точная (0…−18 дБ), дальше грубее, край — «минус бесконечность» (−100 дБ).
+function mxDbFromPos(v){var p=v/MX_STEPS;if(p<=0){return MX_FLOOR;}return Math.min(0,Math.max(MX_FLOOR,Math.round(60*Math.log(p)/Math.LN10*10)/10));}
+function mxPosFromDb(db){return db<=MX_FLOOR?0:Math.round(MX_STEPS*Math.pow(10,Math.min(0,db)/60));}
+function mxDbText(db){return db<=MX_FLOOR?"-inf dB":db.toFixed(1)+" dB";}
+function mxNote(text){
+ if(!mxEl){return;}
+ mxRows={};mxOrder="";
+ while(mxEl.firstChild){mxEl.removeChild(mxEl.firstChild);}
+ mxEl.appendChild(mxNode("div","mxe",text));
+}
+function mxMake(name){
+ var r={name:name,target:MX_MIN,level:MX_MIN,hold:MX_MIN,holdAt:0,hotAt:0,dragging:false,lastSend:0,timer:0,muted:null,mon:null,wasHot:null};
+ r.root=mxNode("div","mr");
+ r.nm=mxNode("div","mn");r.nmt=mxNode("span","",name);r.nm.appendChild(r.nmt);
+ r.tt=mxNode("div","mt");r.db=mxNode("span","","");r.tt.appendChild(r.db);r.tag="";
+ r.show=function(db){r.db.firstChild.nodeValue=(r.tag?r.tag+"  ":"")+mxDbText(db);}; // тег прослушивания и громкость — одной строкой
+ r.mt=mxNode("button","mb");r.mt.style.top=".25em";r.mt.onclick=function(){mxSend({t:"mx",a:"toggle",n:name});};
+ r.vol=mxNode("input","mv");r.vol.type="range";r.vol.min=0;r.vol.max=MX_STEPS;r.vol.step=1;r.vol.value=MX_STEPS;
+ function sendNow(){r.lastSend=Date.now();mxSend({t:"mx",a:"vol",n:name,db:mxDbFromPos(+r.vol.value)});}
+ function sendVol(){ // не чаще раза в 50 мс, но последнее значение уходит обязательно
+  r.show(mxDbFromPos(+r.vol.value));
+  var wait=50-(Date.now()-r.lastSend);
+  clearTimeout(r.timer);
+  if(wait<=0){sendNow();}else{r.timer=setTimeout(sendNow,wait);}
+ }
+ r.vol.oninput=function(){r.dragging=true;sendVol();};
+ r.vol.onchange=function(){sendVol();setTimeout(function(){r.dragging=false;},300);};
+ // пока палец на ползунке, полоса не должна уезжать вбок вместе с группой
+ r.vol.ontouchstart=function(){sc.style.overflowX="hidden";};
+ r.vol.ontouchend=r.vol.ontouchcancel=function(){sc.style.overflowX="auto";};
+ r.ls=mxNode("button","mb");r.ls.style.top=".57em";r.ls.innerHTML=MX_ICON.ph;r.ls.onclick=function(){mxSend({t:"mx",a:"monitor",n:name});};
+ r.meter=mxNode("div","mm");r.pk=mxNode("div","pk");
+ var zones=[["zg",0,mxNorm(-MX_ZG)],["zy",mxNorm(-MX_ZG),mxNorm(-MX_ZY)],["zr",mxNorm(-MX_ZY),1]],i;
+ r.fill=[];
+ for(i=0;i<zones.length;i++){
+  var z=mxNode("div","zn "+zones[i][0]),fi=mxNode("i","");
+  z.style.left=(zones[i][1]*100)+"%";z.style.width=((zones[i][2]-zones[i][1])*100)+"%";
+  z.appendChild(fi);r.meter.appendChild(z);r.fill.push(fi);
+ }
+ var sc2=mxNode("div","ms");
+ for(i=0;i<MX_TICKS.length;i++){
+  var tk=mxNode("div","tk");tk.style.left=(mxNorm(MX_TICKS[i])*100)+"%";r.meter.appendChild(tk);
+  var lb=mxNode("span","",String(MX_TICKS[i]));lb.style.left=Math.min(96,Math.max(4,mxNorm(MX_TICKS[i])*100))+"%";sc2.appendChild(lb);
+ }
+ r.meter.appendChild(r.pk);r.clip=mxNode("div","mc");
+ r.root.appendChild(r.nm);r.root.appendChild(r.tt);r.root.appendChild(r.mt);r.root.appendChild(r.vol);r.root.appendChild(r.ls);r.root.appendChild(r.meter);r.root.appendChild(sc2);r.root.appendChild(r.clip);
+ return r;
+}
+function mxApply(inputs){
+ if(!mxEl){return;}
+ var names=[],i;
+ for(i=0;i<inputs.length;i++){names.push(inputs[i].name);}
+ var key=names.join("\u0000");
+ if(key!==mxOrder){ // состав активных источников изменился (например, сменилась сцена) — перестраиваем список
+  mxOrder=key;
+  var next={},frag=document.createDocumentFragment();
+  for(i=0;i<names.length;i++){var r0=mxRows[names[i]]||mxMake(names[i]);next[names[i]]=r0;frag.appendChild(r0.root);}
+  mxRows=next;
+  while(mxEl.firstChild){mxEl.removeChild(mxEl.firstChild);}
+  if(!names.length){mxEl.appendChild(mxNode("div","mxe","No active audio sources"));}else{mxEl.appendChild(frag);}
+ }
+ var now=Date.now();
+ for(i=0;i<inputs.length;i++){
+  var f=inputs[i],row=mxRows[f.name];
+  row.target=f.peak;
+  if(f.peak>row.hold){row.hold=f.peak;row.holdAt=now;}
+  if(f.peak>MX_CLIP){row.hotAt=now;}
+  if(row.muted!==f.muted){ // DOM трогаем только при изменении
+   row.muted=f.muted;
+   row.mt.className=f.muted?"mb mu":"mb";
+   row.mt.innerHTML=f.muted?MX_ICON.off:MX_ICON.on;
+   row.meter.className=f.muted?"mm muted":"mm";
+  }
+  var mon=f.monitor||"none";
+  if(row.mon!==mon){
+   row.mon=mon;
+   row.ls.className=mon==="none"?"mb":"mb "+mon;
+   row.tag=mon==="only"?"listen only":(mon==="both"?"listening":"");
+   row.tt.className=mon==="none"?"mt":"mt on";
+   row.shown=null;
+  }
+  if(!row.dragging&&(row.shown!==f.volumeDb)){row.shown=f.volumeDb;row.vol.value=mxPosFromDb(f.volumeDb);row.show(f.volumeDb);}
+ }
+}
+function mxDraw(ts){
+ var dt=mxPrev?Math.min(0.1,(ts-mxPrev)/1000):0,now=Date.now();mxPrev=ts;
+ for(var n in mxRows){
+  var r=mxRows[n];
+  r.level=r.target>=r.level?r.target:Math.max(r.target,r.level-MX_FALL*dt); // растёт сразу, падает плавно
+  if(now-r.holdAt>MX_HOLD){r.hold=Math.max(r.target,r.hold-MX_PFALL*dt);}
+  var lv=mxNorm(r.level),g=mxNorm(-MX_ZG),y=mxNorm(-MX_ZY);
+  mxTx(r.fill[0],"scaleX("+Math.min(1,lv/g).toFixed(3)+")");
+  mxTx(r.fill[1],"scaleX("+Math.max(0,Math.min(1,(lv-g)/(y-g))).toFixed(3)+")");
+  mxTx(r.fill[2],"scaleX("+Math.max(0,Math.min(1,(lv-y)/(1-y))).toFixed(3)+")");
+  mxTx(r.pk,"translateX("+Math.round(mxNorm(r.hold)*(r.meter.clientWidth-2))+"px)");
+  var hot=now-r.hotAt<MX_HOLD;
+  if(hot!==r.wasHot){r.clip.className=hot?"mc hot":"mc";r.wasHot=hot;}
+ }
+}
+function mxTick(ts){
+ if(!mxSub){mxRaf=false;return;}
+ mxDraw(ts||Date.now());
+ raf.call(window,mxTick);
+}
+// Подписка на уровни включена, только пока микшер виден: в фоне вкладки (iPad свернул Safari) сервер не шлёт кадры.
+function mxWant(on){
+ if(!mxEl||on===mxSub||(on&&!wsUp)){return;}
+ mxSub=on;mxSend({t:"mixer",on:on});
+ if(on&&!mxRaf){mxRaf=true;raf.call(window,mxTick);}
+}
+if(mxEl){
+ var mxVis=function(){mxWant(!mxHidden());};
+ document.addEventListener("visibilitychange",mxVis);document.addEventListener("webkitvisibilitychange",mxVis);
+}
+
 connect();
 startPoll(2000);
 })();`
