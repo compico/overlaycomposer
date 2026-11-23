@@ -295,6 +295,25 @@ func TestMetaValidateChatCommands(t *testing.T) {
 	}
 }
 
+func TestMetaValidateChatMessages(t *testing.T) {
+	m := baseMeta("chat")
+	m.Subscriptions = []string{EventChatMessage}
+	if m.Validate() == nil {
+		t.Fatal("подписка chat.message без разрешения chat.read должна отклоняться")
+	}
+	m.Permissions = []string{PermChatRead}
+	if err := m.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	// Разрешение chat.read не даёт команд и не требует Commands: это разные права.
+	if m.WantsCommand("np") {
+		t.Fatal("chat.read не объявляет команд")
+	}
+	if !KnownPermission(PermChatRead) {
+		t.Fatal("chat.read должно быть известным правом")
+	}
+}
+
 func TestMetaActions(t *testing.T) {
 	m := baseMeta("music")
 	m.Routes = []Route{{"POST", "/control", "ctl"}}

@@ -364,12 +364,29 @@ func (m *Manager) PublishCommand(c ChatCommand) int {
 	return n
 }
 
+// PublishChat рассылает событие чата плагинам, подписанным на chat.message с разрешением chat.read. Возвращает, скольким доставлено.
+func (m *Manager) PublishChat(data any) int {
+	m.mu.RLock()
+	ps := make([]*Plugin, 0, len(m.plugins))
+	for _, p := range m.plugins {
+		ps = append(ps, p)
+	}
+	m.mu.RUnlock()
+	n := 0
+	for _, p := range ps {
+		if p.DeliverChat(data) {
+			n++
+		}
+	}
+	return n
+}
+
 // Wants — есть ли хоть один плагин, готовый принять событие: по нему можно решить, нужен ли хосту EventSub.
 func (m *Manager) Wants(typ string) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, p := range m.plugins {
-		if p.meta.Subscribes(typ) && (typ != EventRedemption || p.granted(PermRedeem)) && (typ != EventChatCommand || p.granted(PermChatCommandRead)) {
+		if p.meta.Subscribes(typ) && (typ != EventRedemption || p.granted(PermRedeem)) && (typ != EventChatCommand || p.granted(PermChatCommandRead)) && (typ != EventChatMessage || p.granted(PermChatRead)) {
 			return true
 		}
 	}

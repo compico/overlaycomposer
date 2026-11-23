@@ -366,7 +366,7 @@ func (p *Plugin) Deliver(typ string, data any) bool {
 	if typ == EventRedemption && !p.granted(PermRedeem) {
 		return false
 	}
-	if typ == EventChatCommand { // команды идут только через DeliverCommand: он проверяет, просил ли плагин именно эту
+	if typ == EventChatCommand || typ == EventChatMessage { // идут только через DeliverCommand и DeliverChat: они проверяют разрешения
 		return false
 	}
 	return p.enqueue(typ, data)
@@ -378,6 +378,15 @@ func (p *Plugin) DeliverCommand(c ChatCommand) bool {
 		return false
 	}
 	return p.enqueue(EventChatCommand, c)
+}
+
+// DeliverChat доставляет событие чата (data — chat.Event: message, delete, clear или status) плагину, если он подписан на
+// chat.message и получил chat.read.
+func (p *Plugin) DeliverChat(data any) bool {
+	if !p.meta.Subscribes(EventChatMessage) || !p.granted(PermChatRead) {
+		return false
+	}
+	return p.enqueue(EventChatMessage, data)
 }
 
 func (p *Plugin) enqueue(typ string, data any) bool {

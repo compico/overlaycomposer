@@ -92,6 +92,7 @@ const PERMISSION_TEXT: Record<string, string> = {
   storage: "Keep its own data (queue, settings) in Overlay Composer",
   "events.publish": "Send live events (player state, commands) to widgets and connected apps",
   "chat.send": "Write messages to your channel chat as the bot",
+  "chat.read": "Read every message in your channel chat (all viewers' messages, not only commands)",
   "chat.command.read": "See chat commands (messages starting with !) that it asks for; the rest of the chat stays hidden from it",
   "net.http": "Make requests to the internet (never to your local network)",
   "net.local": "Talk to programs on this computer (only the addresses it names)",
