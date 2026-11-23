@@ -11,8 +11,9 @@ const mixerPocPage = `<!doctype html>
 <style>
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;background:#12151b;color:#e8ebf2;font:15px/1.3 -apple-system,Helvetica,Arial,sans-serif;touch-action:manipulation;-webkit-user-select:none;user-select:none}
-header{padding:12px 16px;display:flex;gap:14px;align-items:baseline;flex-wrap:wrap}
-h1{font-size:16px;margin:0;font-weight:600}
+header{padding:12px 16px}
+h1{font-size:16px;margin:0 14px 0 0;font-weight:600;display:inline-block}
+#st{display:inline-block}
 #st{color:#9aa3b2;font-size:13px}
 #st.off{color:#ff8a80}
 #rows{padding:0 12px 8px;max-width:760px;margin:0 auto}
