@@ -31,13 +31,17 @@ h1{font-size:16px;margin:0;font-weight:600}
 .btn.only{background:#ffb74d;color:#2a1b00}
 .vol{-webkit-appearance:none;appearance:none;-webkit-box-flex:1;flex:1;min-width:0;height:40px;margin:0;background:transparent}
 .vol::-webkit-slider-runnable-track{height:8px;border-radius:4px;background:#3a4256}
-.vol::-webkit-slider-thumb{-webkit-appearance:none;width:30px;height:30px;margin-top:-11px;border-radius:50%;background:#f4f6fb;border:0;box-shadow:0 1px 4px rgba(0,0,0,.5)}
+.vol::-webkit-slider-thumb{-webkit-appearance:none;width:22px;height:32px;margin-top:-12px;border-radius:6px;background:#f4f6fb;border:0;box-shadow:0 1px 4px rgba(0,0,0,.5)}
 .vol::-moz-range-track{height:8px;border-radius:4px;background:#3a4256}
-.vol::-moz-range-thumb{width:30px;height:30px;border-radius:50%;background:#f4f6fb;border:0}
+.vol::-moz-range-thumb{width:22px;height:32px;border-radius:6px;background:#f4f6fb;border:0}
 .mw{-webkit-box-flex:1;flex:1;min-width:0}
-.meter{position:relative;height:14px;border-radius:4px;overflow:hidden;background:linear-gradient(to right,#26c6a8 0,#26c6a8 70%,#ffca28 86%,#ff5252 100%)}
+.meter{position:relative;height:14px;border-radius:4px;overflow:hidden;background:#0b0d11}
 .meter.muted{opacity:.3}
-.cv{position:absolute;left:0;top:0;right:0;bottom:0;background:#0b0d11;-webkit-transform-origin:100% 50%;transform-origin:100% 50%}
+.zn{position:absolute;top:0;bottom:0}
+.zn i{position:absolute;left:0;top:0;right:0;bottom:0;-webkit-transform-origin:0 50%;transform-origin:0 50%}
+.zg{background:#1c4a42}.zg i{background:#2fd1b3}
+.zy{background:#574814}.zy i{background:#ffd23f}
+.zr{background:#5b2124}.zr i{background:#ff4d4d}
 .tk{position:absolute;top:0;bottom:0;width:1px;background:rgba(255,255,255,.2)}
 .pk{position:absolute;top:0;bottom:0;width:3px;left:0;background:#fff}
 .sc{position:relative;height:12px;margin-top:2px;color:#6b7488;font-size:10px}
@@ -52,7 +56,9 @@ h1{font-size:16px;margin:0;font-weight:600}
 <div id="dg"></div>
 <script>
 (function () {
-  var MIN = -60, VMIN = -60, VMAX = 0, CLIP = -1, HOLD = 1500, FALL = 40, PFALL = 20, TICKS = [-60, -48, -36, -24, -12, 0];
+  var MIN = -60, CLIP = -1, HOLD = 1500, FALL = 40, PFALL = 20, TICKS = [-60, -54, -48, -42, -36, -30, -24, -18, -12, -6, 0];
+  var ZG = 20, ZY = 9; // границы цветовых зон шкалы: зелёная до −20 дБ, жёлтая до −9, дальше красная (как в OBS)
+  var VSTEPS = 1000, VFLOOR = -100; // ползунок громкости: положение 0…1000, нелинейно, как фейдер OBS
   var rowsEl = document.getElementById("rows"), stEl = document.getElementById("st"), dgEl = document.getElementById("dg");
   var rows = {}, order = "", ws = null, frames = 0, shown = 0, online = false, count = 0, drawn = 0, drawFps = 0, worst = 0, worstShown = 0;
 
@@ -64,6 +70,10 @@ h1{font-size:16px;margin:0;font-weight:600}
   var MON_TITLE = { none: "Listen: off", both: "Listen + stream", only: "Listen only (not in stream)" };
 
   function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  // Фейдер OBS кубический: mul = положение³, то есть дБ = 60·lg(положение). Первая половина хода (0…−18 дБ) точная, дальше грубее, край — «минус бесконечность» (−100 дБ).
+  function dbFromPos(v) { var p = v / VSTEPS; if (p <= 0) return VFLOOR; return Math.min(0, Math.max(VFLOOR, Math.round(60 * Math.log(p) / Math.LN10 * 10) / 10)); }
+  function posFromDb(db) { return db <= VFLOOR ? 0 : Math.round(VSTEPS * Math.pow(10, Math.min(0, db) / 60)); }
+  function dbText(db) { return db <= VFLOOR ? "-inf dB" : db.toFixed(1) + " dB"; }
   function norm(db) { return Math.max(0, Math.min(1, (db - MIN) / -MIN)); }
   function tx(e, v) { e.style.webkitTransform = v; e.style.transform = v; }
   function send(o) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
@@ -79,10 +89,10 @@ h1{font-size:16px;margin:0;font-weight:600}
     var l1 = el("div", "ln l1");
     r.mt = el("button", "btn"); r.mt.type = "button";
     r.mt.onclick = function () { send({ t: "toggle", name: name }); };
-    r.vol = el("input", "vol"); r.vol.type = "range"; r.vol.min = VMIN; r.vol.max = VMAX; r.vol.step = 0.5; r.vol.value = 0;
-    function sendNow() { r.lastSend = Date.now(); send({ t: "vol", name: name, db: +r.vol.value }); }
+    r.vol = el("input", "vol"); r.vol.type = "range"; r.vol.min = 0; r.vol.max = VSTEPS; r.vol.step = 1; r.vol.value = VSTEPS;
+    function sendNow() { r.lastSend = Date.now(); send({ t: "vol", name: name, db: dbFromPos(+r.vol.value) }); }
     function sendVol() { // не чаще раза в 50 мс, но последнее значение уходит обязательно
-      r.db.textContent = (+r.vol.value).toFixed(1) + " dB";
+      r.db.textContent = dbText(dbFromPos(+r.vol.value));
       var wait = 50 - (Date.now() - r.lastSend);
       clearTimeout(r.timer);
       if (wait <= 0) sendNow(); else r.timer = setTimeout(sendNow, wait);
@@ -95,9 +105,15 @@ h1{font-size:16px;margin:0;font-weight:600}
     r.ls = el("button", "btn"); r.ls.type = "button"; r.ls.innerHTML = ICON.ph;
     r.ls.onclick = function () { send({ t: "monitor", name: name }); };
     var mw = el("div", "mw");
-    r.meter = el("div", "meter"); r.cv = el("div", "cv"); r.pk = el("div", "pk");
-    r.meter.appendChild(r.cv);
+    r.meter = el("div", "meter"); r.pk = el("div", "pk");
+    var zones = [["zg", 0, norm(-ZG)], ["zy", norm(-ZG), norm(-ZY)], ["zr", norm(-ZY), 1]];
+    r.fill = [];
     var i, tk, sc = el("div", "sc");
+    for (i = 0; i < zones.length; i++) { // у каждой зоны свой тусклый фон и яркая часть, которая растёт вместе с уровнем
+      var z = el("div", "zn " + zones[i][0]), fi = el("i", "");
+      z.style.left = (zones[i][1] * 100) + "%"; z.style.width = ((zones[i][2] - zones[i][1]) * 100) + "%";
+      z.appendChild(fi); r.meter.appendChild(z); r.fill.push(fi);
+    }
     for (i = 0; i < TICKS.length; i++) {
       tk = el("div", "tk"); tk.style.left = (norm(TICKS[i]) * 100) + "%"; r.meter.appendChild(tk);
       var lb = el("span", "", String(TICKS[i])); lb.style.left = Math.min(97, Math.max(3, norm(TICKS[i]) * 100)) + "%"; sc.appendChild(lb);
@@ -146,7 +162,7 @@ h1{font-size:16px;margin:0;font-weight:600}
         row.ls.title = MON_TITLE[mon] || "";
         row.tg.textContent = mon === "only" ? "listen only" : (mon === "both" ? "listening" : "");
       }
-      if (!row.dragging) { row.vol.value = f.volumeDb; row.db.textContent = f.volumeDb.toFixed(1) + " dB"; }
+      if (!row.dragging) { row.vol.value = posFromDb(f.volumeDb); row.db.textContent = dbText(f.volumeDb); }
     }
     count = names.length;
   }
@@ -160,7 +176,10 @@ h1{font-size:16px;margin:0;font-weight:600}
       var r = rows[n];
       r.level = r.target >= r.level ? r.target : Math.max(r.target, r.level - FALL * dt); // растёт сразу, падает плавно
       if (now - r.holdAt > HOLD) r.hold = Math.max(r.target, r.hold - PFALL * dt);
-      tx(r.cv, "scaleX(" + (1 - norm(r.level)).toFixed(3) + ")");
+      var lv = norm(r.level), g = norm(-ZG), y = norm(-ZY);
+      tx(r.fill[0], "scaleX(" + Math.min(1, lv / g).toFixed(3) + ")");
+      tx(r.fill[1], "scaleX(" + Math.max(0, Math.min(1, (lv - g) / (y - g))).toFixed(3) + ")");
+      tx(r.fill[2], "scaleX(" + Math.max(0, Math.min(1, (lv - y) / (1 - y))).toFixed(3) + ")");
       tx(r.pk, "translateX(" + Math.round(norm(r.hold) * (r.meter.clientWidth - 3)) + "px)");
       var hot = now - r.hotAt < HOLD;
       if (hot !== r.wasHot) { r.clip.className = hot ? "clip hot" : "clip"; r.wasHot = hot; }
