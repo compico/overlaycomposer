@@ -17,7 +17,7 @@ import (
 // PoC микшера (#234): страница /mixer-poc и её WebSocket. С этого компьютера и с сопряжённых устройств (планшет, телефон): общий authGuard
 // не пускает чужих, как и на /deck. Это проверка идеи, не готовая функция.
 // Сервер подписывается на уровни OBS, пока страница открыта, и шлёт кадры {"online":true,"inputs":[…]}; команды страницы
-// ({"t":"toggle","name":…}, {"t":"monitor","name":…} (прослушивание по кругу), {"t":"mute","name":…,"muted":bool}, {"t":"vol","name":…,"db":число, не выше 0}) выполняются только для активных источников.
+// ({"t":"toggle","name":…}, {"t":"monitor","name":…} (прослушивание вкл/выкл), {"t":"mute","name":…,"muted":bool}, {"t":"vol","name":…,"db":число, не выше 0}) выполняются только для активных источников.
 const (
 	mixerPocPing     = 20 * time.Second
 	mixerPocMaxConns = 8
@@ -151,7 +151,7 @@ func (s *Server) serveMixerPoc(c *websocket.Conn) {
 		var cerr error
 		switch m.T {
 		case "monitor":
-			cerr = o.CycleInputMonitor(m.Name)
+			cerr = o.ToggleInputMonitor(m.Name)
 		case "toggle":
 			cerr = o.ToggleInputMute(m.Name)
 		case "mute":

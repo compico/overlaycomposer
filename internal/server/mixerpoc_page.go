@@ -68,7 +68,7 @@ h1{font-size:16px;margin:0 14px 0 0;font-weight:600;display:inline-block}
     off: '<svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9z"/><path class="nf" d="M17 9l5 6M22 9l-5 6"/></svg>',
     ph: '<svg viewBox="0 0 24 24"><path class="nf" d="M4 16v-4a8 8 0 0116 0v4"/><rect x="3" y="14" width="5" height="7" rx="1.5"/><rect x="16" y="14" width="5" height="7" rx="1.5"/></svg>'
   };
-  var MON_TITLE = { none: "Listen: off", both: "Listen + stream", only: "Listen only (not in stream)" };
+  var MON_TITLE = { none: "Listen: off (tap to listen)", both: "Listening (tap to stop)", only: "Listen only, not in stream (tap to stop)" };
 
   function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
   // Фейдер OBS кубический: mul = положение³, то есть дБ = 60·lg(положение). Первая половина хода (0…−18 дБ) точная, дальше грубее, край — «минус бесконечность» (−100 дБ).

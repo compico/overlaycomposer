@@ -54,13 +54,12 @@ func monitorToOBS(m string) string {
 	return "OBS_MONITORING_TYPE_NONE"
 }
 
-// nextMonitor — порядок переключения кнопкой: выкл → наушники и эфир → только наушники → выкл.
+// nextMonitor — что делает кнопка прослушивания: выключено → слышно в наушниках, эфир не меняется; любое включённое
+// состояние (в том числе «только наушники», выставленное в самом OBS) → выключено. «Только наушники» убирает источник из эфира,
+// поэтому случайным нажатием на кнопку до него не дойти.
 func nextMonitor(m string) string {
-	switch m {
-	case "none":
+	if m == "none" {
 		return "both"
-	case "both":
-		return "only"
 	}
 	return "none"
 }
@@ -328,8 +327,8 @@ func (c *Client) ToggleInputMute(name string) error {
 	return nil
 }
 
-// CycleInputMonitor переключает прослушивание активного источника по текущему состоянию в OBS (см. nextMonitor).
-func (c *Client) CycleInputMonitor(name string) error {
+// ToggleInputMonitor включает или выключает прослушивание активного источника по текущему состоянию в OBS (см. nextMonitor).
+func (c *Client) ToggleInputMonitor(name string) error {
 	if !c.mixerActive(name) {
 		return ErrInputNotActive
 	}

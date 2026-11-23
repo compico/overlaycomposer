@@ -94,9 +94,9 @@ func TestVolumeIsNeverRaisedAboveZero(t *testing.T) {
 	}
 }
 
-func TestMonitorModesCycleAndFollowEvents(t *testing.T) {
-	if nextMonitor("none") != "both" || nextMonitor("both") != "only" || nextMonitor("only") != "none" || nextMonitor("?") != "none" {
-		t.Fatal("порядок: выкл → наушники и эфир → только наушники → выкл")
+func TestMonitorButtonTogglesAndFollowsEvents(t *testing.T) {
+	if nextMonitor("none") != "both" || nextMonitor("both") != "none" || nextMonitor("only") != "none" {
+		t.Fatal("кнопка: выкл → слышно в наушниках; любое включённое → выкл")
 	}
 	for _, m := range []string{"none", "both", "only"} {
 		if monitorFromOBS(monitorToOBS(m)) != m {
