@@ -353,6 +353,9 @@ func TestMixerGroupWidthValidationAndRender(t *testing.T) {
 	if strings.Count(string(out), `id="mx"`) != 1 {
 		t.Fatal("страница должна содержать ровно одну область микшера")
 	}
+	if strings.Count(string(out), `data-mx="1"`) != 1 || !strings.Contains(string(out), `data-w="6"`) {
+		t.Fatal("группа-микшер должна нести ширину и признак для сжатия под узкий экран")
+	}
 	plain, _ := Render(ViewData{Layout: plainL, Online: true})
 	if strings.Contains(string(plain), `id="mx"`) {
 		t.Fatal("без группы-микшера области нет")

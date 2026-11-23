@@ -37,6 +37,7 @@ type groupView struct {
 	Name  string
 	Style template.CSS
 	Mixer bool // вместо плиток — микшер; его рисует скрипт по кадрам от сервера
+	W     int  // ширина в клетках: скрипт по ней пересчитывает раскладку, если микшер не помещается на экран
 	Tiles []tileView
 }
 
@@ -71,7 +72,7 @@ func Render(v ViewData) ([]byte, error) {
 	x := padCells
 	for _, g := range v.Layout.Groups {
 		w := float64(g.Width())
-		gv := groupView{Name: g.Name, Mixer: g.Kind == GroupMixer, Style: template.CSS(fmt.Sprintf("left:%.2fem;width:%.2fem", x, w))}
+		gv := groupView{Name: g.Name, Mixer: g.Kind == GroupMixer, W: g.Width(), Style: template.CSS(fmt.Sprintf("left:%.2fem;width:%.2fem", x, w))}
 		for _, t := range g.Tiles {
 			tv := tileView{
 				ID: t.ID, Label: t.Label, Color: t.Color, Icon: Icons[t.Icon], Confirm: t.Confirm && t.Action.Type != ActionFolder, Plugin: t.Action.Type == ActionPlugin, Folder: t.Action.Type == ActionFolder,
@@ -198,7 +199,7 @@ body.off .mx{opacity:.45}
 {{.Palette}}
 </style></head>
 <body class="{{if not .Online}}off{{end}}" data-rev="{{.Rev}}">
-<div id="scroll"><div id="strip" style="{{.Strip}}">{{range .Groups}}<div class="g" style="{{.Style}}"><div class="gn"><span>{{.Name}}</span></div>{{if .Mixer}}<div class="mx" id="mx"><div class="mxe">No active audio sources</div></div>{{end}}{{range .Tiles}}<div class="t c-{{.Color}}{{if .On}} on{{end}}" style="{{.Style}}" data-id="{{.ID}}" data-scene="{{.Scene}}"{{if .Folder}} data-folder="1"{{end}}{{if .Confirm}} data-confirm="1"{{end}}><i>{{if .Icon}}<em>{{.Icon}}</em>{{end}}{{if or .Plugin .Folder}}<s></s>{{end}}<b>{{.Label}}</b></i></div>{{end}}</div>{{end}}</div></div>
+<div id="scroll"><div id="strip" style="{{.Strip}}">{{range .Groups}}<div class="g" style="{{.Style}}" data-w="{{.W}}"{{if .Mixer}} data-mx="1"{{end}}><div class="gn"><span>{{.Name}}</span></div>{{if .Mixer}}<div class="mx" id="mx"><div class="mxe">No active audio sources</div></div>{{end}}{{range .Tiles}}<div class="t c-{{.Color}}{{if .On}} on{{end}}" style="{{.Style}}" data-id="{{.ID}}" data-scene="{{.Scene}}"{{if .Folder}} data-folder="1"{{end}}{{if .Confirm}} data-confirm="1"{{end}}><i>{{if .Icon}}<em>{{.Icon}}</em>{{end}}{{if or .Plugin .Folder}}<s></s>{{end}}<b>{{.Label}}</b></i></div>{{end}}</div>{{end}}</div></div>
 <div id="fo">{{range .Folders}}<div class="fl" data-for="{{.ID}}">{{range .Scenes}}<div class="fs" data-scene="{{.}}">{{.}}</div>{{end}}</div>{{end}}</div>
 <span id="dot"></span>
 <div id="msg"></div>
@@ -211,7 +212,20 @@ body.off .mx{opacity:.45}
 const clientJS = `(function(){
 var ROWS=4.8;
 var body=document.body,sc=document.getElementById("scroll"),rev=body.getAttribute("data-rev"),armed=null,armTimer=0,msgTimer=0,msg=document.getElementById("msg");
-function fit(){sc.style.fontSize=(sc.clientHeight/ROWS)+"px";}
+var PAD=0.5,GAP=0.6;
+/* Размер клетки задаёт высота экрана, а на узком экране (iPad в портрете) заданная ширина микшера в клетках шире самого экрана: сжимаем только микшер до ширины экрана и сдвигаем следующие группы */
+function layout(){
+ var cell=sc.clientHeight/ROWS,gs=sc.getElementsByClassName("g"),st=document.getElementById("strip"),x=PAD,i,w,g,room;
+ if(!cell){return;}
+ room=sc.clientWidth/cell-2*PAD;
+ for(i=0;i<gs.length;i++){
+  g=gs[i];w=parseFloat(g.getAttribute("data-w"))||1;
+  if(g.getAttribute("data-mx")&&w>room){w=Math.max(room,2);}
+  g.style.left=x+"em";g.style.width=w+"em";x+=w+GAP;
+ }
+ st.style.width=(x-GAP+PAD)+"em";
+}
+function fit(){sc.style.fontSize=(sc.clientHeight/ROWS)+"px";layout();}
 fit();
 window.onresize=fit;window.onorientationchange=function(){setTimeout(fit,150);};
 try{var x0=sessionStorage.getItem("deckScroll");if(x0){sc.scrollLeft=parseFloat(x0)||0;}}catch(e){}
