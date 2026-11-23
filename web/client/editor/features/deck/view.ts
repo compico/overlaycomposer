@@ -2,7 +2,7 @@ import { el } from "../../lib/dom.ts";
 import type { Ui } from "../../lib/ui.ts";
 import { isDeleteTile } from "./keys.ts";
 import { isConflict, type DeckModel, type DeckState } from "./model.ts";
-import { findTile, groupWidth, sizesFor, tileTitle, unusedScenes, MAX_FOLDER_SCENES, MAX_LABEL, MAX_NAME, type DeckGroup, type DeckTile } from "./ops.ts";
+import { findTile, groupWidth, hasMixer, isMixer, sizesFor, tileTitle, unusedScenes, MAX_FOLDER_SCENES, MAX_GROUP_COLS, MAX_LABEL, MAX_NAME, MIXER_MIN_COLS, type DeckGroup, type DeckTile } from "./ops.ts";
 
 export interface DeckRefs {
   openBtn: HTMLElement;
@@ -13,6 +13,7 @@ export interface DeckRefs {
   hideInDeck: HTMLElement[];
   groupList: HTMLElement;
   addGroupBtn: HTMLElement;
+  addMixerBtn: HTMLButtonElement;
   sizeBtns: HTMLElement;
   tileList: HTMLElement;
   canvas: HTMLElement;
@@ -73,7 +74,25 @@ export function mountDeck(refs: DeckRefs, model: DeckModel, ports: DeckPorts): {
     return node;
   }
 
+  /** Группа-микшер в холсте: не редактируется, только показывает, сколько места она займёт на панели. */
+  function mixerEl(st: DeckState, g: DeckGroup, current: boolean): HTMLElement {
+    const cols = groupWidth(g);
+    const bar = (w: number, c: string) => el("div", { style: `height:6px;border-radius:3px;background:${c};width:${w}%;margin-top:3px` });
+    const rows = [0, 1, 2].map((i) => el("div", { style: "background:rgba(255,255,255,.07);border-radius:4px;padding:6px 8px;margin-bottom:6px" },
+      el("div", { style: "font-size:11px;color:var(--muted)" }, ["Mic", "Music", "Game"][i]),
+      bar(100, "rgba(255,255,255,.18)"), bar([70, 45, 85][i], "#2fd1b3")));
+    const box = el("div", {
+      style: `width:${cols * STEP - GAP}px;height:${st.grid.rows * STEP - GAP}px;box-sizing:border-box;padding:8px;overflow:hidden;`
+        + "background:rgba(255,255,255,.04);cursor:pointer;",
+    }, ...rows);
+    box.addEventListener("click", () => { curGroup = g.id; model.select(null); });
+    const title = el("div", { class: "gname", style: `margin-bottom:6px;cursor:pointer;color:${current ? "var(--text)" : "var(--muted)"};font-size:15px` }, g.name || "(no name)");
+    title.addEventListener("click", () => { curGroup = g.id; model.select(null); });
+    return el("div", { class: "deckGroup" + (current ? " cur" : ""), style: "flex:none;margin-right:28px" }, title, box);
+  }
+
   function groupEl(st: DeckState, g: DeckGroup, current: boolean): HTMLElement {
+    if (isMixer(g)) return mixerEl(st, g, current);
     // ширина холста группы: занятые столбцы + один запасной (чтобы было куда перенести плитку), но не меньше 4 — группа не «ползёт» при каждом движении
     const cols = Math.min(st.grid.maxGroupCols, Math.max(groupWidth(g) + 1, 4));
     const grid = el("div", {
@@ -98,7 +117,25 @@ export function mountDeck(refs: DeckRefs, model: DeckModel, ports: DeckPorts): {
     return el("div", { class: "deckGroup" + (current ? " cur" : ""), style: "flex:none;margin-right:28px" }, title, grid);
   }
 
+  function mixerProps(g: DeckGroup, index: number, count: number): HTMLElement {
+    const name = el("input", { type: "text", value: g.name ?? "", maxLength: MAX_NAME, style: "width:100%" });
+    name.addEventListener("change", () => model.renameGroup(g.id, name.value));
+    const cols = el("input", { type: "number", min: String(MIXER_MIN_COLS), max: String(MAX_GROUP_COLS), value: String(groupWidth(g)), style: "width:100%" });
+    cols.addEventListener("change", () => model.setMixerCols(g.id, Number(cols.value)));
+    const left = el("button", { type: "button", disabled: index === 0 }, "◀ Earlier");
+    left.addEventListener("click", () => model.moveGroup(g.id, -1));
+    const right = el("button", { type: "button", disabled: index === count - 1 }, "Later ▶");
+    right.addEventListener("click", () => model.moveGroup(g.id, 1));
+    const del = el("button", { type: "button", class: "danger" }, "Delete mixer");
+    del.addEventListener("click", () => model.removeGroup(g.id));
+    return el("div", {}, el("h3", {}, "Mixer"), el("label", {}, "Title"), name,
+      el("label", {}, `Width (columns, ${MIXER_MIN_COLS}–${MAX_GROUP_COLS})`), cols,
+      el("div", { class: "row" }, left, right), el("div", { class: "row" }, del),
+      el("div", { class: "hint" }, "The mixer shows the audio sources that are active in OBS right now (they change with the scene): level meter, volume, mute and listening. There is nothing to configure."));
+  }
+
   function groupProps(st: DeckState, g: DeckGroup, index: number, count: number): HTMLElement {
+    if (isMixer(g)) return mixerProps(g, index, count);
     const box = el("div", {});
     const name = el("input", { type: "text", value: g.name ?? "", maxLength: MAX_NAME, style: "width:100%" });
     name.addEventListener("change", () => model.renameGroup(g.id, name.value));
@@ -258,14 +295,14 @@ export function mountDeck(refs: DeckRefs, model: DeckModel, ports: DeckPorts): {
 
     l.groups.forEach((g) => {
       const item = el("div", { class: "item" + (cur?.id === g.id ? " sel" : "") },
-        el("span", { class: "name" }, g.name || "(no name)"), el("span", { class: "hint" }, String(g.tiles.length)));
+        el("span", { class: "name" }, g.name || "(no name)"), el("span", { class: "hint" }, isMixer(g) ? "mixer" : String(g.tiles.length)));
       item.addEventListener("click", () => { curGroup = g.id; model.select(null); });
       refs.groupList.append(item);
     });
 
     for (const s of st.grid.sizes) {
       const b = el("button", { type: "button", title: `Add a ${sizeKey(s)} tile` }, `+ ${sizeKey(s)}`);
-      b.disabled = !cur;
+      b.disabled = !cur || isMixer(cur);
       b.addEventListener("click", () => {
         if (cur && !model.addTile(cur.id, s)) ui.toast("No room for a tile of this size in the group");
       });
@@ -280,6 +317,8 @@ export function mountDeck(refs: DeckRefs, model: DeckModel, ports: DeckPorts): {
       refs.tileList.append(item);
     }
 
+    refs.addMixerBtn.disabled = hasMixer(l);
+    refs.addMixerBtn.title = hasMixer(l) ? "The layout already has a mixer" : "Add a mixer of the audio sources that are active in OBS";
     const strip = el("div", { style: "display:flex;align-items:flex-start" });
     for (const g of l.groups) strip.append(groupEl(st, g, cur?.id === g.id));
     if (!l.groups.length) strip.append(el("div", { class: "hint" }, "No groups. Add one on the left."));
@@ -322,6 +361,12 @@ export function mountDeck(refs: DeckRefs, model: DeckModel, ports: DeckPorts): {
   refs.addGroupBtn.addEventListener("click", () => {
     const id = model.addGroup();
     if (id) curGroup = id; else ui.toast("Too many groups");
+    render(model.get());
+  });
+
+  refs.addMixerBtn.addEventListener("click", () => {
+    const id = model.addMixerGroup();
+    if (id) curGroup = id; else ui.toast("The layout already has a mixer, or there are too many groups");
     render(model.get());
   });
 

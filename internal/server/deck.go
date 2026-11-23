@@ -37,6 +37,11 @@ type deckOBS interface {
 	AudioInputs() []string
 	Muted(name string) bool
 	ToggleMute(name string) error
+	// Микшер (группа kind=mixer): уровни активных источников и команды им.
+	WatchMixer(fn func([]obs.MixerInput)) (stop func())
+	ToggleInputMute(name string) error
+	ToggleInputMonitor(name string) error
+	SetInputVolumeDB(name string, db float64) error
 }
 
 // deckPlugins — то, что панели нужно от wasm-плагинов (в тестах подменяется): список и вызов маршрута.
@@ -146,7 +151,7 @@ func (s *Server) deckPage(c fiber.Ctx) error {
 		return err
 	}
 	c.Set("Cache-Control", "no-store")
-	c.Set("Content-Security-Policy", deck.CSPFor(c.Hostname()))
+	c.Set("Content-Security-Policy", deck.CSPFor(c.Host()))
 	c.Set("X-Content-Type-Options", "nosniff")
 	c.Set("Content-Type", "text/html; charset=utf-8")
 	return c.Send(out)
