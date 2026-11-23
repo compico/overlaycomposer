@@ -239,18 +239,18 @@ func (s *Server) SyncWasm() {
 // chatCommandKey — ключ подписки агрегатора команд в chat.Service.
 type chatCommandKey struct{}
 
-// syncChatCommands подписывается на чат канала по умолчанию, пока хоть один плагин хочет команды (chat.command.read выдано),
-// и отписывается, когда таких не осталось: без команд в плагинах чат ради них не читается.
+// syncChatCommands подписывается на чат канала по умолчанию, пока хоть один плагин хочет команды (chat.command.read) или
+// весь чат (chat.read), и отписывается, когда таких не осталось: чат ради плагинов без этого не читается.
 func (s *Server) syncChatCommands() {
 	if s.d.Chat == nil {
 		return
 	}
-	want := s.d.Wasm.Wants(wasmplugins.EventChatCommand)
+	want := s.d.Wasm.Wants(wasmplugins.EventChatCommand) || s.d.Wasm.Wants(wasmplugins.EventChatMessage)
 	s.cmdMu.Lock()
 	defer s.cmdMu.Unlock()
 	switch {
 	case want && !s.cmdSub:
-		if _, err := s.d.Chat.Subscribe(chatCommandKey{}, "", s.onChatCommand); err != nil {
+		if _, err := s.d.Chat.Subscribe(chatCommandKey{}, "", s.onChatEvent); err != nil {
 			slog.Debug("wasm: команды чата недоступны", "err", err) // канал не задан — повторим при следующей синхронизации
 			return
 		}
@@ -259,6 +259,17 @@ func (s *Server) syncChatCommands() {
 		s.d.Chat.UnsubscribeAll(chatCommandKey{})
 		s.cmdSub = false
 	}
+}
+
+// onChatEvent — единый приёмник чата для плагинов: все события получают плагины с chat.read, а команды — те, кто их объявил.
+func (s *Server) onChatEvent(ev chat.Event) {
+	if s.d.Wasm == nil {
+		return
+	}
+	if s.d.Wasm.Wants(wasmplugins.EventChatMessage) {
+		s.d.Wasm.PublishChat(ev)
+	}
+	s.onChatCommand(ev)
 }
 
 // onChatCommand — агрегатор: из потока сообщений выбирает команды («!np арг…») и раздаёт их плагинам, которые их объявили.

@@ -32,6 +32,7 @@ const (
 	PermPublish         = "events.publish"    // публиковать события для подписчиков (виджеты, аддоны, deck)
 	PermChat            = "chat.send"         // писать в чат канала от имени бота
 	PermChatCommandRead = "chat.command.read" // получать команды чата («!np …») из Meta.Commands; весь чат плагин не видит
+	PermChatRead        = "chat.read"         // получать все сообщения чата канала по умолчанию (событие chat.message)
 	maxRoutes           = 64
 	maxMetaBytes        = 64 << 10
 	maxWidgets          = 16
@@ -45,6 +46,7 @@ const (
 const (
 	EventRedemption   = "twitch.redemption"
 	EventChatCommand  = "chat.command"
+	EventChatMessage  = "chat.message" // message | delete | clear | status; нужно разрешение chat.read
 	EventTimer        = "timer"
 	EventHTTPResponse = "http.response"
 )
@@ -56,9 +58,9 @@ var (
 	pathSegRe = regexp.MustCompile(`^[A-Za-z0-9._~-]+$`)
 )
 
-var knownPerms = map[string]bool{PermStorage: true, PermNetHTTP: true, PermNetLocal: true, PermRedeem: true, PermTimer: true, PermPublish: true, PermChat: true, PermChatCommandRead: true}
+var knownPerms = map[string]bool{PermStorage: true, PermNetHTTP: true, PermNetLocal: true, PermRedeem: true, PermTimer: true, PermPublish: true, PermChat: true, PermChatCommandRead: true, PermChatRead: true}
 
-var knownEvents = map[string]bool{EventRedemption: true, EventChatCommand: true, EventTimer: true, EventHTTPResponse: true}
+var knownEvents = map[string]bool{EventRedemption: true, EventChatCommand: true, EventChatMessage: true, EventTimer: true, EventHTTPResponse: true}
 
 // Route — HTTP-маршрут плагина: он доступен как /plugins/<id>/api<Path>.
 type Route struct {
@@ -209,6 +211,9 @@ func (m *Meta) Validate() error {
 	}
 	if subs[EventChatCommand] && !perms[PermChatCommandRead] {
 		return fmt.Errorf("subscription %q requires permission %q", EventChatCommand, PermChatCommandRead)
+	}
+	if subs[EventChatMessage] && !perms[PermChatRead] {
+		return fmt.Errorf("subscription %q requires permission %q", EventChatMessage, PermChatRead)
 	}
 	if err := m.validateCommands(subs[EventChatCommand]); err != nil {
 		return err

@@ -38,12 +38,15 @@ const (
 	PermChat     = "chat.send" // писать в чат канала от имени бота
 	// PermChatCommandRead — получать команды чата («!np …»), перечисленные в Meta.Commands. Весь чат плагину недоступен.
 	PermChatCommandRead = "chat.command.read"
+	// PermChatRead — получать все сообщения чата канала по умолчанию (OnChatMessage). Весь чат виден плагину целиком, а текст зрителей недоверенный.
+	PermChatRead = "chat.read"
 )
 
 const (
 	apiVersion        = 1
 	eventRedemption   = "twitch.redemption"
 	eventChatCommand  = "chat.command"
+	eventChatMessage  = "chat.message"
 	eventTimer        = "timer"
 	eventHTTPResponse = "http.response"
 )
@@ -186,6 +189,47 @@ type Redemption struct {
 	RedeemedAt  string `json:"redeemedAt"`
 }
 
+// ChatEmote — смайл в тексте сообщения: id и позиции (в символах Unicode, включительно).
+type ChatEmote struct {
+	ID    string `json:"id"`
+	Start int    `json:"start"`
+	End   int    `json:"end"`
+}
+
+// ChatMessage — сообщение чата. Текст, ники и всё остальное — данные зрителей: им нельзя доверять.
+type ChatMessage struct {
+	ID            string      `json:"id"`
+	Channel       string      `json:"channel"`
+	UserID        string      `json:"userId"`
+	Login         string      `json:"login"`
+	DisplayName   string      `json:"displayName"`
+	Color         string      `json:"color"`
+	Text          string      `json:"text"`
+	Action        bool        `json:"action"` // /me
+	Badges        []string    `json:"badges"` // broadcaster, moderator, subscriber, vip, …
+	IsBroadcaster bool        `json:"isBroadcaster"`
+	IsMod         bool        `json:"isMod"`
+	IsVip         bool        `json:"isVip"`
+	IsSub         bool        `json:"isSub"`
+	FirstMsg      bool        `json:"firstMsg"`
+	Emotes        []ChatEmote `json:"emotes"`
+	ReplyTo       string      `json:"replyTo,omitempty"` // id сообщения, на которое это ответ
+	Timestamp     int64       `json:"timestamp"`         // мс
+	FromBot       bool        `json:"fromBot"`           // написано аккаунтом бота OC
+}
+
+// ChatEvent — событие чата для плагина с PermChatRead: Event — message (Message), delete (TargetID — удалённое сообщение
+// или Login — все сообщения пользователя), clear (чат очищен целиком или Login — у пользователя) или status (Connected, Error).
+type ChatEvent struct {
+	Event     string       `json:"event"`
+	Channel   string       `json:"channel,omitempty"`
+	Message   *ChatMessage `json:"message,omitempty"`
+	TargetID  string       `json:"targetId,omitempty"`
+	Login     string       `json:"login,omitempty"`
+	Connected *bool        `json:"connected,omitempty"`
+	Error     string       `json:"error,omitempty"`
+}
+
 // ChatCommand — команда зрителя в чате («!np арг1 арг2»). Приходит только для команд из Meta.Commands.
 type ChatCommand struct {
 	Command       string   `json:"command"` // «np» для «!np»: без «!», в нижнем регистре
@@ -218,6 +262,7 @@ type Plugin struct {
 	onInit   func() error
 	onRedeem func(Redemption)
 	onCmd    func(ChatCommand)
+	onChat   func(ChatEvent)
 	timers   map[string]func()
 	fetches  map[string]func(HTTPResponse)
 	config   json.RawMessage
@@ -265,6 +310,10 @@ func (p *Plugin) OnRedemption(f func(Redemption)) { p.onRedeem = f }
 // OnChatCommand принимает команды чата. Нужны Meta.Commands (какие именно), разрешение PermChatCommandRead и его выдача пользователем.
 func (p *Plugin) OnChatCommand(f func(ChatCommand)) { p.onCmd = f }
 
+// OnChatMessage принимает все события чата канала по умолчанию: сообщения, удаления, очистку и состояние связи.
+// Нужны разрешение PermChatRead и его выдача пользователем. Сообщения самого бота тоже приходят (ChatMessage.FromBot).
+func (p *Plugin) OnChatMessage(f func(ChatEvent)) { p.onChat = f }
+
 // OnTimer вызывается, когда сработал таймер с этим id (см. SetTimer). Нужно разрешение PermTimer.
 func (p *Plugin) OnTimer(id string, f func()) { p.timers[id] = f }
 
@@ -288,6 +337,9 @@ func (p *Plugin) metaJSON() []byte {
 	}
 	if p.onCmd != nil {
 		out.Subscriptions = append(out.Subscriptions, eventChatCommand)
+	}
+	if p.onChat != nil {
+		out.Subscriptions = append(out.Subscriptions, eventChatMessage)
 	}
 	b, _ := json.Marshal(out)
 	return b
@@ -362,6 +414,11 @@ func (p *Plugin) onEvent(arg []byte) {
 		var c ChatCommand
 		if p.onCmd != nil && json.Unmarshal(ev.Data, &c) == nil {
 			run(func() { p.onCmd(c) })
+		}
+	case eventChatMessage:
+		var c ChatEvent
+		if p.onChat != nil && json.Unmarshal(ev.Data, &c) == nil {
+			run(func() { p.onChat(c) })
 		}
 	case eventTimer:
 		var t struct {

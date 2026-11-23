@@ -542,6 +542,48 @@ func TestChatSendUnavailableWithoutService(t *testing.T) {
 // Subscribers — в этих тестах подписчиков нет: потоки net.local не запускаются.
 func (b *fakeBus) Subscribers(string, string) int { return 0 }
 
+func TestDeliverChat(t *testing.T) {
+	meta := baseMeta("chat")
+	meta.Permissions = []string{PermChatRead}
+	meta.Subscriptions = []string{EventChatMessage}
+	var mu sync.Mutex
+	var got []string
+	mod := &fakeModule{meta: meta, handler: func(_ *fakeInst, _ string, arg []byte) ([]byte, error) {
+		mu.Lock()
+		got = append(got, string(arg))
+		mu.Unlock()
+		return nil, nil
+	}}
+	p := newTestPlugin(t, mod, Services{})
+	ev := map[string]any{"event": "message", "channel": "streamer", "message": map[string]any{"id": "m1", "text": "hi"}}
+	if p.DeliverChat(ev) {
+		t.Fatal("без разрешения chat.read чат не доставляется")
+	}
+	p.setGrants([]string{PermChatRead})
+	if p.Deliver(EventChatMessage, ev) {
+		t.Fatal("общий Deliver не должен пропускать чат мимо фильтра")
+	}
+	if !p.DeliverChat(ev) {
+		t.Fatal("подписка и разрешение есть: событие должно быть доставлено")
+	}
+	waitFor(t, "chat event", func() bool { mu.Lock(); defer mu.Unlock(); return len(got) == 1 })
+	mu.Lock()
+	defer mu.Unlock()
+	if !strings.Contains(got[0], `"type":"chat.message"`) || !strings.Contains(got[0], `"event":"message"`) || !strings.Contains(got[0], `"text":"hi"`) {
+		t.Fatalf("событие: %s", got[0])
+	}
+}
+
+func TestDeliverChatNeedsSubscription(t *testing.T) {
+	meta := baseMeta("quiet")
+	meta.Permissions = []string{PermChatRead}
+	mod := &fakeModule{meta: meta, handler: func(*fakeInst, string, []byte) ([]byte, error) { return nil, nil }}
+	p := newTestPlugin(t, mod, Services{}, PermChatRead)
+	if p.DeliverChat(map[string]any{"event": "message"}) {
+		t.Fatal("плагин без подписки chat.message чат не получает")
+	}
+}
+
 func TestDeliverCommand(t *testing.T) {
 	meta := baseMeta("cmd")
 	meta.Permissions = []string{PermChatCommandRead}
