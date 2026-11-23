@@ -35,6 +35,10 @@ func TestMixerPocPageIsSelfContainedAndWebSocketNeedsUpgrade(t *testing.T) {
 	if resp.StatusCode != 200 || !strings.Contains(body, "/api/mixer-poc/ws") || !strings.Contains(resp.Header.Get("Content-Security-Policy"), "default-src 'none'") {
 		t.Fatalf("%d %v", resp.StatusCode, resp.Header)
 	}
+	// Safari не считает 'self' достаточным для ws://: в CSP должен быть явный адрес вместе с портом
+	if !strings.Contains(resp.Header.Get("Content-Security-Policy"), "ws://"+ln.Addr().String()) {
+		t.Fatalf("в CSP нет ws://адрес:порт: %s", resp.Header.Get("Content-Security-Policy"))
+	}
 	if strings.Contains(body, "http://") || strings.Contains(body, "https://") {
 		t.Fatal("страница не должна ходить на внешние адреса")
 	}

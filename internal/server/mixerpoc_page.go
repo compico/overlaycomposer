@@ -60,7 +60,7 @@ h1{font-size:16px;margin:0;font-weight:600}
   var ZG = 20, ZY = 9; // границы цветовых зон шкалы: зелёная до −20 дБ, жёлтая до −9, дальше красная (как в OBS)
   var VSTEPS = 1000, VFLOOR = -100; // ползунок громкости: положение 0…1000, нелинейно, как фейдер OBS
   var rowsEl = document.getElementById("rows"), stEl = document.getElementById("st"), dgEl = document.getElementById("dg");
-  var rows = {}, order = "", ws = null, frames = 0, shown = 0, online = false, count = 0, drawn = 0, drawFps = 0, worst = 0, worstShown = 0;
+  var rows = {}, order = "", ws = null, frames = 0, shown = 0, online = false, wsState = "connecting", wsNote = "", count = 0, drawn = 0, drawFps = 0, worst = 0, worstShown = 0;
 
   var ICON = {
     on: '<svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9z"/><path class="nf" d="M16.5 8.5a5 5 0 010 7M19 6a8.5 8.5 0 010 12"/></svg>',
@@ -188,20 +188,27 @@ h1{font-size:16px;margin:0;font-weight:600}
   }
 
   function paintStatus() {
-    stEl.className = online ? "" : "off";
-    stEl.textContent = (online ? "OBS connected" : "OBS is not connected") + " · active sources: " + count;
+    var msg = wsState === "open" ? (online ? "OBS connected · active sources: " + count : "Connected to the app, but OBS is not connected")
+      : (wsState === "connecting" ? "Connecting to the app…" : "No connection to the app, retrying…" + (wsNote ? " (" + wsNote + ")" : ""));
+    stEl.className = wsState === "open" && online ? "" : "off";
+    stEl.textContent = msg;
     dgEl.textContent = "network " + shown + " frames/s · screen " + drawFps + " fps · worst frame gap " + worstShown + " ms";
   }
   setInterval(function () { shown = frames; frames = 0; drawFps = drawn; drawn = 0; worstShown = Math.round(worst); worst = 0; paintStatus(); }, 1000);
 
   function connect() {
     ws = new WebSocket((location.protocol === "https:" ? "wss" : "ws") + "://" + location.host + "/api/mixer-poc/ws");
+    wsState = "connecting"; paintStatus();
+    ws.onopen = function () { wsState = "open"; wsNote = ""; paintStatus(); };
+    ws.onerror = function () { wsNote = "error"; };
     ws.onmessage = function (ev) {
       var f; try { f = JSON.parse(ev.data); } catch (e) { return; }
       frames++; online = !!f.online; apply(f.inputs || []);
     };
-    ws.onclose = function () { online = false; paintStatus(); setTimeout(connect, 1000); };
+    ws.onclose = function (ev) { online = false; wsState = "closed"; wsNote = (wsNote ? wsNote + ", " : "") + "code " + (ev && ev.code); paintStatus(); setTimeout(connect, 1000); };
   }
+  // Политика безопасности блокирует соединение молча — покажем причину на экране (если браузер сообщает о таком).
+  document.addEventListener("securitypolicyviolation", function (e) { wsNote = "blocked: " + e.violatedDirective; paintStatus(); });
   connect();
   requestAnimationFrame(draw);
 })();

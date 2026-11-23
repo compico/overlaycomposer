@@ -34,7 +34,8 @@ type mixerPocFrame struct {
 func (s *Server) mixerPocRoutes() {
 	s.app.Get("/mixer-poc", func(c fiber.Ctx) error {
 		c.Set("Cache-Control", "no-store")
-		c.Set("Content-Security-Policy", deck.CSPFor(c.Hostname()))
+		// Host — с портом: Safari требует явный ws://адрес:порт
+		c.Set("Content-Security-Policy", deck.CSPFor(c.Host()))
 		c.Set("X-Content-Type-Options", "nosniff")
 		return s.htmlString(c, mixerPocPage)
 	})
