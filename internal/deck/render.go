@@ -212,18 +212,18 @@ body.off .mx{opacity:.45}
 const clientJS = `(function(){
 var ROWS=4.8;
 var body=document.body,sc=document.getElementById("scroll"),rev=body.getAttribute("data-rev"),armed=null,armTimer=0,msgTimer=0,msg=document.getElementById("msg");
-var PAD=0.5,GAP=0.6;
+var PAD=0.5,GAP=0.6,EDGE=0.12;
 /* Размер клетки задаёт высота экрана, а на узком экране (iPad в портрете) заданная ширина микшера в клетках шире самого экрана: сжимаем только микшер до ширины экрана и сдвигаем следующие группы */
 function layout(){
- var cell=sc.clientHeight/ROWS,gs=sc.getElementsByClassName("g"),st=document.getElementById("strip"),x=PAD,i,w,g,room;
+ var cell=sc.clientHeight/ROWS,gs=sc.getElementsByClassName("g"),st=document.getElementById("strip"),x=PAD,end=PAD,i,w,g,room;
  if(!cell){return;}
- room=sc.clientWidth/cell-2*PAD;
+ room=sc.clientWidth/cell-2*EDGE;
  for(i=0;i<gs.length;i++){
   g=gs[i];w=parseFloat(g.getAttribute("data-w"))||1;
-  if(g.getAttribute("data-mx")&&w>room){w=Math.max(room,2);}
+  if(g.getAttribute("data-mx")&&w>room){w=Math.max(room,2);if(i===0){x=EDGE;}if(i===gs.length-1){end=EDGE;}}
   g.style.left=x+"em";g.style.width=w+"em";x+=w+GAP;
  }
- st.style.width=(x-GAP+PAD)+"em";
+ st.style.width=(x-GAP+end)+"em";
 }
 function fit(){sc.style.fontSize=(sc.clientHeight/ROWS)+"px";layout();}
 fit();
