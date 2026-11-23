@@ -497,3 +497,18 @@ func TestDeckMixerSubscriptionAndCommandsNeedAMixerGroup(t *testing.T) {
 		t.Fatalf("после закрытия наблюдателей: %d", o.watchers)
 	}
 }
+
+// Hostname() в Fiber отдаёт адрес без порта, и Safari блокировал WebSocket (ws://адрес без порта не совпадал с адресом страницы):
+// панель молча уходила на опрос, а микшеру, которому нужен WebSocket, оставалось «No active audio sources».
+func TestDeckCSPAllowsWebSocketOnTheAddressWithPort(t *testing.T) {
+	s, _ := deckEnv(t)
+	req := httptest.NewRequest("GET", "http://192.168.1.44:7878/deck", nil)
+	resp, err := appTest(s.app, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if csp := resp.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "ws://192.168.1.44:7878 wss://192.168.1.44:7878") {
+		t.Fatalf("в CSP нет ws://адрес:порт: %s", csp)
+	}
+}

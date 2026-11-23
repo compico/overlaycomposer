@@ -151,7 +151,7 @@ func (s *Server) deckPage(c fiber.Ctx) error {
 		return err
 	}
 	c.Set("Cache-Control", "no-store")
-	c.Set("Content-Security-Policy", deck.CSPFor(c.Hostname()))
+	c.Set("Content-Security-Policy", deck.CSPFor(c.Host()))
 	c.Set("X-Content-Type-Options", "nosniff")
 	c.Set("Content-Type", "text/html; charset=utf-8")
 	return c.Send(out)
