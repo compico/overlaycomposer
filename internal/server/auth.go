@@ -177,6 +177,7 @@ func (s *Server) pair(c fiber.Ctx) error {
 	default:
 		return serverErr(c, err)
 	}
+	s.stateChanged("devices")
 	c.Cookie(&fiber.Cookie{
 		Name: tokenCookie, Value: token, Path: "/", HTTPOnly: true, SameSite: "Lax",
 		Expires: time.Now().AddDate(10, 0, 0),
@@ -218,6 +219,7 @@ func (s *Server) revokeDevice(c fiber.Ctx) error {
 	if !ok {
 		return notFound(c)
 	}
+	s.stateChanged("devices")
 	return c.JSON(fiber.Map{"ok": true})
 }
 

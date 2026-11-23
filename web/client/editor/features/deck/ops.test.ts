@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  addGroup, addTile, findSpot, groupWidth, moveGroup, moveTile, removeGroup, removeTile, renameGroup, sizesFor, unusedScenes, updateTile,
+  addGroup, addMixerGroup, addTile, findSpot, groupWidth, hasMixer, moveGroup, moveTile, removeGroup, removeTile, renameGroup, setMixerCols, sizesFor, tileTitle, unusedScenes, updateTile, MAX_GROUP_COLS, MIXER_DEFAULT_COLS, MIXER_MIN_COLS,
   type DeckGrid, type DeckLayout,
 } from "./ops.ts";
 
@@ -118,4 +118,90 @@ test("unusedScenes и findSpot для 2×3", () => {
   const l = addTile(base(), "g1", S23, { scene: "a" }, grid)!.layout;
   assert.deepEqual(unusedScenes(l, ["a", "b", "c"]), ["b", "c"]);
   assert.deepEqual(findSpot(l.groups[0], S23, grid), { x: 2, y: 0 });
+});
+
+test("updateTile: действие плагина берёт подпись, значок и «второе касание» из объявления, но не затирает своё", () => {
+  const toggle = { plugin: "music", pluginName: "Music", id: "toggle", title: "Play / pause", icon: "play" };
+  const ban = { plugin: "music", pluginName: "Music", id: "skip-ban", title: "Skip and ban", icon: "ban", danger: true };
+  let l = addTile(base(), "g1", S11, { scene: "Game", label: "" }, grid)!.layout;
+  l = updateTile(l, "t1", { pluginAction: toggle }, grid)!;
+  let t1 = l.groups[0].tiles[0];
+  assert.deepEqual(t1.action, { type: "plugin", plugin: "music", pluginAction: "toggle" });
+  assert.equal(t1.label, "Play / pause");
+  assert.equal(t1.icon, "play");
+  assert.equal(t1.confirm, undefined);
+  assert.equal(tileTitle(t1), "Play / pause");
+  // своя подпись остаётся; опасное действие включает подтверждение
+  l = updateTile(l, "t1", { label: "Next!" }, grid)!;
+  l = updateTile(l, "t1", { pluginAction: ban }, grid)!;
+  t1 = l.groups[0].tiles[0];
+  assert.deepEqual([t1.label, t1.icon, t1.confirm, t1.action.pluginAction], ["Next!", "play", true, "skip-ban"]);
+  // вернуть сцену: плагин из действия убирается
+  l = updateTile(l, "t1", { scene: "Chat" }, grid)!;
+  assert.deepEqual(l.groups[0].tiles[0].action, { type: "scene", scene: "Chat" });
+});
+
+test("tileTitle: подпись, сцена, плагин и действие", () => {
+  const t = (action: object, label?: string) => ({ id: "x", x: 0, y: 0, w: 1, h: 1, label, action }) as never;
+  assert.equal(tileTitle(t({ type: "scene", scene: "Game" })), "Game");
+  assert.equal(tileTitle(t({ type: "scene", scene: "Game" }, "Mine")), "Mine");
+  assert.equal(tileTitle(t({ type: "plugin", plugin: "music", pluginAction: "toggle" })), "music: toggle");
+});
+
+test("unusedScenes не считает плитки плагинов занятыми сценами", () => {
+  const l = base();
+  l.groups[0].tiles.push({ id: "p", x: 0, y: 0, w: 1, h: 1, action: { type: "plugin", plugin: "music", pluginAction: "toggle" } });
+  assert.deepEqual(unusedScenes(l, ["A", "B"]), ["A", "B"]);
+});
+
+test("updateTile: папка со сценами", () => {
+  let l = addTile(base(), "g1", S23, { scene: "Game", label: "" }, grid)!.layout;
+  l = updateTile(l, "t1", { confirm: true }, grid)!;
+  l = updateTile(l, "t1", { folder: ["Game", " ", "Chat", "Game"] }, grid)!;
+  let t = l.groups[0].tiles[0];
+  assert.deepEqual(t.action, { type: "folder", scenes: ["Game", "Chat"] });
+  assert.equal(t.confirm, undefined); // папке второе касание не нужно
+  assert.equal(t.label, "Scenes");
+  assert.equal(tileTitle({ ...t, label: undefined }), "Folder (2)");
+  // свою подпись не трогаем, пустой список и больше предела — отказ
+  l = updateTile(l, "t1", { label: "Fav" }, grid)!;
+  l = updateTile(l, "t1", { folder: ["A"] }, grid)!;
+  t = l.groups[0].tiles[0];
+  assert.deepEqual([t.label, t.action.scenes], ["Fav", ["A"]]);
+  assert.equal(updateTile(l, "t1", { folder: [] }, grid), null);
+  assert.equal(updateTile(l, "t1", { folder: [" "] }, grid), null);
+  assert.equal(updateTile(l, "t1", { folder: Array.from({ length: 9 }, (_, i) => `s${i}`) }, grid), null);
+  assert.ok(updateTile(l, "t1", { folder: Array.from({ length: 8 }, (_, i) => `s${i}`) }, grid));
+  // обратно на сцену: список сцен из действия убирается
+  l = updateTile(l, "t1", { scene: "Game" }, grid)!;
+  assert.deepEqual(l.groups[0].tiles[0].action, { type: "scene", scene: "Game" });
+});
+
+test("плитка mute: источник, подпись и значок по умолчанию, пользовательские не затираются", () => {
+  let l = addTile(base(), "g1", S11, { scene: "Game", label: "" }, grid)!.layout;
+  l = updateTile(l, "t1", { mute: " Mic/Aux " }, grid)!;
+  let t1 = l.groups[0].tiles[0];
+  assert.deepEqual(t1.action, { type: "mute", input: "Mic/Aux" });
+  assert.deepEqual([t1.label, t1.icon], ["Mic/Aux", "mic"]);
+  l = updateTile(l, "t1", { label: "Mic", icon: "ban" }, grid)!;
+  l = updateTile(l, "t1", { mute: "Desktop Audio" }, grid)!;
+  t1 = l.groups[0].tiles[0];
+  assert.deepEqual([t1.label, t1.icon, t1.action.input], ["Mic", "ban", "Desktop Audio"]);
+  assert.equal(tileTitle({ ...t1, label: undefined }), "Desktop Audio");
+});
+
+test("группа-микшер: одна на раскладку, ширина в пределах, плиток в ней нет", () => {
+  const l0 = base();
+  const a = addMixerGroup(l0)!;
+  const g = a.layout.groups.find((x) => x.id === a.id)!;
+  assert.deepEqual([g.kind, g.cols, g.tiles.length, groupWidth(g)], ["mixer", MIXER_DEFAULT_COLS, 0, MIXER_DEFAULT_COLS]);
+  assert.equal(hasMixer(a.layout), true);
+  assert.equal(addMixerGroup(a.layout), null, "второй микшер добавить нельзя");
+  assert.equal(setMixerCols(a.layout, a.id, 99)!.groups.find((x) => x.id === a.id)!.cols, MAX_GROUP_COLS);
+  assert.equal(setMixerCols(a.layout, a.id, 1)!.groups.find((x) => x.id === a.id)!.cols, MIXER_MIN_COLS);
+  assert.equal(setMixerCols(a.layout, a.id, NaN), null);
+  assert.equal(setMixerCols(a.layout, l0.groups[0].id, 6), null, "ширина — только у микшера");
+  assert.equal(addTile(a.layout, a.id, S11, { scene: "X" }, grid), null, "в микшер плитки не добавляются");
+  const t = addTile(a.layout, l0.groups[0].id, S11, { scene: "X" }, grid)!;
+  assert.equal(moveTile(t.layout, t.id, a.id, 0, 0, grid), null, "и не переносятся");
 });

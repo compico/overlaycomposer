@@ -1,12 +1,15 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +18,7 @@ import (
 
 	"github.com/compico/overlaycomposer/internal/obs"
 	"github.com/compico/overlaycomposer/internal/store"
+	"github.com/compico/overlaycomposer/internal/wasmplugins"
 )
 
 type fakeDeckObs struct {
@@ -23,11 +27,47 @@ type fakeDeckObs struct {
 	scenes    []string
 	set       []string
 	err       error
+	inputs    []string
+	muted     map[string]bool // имя → заглушён; ключи — известные аудиоисточники
+	toggled   []string
+	watchers  int
+	push      func([]obs.MixerInput)
+	mixCmds   []string
 }
 
-func (f *fakeDeckObs) Connected() bool      { return f.connected }
-func (f *fakeDeckObs) CurrentScene() string { return f.scene }
-func (f *fakeDeckObs) Scenes() []string     { return f.scenes }
+func (f *fakeDeckObs) Connected() bool       { return f.connected }
+func (f *fakeDeckObs) CurrentScene() string  { return f.scene }
+func (f *fakeDeckObs) Scenes() []string      { return f.scenes }
+func (f *fakeDeckObs) AudioInputs() []string { return f.inputs }
+func (f *fakeDeckObs) Muted(n string) bool   { return f.muted[n] }
+func (f *fakeDeckObs) ToggleMute(n string) error {
+	if f.err != nil {
+		return f.err
+	}
+	if _, ok := f.muted[n]; !ok {
+		return obs.ErrUnknownInput
+	}
+	f.muted[n] = !f.muted[n]
+	f.toggled = append(f.toggled, n)
+	return nil
+}
+func (f *fakeDeckObs) WatchMixer(fn func([]obs.MixerInput)) func() {
+	f.watchers++
+	f.push = fn
+	return func() { f.watchers--; f.push = nil }
+}
+func (f *fakeDeckObs) ToggleInputMute(n string) error {
+	f.mixCmds = append(f.mixCmds, "toggle:"+n)
+	return nil
+}
+func (f *fakeDeckObs) ToggleInputMonitor(n string) error {
+	f.mixCmds = append(f.mixCmds, "monitor:"+n)
+	return nil
+}
+func (f *fakeDeckObs) SetInputVolumeDB(n string, db float64) error {
+	f.mixCmds = append(f.mixCmds, fmt.Sprintf("vol:%s:%.1f", n, db))
+	return nil
+}
 func (f *fakeDeckObs) SetScene(n string) error {
 	if f.err != nil {
 		return f.err
@@ -57,7 +97,7 @@ func deckReq(t *testing.T, s *Server, method, path, body string, hdr bool) (int,
 	if hdr {
 		req.Header.Set("X-Overlay-Composer", "1")
 	}
-	resp, err := s.app.Test(req)
+	resp, err := appTest(s.app, req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,5 +269,246 @@ func TestDeckBucket(t *testing.T) {
 	}
 	if !b.allow(now.Add(time.Second)) {
 		t.Fatal("за секунду набегают токены")
+	}
+}
+
+// fakeDeckPlugins — wasm-плагины панели: список и запись вызовов.
+type fakeDeckPlugins struct {
+	infos []wasmplugins.Info
+	calls []wasmplugins.Request
+	res   wasmplugins.Response
+	err   error
+}
+
+func (f *fakeDeckPlugins) List() ([]wasmplugins.Info, []wasmplugins.Problem) { return f.infos, nil }
+func (f *fakeDeckPlugins) Handle(_ context.Context, _ string, r wasmplugins.Request) (wasmplugins.Response, error) {
+	f.calls = append(f.calls, r)
+	return f.res, f.err
+}
+
+func musicInfo(state string) wasmplugins.Info {
+	return wasmplugins.Info{State: state, Meta: wasmplugins.Meta{ID: "music", Name: "Music",
+		Routes: []wasmplugins.Route{{Method: "POST", Path: "/control", Handler: "ctl"}},
+		Actions: []wasmplugins.Action{
+			{ID: "toggle", Title: "Play / pause", Icon: "play", Method: "POST", Path: "/control", Body: []byte(`{"action":"toggle"}`)},
+			{ID: "skip-ban", Title: "Skip and ban", Method: "POST", Path: "/control", Body: []byte(`{"action":"skip_ban"}`), Danger: true},
+		}}}
+}
+
+const deckPluginLayout = `{"rev":0,"groups":[{"id":"main","tiles":[
+ {"id":"toggle","x":0,"y":0,"w":1,"h":1,"action":{"type":"plugin","plugin":"music","pluginAction":"toggle"}},
+ {"id":"ban","x":1,"y":0,"w":1,"h":1,"confirm":true,"action":{"type":"plugin","plugin":"music","pluginAction":"skip-ban"}},
+ {"id":"missing-action","x":2,"y":0,"w":1,"h":1,"action":{"type":"plugin","plugin":"music","pluginAction":"nope"}},
+ {"id":"missing-plugin","x":3,"y":0,"w":1,"h":1,"action":{"type":"plugin","plugin":"ghost","pluginAction":"x"}}]}]}`
+
+func TestDeckPluginTileCallsOnlyDeclaredRouteWithDeclaredBody(t *testing.T) {
+	s, _ := deckEnv(t)
+	f := &fakeDeckPlugins{infos: []wasmplugins.Info{musicInfo(wasmplugins.StateRunning)}, res: wasmplugins.Response{Status: 200}}
+	s.deckPluginsOverride = f
+	if code, b, _ := deckReq(t, s, "PUT", "/api/deck/layout", deckPluginLayout, true); code != 200 {
+		t.Fatalf("save: %d %s", code, b)
+	}
+	press := func(body string) (int, string) {
+		c, b, _ := deckReq(t, s, "POST", "/api/deck/press", body, true)
+		return c, b
+	}
+	// маршрут и тело — из объявления плагина; всё, что прислал клиент, игнорируется
+	if c, b := press(`{"tile":"toggle","path":"/evil","body":{"action":"skip_ban"}}`); c != 200 {
+		t.Fatalf("%d %s", c, b)
+	}
+	if len(f.calls) != 1 || f.calls[0].Method != "POST" || f.calls[0].Path != "/control" || string(f.calls[0].Body) != `{"action":"toggle"}` {
+		t.Fatalf("вызов: %+v", f.calls)
+	}
+	// опасная плитка плагина — тоже через второе касание
+	if c, _ := press(`{"tile":"ban"}`); c != 409 || len(f.calls) != 1 {
+		t.Fatalf("confirm: %d %d", c, len(f.calls))
+	}
+	if c, _ := press(`{"tile":"ban","confirm":true}`); c != 200 || string(f.calls[1].Body) != `{"action":"skip_ban"}` {
+		t.Fatalf("confirmed: %+v", f.calls)
+	}
+	// действия или плагина уже нет — 404, плагин не запущен — 503, плагин не ответил — 502, плагин отказал — 409 с его текстом
+	if c, _ := press(`{"tile":"missing-action"}`); c != 404 {
+		t.Fatalf("нет действия: %d", c)
+	}
+	if c, _ := press(`{"tile":"missing-plugin"}`); c != 404 {
+		t.Fatalf("нет плагина: %d", c)
+	}
+	n := len(f.calls)
+	f.infos = []wasmplugins.Info{musicInfo(wasmplugins.StateFailed)}
+	if c, _ := press(`{"tile":"toggle"}`); c != 503 || len(f.calls) != n {
+		t.Fatalf("не запущен: %d", c)
+	}
+	f.infos = []wasmplugins.Info{musicInfo(wasmplugins.StateRunning)}
+	f.err = errors.New("timeout")
+	if c, b := press(`{"tile":"toggle"}`); c != 502 || strings.Contains(b, "timeout") {
+		t.Fatalf("плагин не ответил: %d %s", c, b)
+	}
+	f.err, f.res = nil, wasmplugins.Response{Status: 409, Body: []byte(`{"error":"nothing is playing"}`)}
+	if c, b := press(`{"tile":"toggle"}`); c != 409 || !strings.Contains(b, "nothing is playing") {
+		t.Fatalf("отказ плагина: %d %s", c, b)
+	}
+	f.res = wasmplugins.Response{Status: 500, Body: []byte(`{"error":"secret path /home/x"}`)}
+	if c, _ := press(`{"tile":"toggle"}`); c != 502 {
+		t.Fatalf("сбой плагина: %d", c)
+	}
+	// плагины выключены (Wasm == nil) — 503
+	s.deckPluginsOverride = nil
+	if c, _ := press(`{"tile":"toggle"}`); c != 503 {
+		t.Fatalf("плагины выключены: %d", c)
+	}
+}
+
+func TestDeckLayoutListsPluginActions(t *testing.T) {
+	s, _ := deckEnv(t)
+	s.deckPluginsOverride = &fakeDeckPlugins{infos: []wasmplugins.Info{musicInfo(wasmplugins.StateRunning)}}
+	_, b, _ := deckReq(t, s, "GET", "/api/deck/layout", "", false)
+	var r struct {
+		PluginActions []struct {
+			Plugin, PluginName, ID, Title, Icon string
+			Danger                              bool
+		} `json:"pluginActions"`
+	}
+	if err := json.Unmarshal([]byte(b), &r); err != nil || len(r.PluginActions) != 2 {
+		t.Fatalf("%v %s", err, b)
+	}
+	if a := r.PluginActions[1]; a.Plugin != "music" || a.PluginName != "Music" || a.ID != "skip-ban" || !a.Danger {
+		t.Fatalf("%+v", a)
+	}
+	s.deckPluginsOverride = nil
+	_, b, _ = deckReq(t, s, "GET", "/api/deck/layout", "", false)
+	if !strings.Contains(b, `"pluginActions":[]`) {
+		t.Fatalf("без плагинов — пустой список, а не null: %s", b)
+	}
+}
+
+func TestDeckFolderPressAcceptsOnlyListedScenes(t *testing.T) {
+	s, o := deckEnv(t)
+	o.scenes = []string{"Game", "Chat", "Secret"}
+	layout := `{"rev":0,"groups":[{"id":"g","tiles":[{"id":"fav","x":0,"y":0,"w":2,"h":3,"confirm":true,"action":{"type":"folder","scenes":["Game","Chat"]}}]}]}`
+	if code, b, _ := deckReq(t, s, "PUT", "/api/deck/layout", layout, true); code != 200 {
+		t.Fatalf("save: %d %s", code, b)
+	}
+	press := func(body string) int {
+		c, _, _ := deckReq(t, s, "POST", "/api/deck/press", body, true)
+		return c
+	}
+	if c := press(`{"tile":"fav"}`); c != 400 {
+		t.Fatalf("без сцены: %d", c)
+	}
+	if c := press(`{"tile":"fav","scene":"Secret"}`); c != 400 || o.scene == "Secret" {
+		t.Fatalf("чужая сцена: %d %q", c, o.scene)
+	}
+	if c := press(`{"tile":"fav","scene":"Chat"}`); c != 200 || o.scene != "Chat" {
+		t.Fatalf("сцена из папки (confirm папке не нужен): %d %q", c, o.scene)
+	}
+	st := s.deckStateNow()
+	if !reflect.DeepEqual(st.On, []string{"fav"}) || !reflect.DeepEqual(st.Text["fav"], []string{"Chat"}) {
+		t.Fatalf("состояние: %+v", st)
+	}
+	o.scene = "Secret"
+	if st := s.deckStateNow(); len(st.On) != 0 || len(st.Text) != 0 {
+		t.Fatalf("сцена не из папки: %+v", st)
+	}
+}
+
+func TestDeckMuteTileTogglesOnlyKnownAudioInput(t *testing.T) {
+	s, o := deckEnv(t)
+	o.inputs = []string{"Mic"}
+	o.muted = map[string]bool{"Mic": false}
+	layout := `{"rev":0,"groups":[{"id":"main","tiles":[
+ {"id":"mic","x":0,"y":0,"w":1,"h":1,"icon":"mic","action":{"type":"mute","input":"Mic"}},
+ {"id":"ghost","x":1,"y":0,"w":1,"h":1,"action":{"type":"mute","input":"Gone"}}]}]}`
+	if code, b, _ := deckReq(t, s, "PUT", "/api/deck/layout", layout, true); code != 200 {
+		t.Fatalf("save: %d %s", code, b)
+	}
+	press := func(id string) int {
+		code, _, _ := deckReq(t, s, "POST", "/api/deck/press", `{"tile":"`+id+`"}`, true)
+		return code
+	}
+	if code := press("mic"); code != 200 || !reflect.DeepEqual(o.toggled, []string{"Mic"}) {
+		t.Fatalf("mute: %d %v", code, o.toggled)
+	}
+	if code := press("ghost"); code != 404 {
+		t.Fatalf("неизвестный источник должен давать 404, получили %d", code)
+	}
+	// заглушённый источник подсвечивает плитку и на странице, и в состоянии для устройств
+	_, html, _ := deckReq(t, s, "GET", "/deck", "", false)
+	if !strings.Contains(html, `data-id="mic"`) || !strings.Contains(html, "c-steel on") {
+		t.Fatalf("плитка mute должна быть подсвечена: %s", html)
+	}
+	if st := s.deckStateNow(); !reflect.DeepEqual(st.On, []string{"mic"}) {
+		t.Fatalf("on: %v", st.On)
+	}
+	code, b, _ := deckReq(t, s, "GET", "/api/deck/layout", "", false)
+	if code != 200 || !strings.Contains(b, `"inputs":["Mic"]`) {
+		t.Fatalf("список источников в ответе раскладки: %d %s", code, b)
+	}
+}
+
+func TestDeckMixerSubscriptionAndCommandsNeedAMixerGroup(t *testing.T) {
+	s, o := deckEnv(t)
+	m := newDeckMixConn(s)
+	defer m.close()
+
+	// в раскладке по умолчанию микшера нет: подписка и команды игнорируются
+	m.handle([]byte(`{"t":"mixer","on":true}`))
+	m.handle([]byte(`{"t":"mx","a":"toggle","n":"Mic"}`))
+	if o.watchers != 0 || len(o.mixCmds) != 0 {
+		t.Fatalf("без группы-микшера ничего не должно работать: %d %v", o.watchers, o.mixCmds)
+	}
+
+	layout := `{"rev":0,"groups":[{"id":"main","tiles":[]},{"id":"mix","name":"Mixer","kind":"mixer","cols":8,"tiles":[]}]}`
+	if code, b, _ := deckReq(t, s, "PUT", "/api/deck/layout", layout, true); code != 200 {
+		t.Fatalf("save: %d %s", code, b)
+	}
+	m.handle([]byte(`{"t":"mx","a":"toggle","n":"Mic"}`)) // без подписки команды тоже не идут
+	if len(o.mixCmds) != 0 {
+		t.Fatalf("команда без подписки: %v", o.mixCmds)
+	}
+	m.handle([]byte(`{"t":"mixer","on":true}`))
+	m.handle([]byte(`{"t":"mixer","on":true}`)) // повторная подписка не плодит наблюдателей
+	if o.watchers != 1 {
+		t.Fatalf("наблюдателей: %d", o.watchers)
+	}
+	o.push([]obs.MixerInput{{Name: "Mic", Peak: -12, VolumeDB: -3, Monitor: "none"}})
+	if got := string(m.frame(<-m.ch)); got != `{"t":"mixer","inputs":[{"name":"Mic","peak":-12,"muted":false,"volumeDb":-3,"monitor":"none"}]}` {
+		t.Fatalf("кадр: %s", got)
+	}
+
+	time.Sleep(2 * deckMixerMinGap)
+	m.handle([]byte(`{"t":"mx","a":"toggle","n":"Mic"}`))
+	time.Sleep(2 * deckMixerMinGap)
+	m.handle([]byte(`{"t":"mx","a":"monitor","n":"Mic"}`))
+	time.Sleep(2 * deckMixerMinGap)
+	m.handle([]byte(`{"t":"mx","a":"vol","n":"Mic","db":-12.5}`))
+	m.handle([]byte(`{"t":"mx","a":"vol","n":"Mic","db":-1}`)) // слишком часто: пропускается
+	m.handle([]byte(`не json`))
+	if want := []string{"toggle:Mic", "monitor:Mic", "vol:Mic:-12.5"}; !reflect.DeepEqual(o.mixCmds, want) {
+		t.Fatalf("команды: %v", o.mixCmds)
+	}
+
+	m.handle([]byte(`{"t":"mixer","on":false}`))
+	if o.watchers != 0 {
+		t.Fatalf("после отписки наблюдателей: %d", o.watchers)
+	}
+	m.handle([]byte(`{"t":"mixer","on":true}`))
+	m.close() // закрытие соединения снимает подписку
+	if o.watchers != 0 {
+		t.Fatalf("после закрытия наблюдателей: %d", o.watchers)
+	}
+}
+
+// Hostname() в Fiber отдаёт адрес без порта, и Safari блокировал WebSocket (ws://адрес без порта не совпадал с адресом страницы):
+// панель молча уходила на опрос, а микшеру, которому нужен WebSocket, оставалось «No active audio sources».
+func TestDeckCSPAllowsWebSocketOnTheAddressWithPort(t *testing.T) {
+	s, _ := deckEnv(t)
+	req := httptest.NewRequest("GET", "http://192.168.1.44:7878/deck", nil)
+	resp, err := appTest(s.app, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if csp := resp.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "ws://192.168.1.44:7878 wss://192.168.1.44:7878") {
+		t.Fatalf("в CSP нет ws://адрес:порт: %s", csp)
 	}
 }

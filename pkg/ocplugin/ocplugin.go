@@ -36,11 +36,14 @@ const (
 	PermTimer    = "timer"
 	PermPublish  = "events.publish"
 	PermChat     = "chat.send" // писать в чат канала от имени бота
+	// PermChatCommandRead — получать команды чата («!np …»), перечисленные в Meta.Commands. Весь чат плагину недоступен.
+	PermChatCommandRead = "chat.command.read"
 )
 
 const (
 	apiVersion        = 1
 	eventRedemption   = "twitch.redemption"
+	eventChatCommand  = "chat.command"
 	eventTimer        = "timer"
 	eventHTTPResponse = "http.response"
 )
@@ -63,6 +66,42 @@ type Meta struct {
 	Settings string `json:"settings,omitempty"`
 	// Events — топики, которые плагин публикует через Publish. Публиковать можно только объявленные.
 	Events []EventDecl `json:"events,omitempty"`
+	// Commands — команды чата без «!» в нижнем регистре, которые плагин хочет получать в OnChatCommand (нужно PermChatCommandRead).
+	Commands []string `json:"commands,omitempty"`
+	// Actions — действия для панели Deck: нажатие плитки вызывает маршрут плагина с готовым телом (см. Action).
+	Actions []Action `json:"actions,omitempty"`
+}
+
+// Action — действие плагина для плитки панели Deck. OC вызывает только объявленные действия: Method Path (маршрут плагина,
+// по умолчанию POST) с телом Body. Маршрут должен быть зарегистрирован (GET/POST/…) — иначе плагин не запустится.
+type Action struct {
+	ID     string          `json:"id"`               // a-z, 0-9, _ и -, до 32 символов; уникален в плагине
+	Title  string          `json:"title"`            // подпись в редакторе и на плитке по умолчанию
+	Icon   string          `json:"icon,omitempty"`   // значок Deck: play, pause, next, ban, scene, home, mic
+	Method string          `json:"method,omitempty"` // по умолчанию POST
+	Path   string          `json:"path"`
+	Body   json.RawMessage `json:"body,omitempty"`   // готовое тело запроса: JSON до 1 КиБ
+	Danger bool            `json:"danger,omitempty"` // необратимо или заметно зрителям: плитка просит подтверждения
+	// ActiveWhen — когда плитка подсвечена: последнее событие топика (объявите его в Meta.Events) удовлетворяет условию.
+	ActiveWhen *ActiveWhen `json:"activeWhen,omitempty"`
+	// Display — текст на плитке из событий плагина (см. Display).
+	Display *Display `json:"display,omitempty"`
+}
+
+// Display — текст плитки Deck из последнего события топика (объявите его в Meta.Events): каждое поле Fields (путь «a.b»)
+// даёт строку; строка берётся как есть, число — числом, массив строк — через запятую. До 4 полей, строка до 80 символов.
+// Первая строка на плитке жирная (например, название трека), остальные обычные (исполнитель).
+type Display struct {
+	Topic  string   `json:"topic"`
+	Fields []string `json:"fields"`
+}
+
+// ActiveWhen — условие подсветки плитки Deck по событию плагина. Field — путь «a.b» к полю объекта события (пусто — само значение);
+// Equals — скаляр для сравнения (строка, число, bool), например json.RawMessage(`true`); без него подсветка, когда значение «истинно».
+type ActiveWhen struct {
+	Topic  string          `json:"topic"`
+	Field  string          `json:"field,omitempty"`
+	Equals json.RawMessage `json:"equals,omitempty"`
 }
 
 // NetLocalTarget — адрес программы на этом компьютере: Target — host:port (127.0.0.1, localhost или [::1]).
@@ -147,6 +186,22 @@ type Redemption struct {
 	RedeemedAt  string `json:"redeemedAt"`
 }
 
+// ChatCommand — команда зрителя в чате («!np арг1 арг2»). Приходит только для команд из Meta.Commands.
+type ChatCommand struct {
+	Command       string   `json:"command"` // «np» для «!np»: без «!», в нижнем регистре
+	Args          []string `json:"args"`    // слова после команды (разделитель — пробел), регистр сохранён; недоверенный текст
+	Channel       string   `json:"channel"`
+	UserID        string   `json:"userId"`
+	User          string   `json:"user"` // ник (login)
+	DisplayName   string   `json:"displayName"`
+	MessageID     string   `json:"messageId"` // id сообщения в Twitch: для ответа реплаем (SayReply)
+	IsBroadcaster bool     `json:"isBroadcaster"`
+	IsMod         bool     `json:"isMod"`
+	IsVip         bool     `json:"isVip"`
+	IsSub         bool     `json:"isSub"`
+	Timestamp     int64    `json:"timestamp"` // мс
+}
+
 // HTTPResponse — ответ на Fetch. Error непустой, если запрос не удался (тогда Status == 0).
 type HTTPResponse struct {
 	ID     string `json:"id"`
@@ -162,6 +217,7 @@ type Plugin struct {
 	handlers map[string]Handler
 	onInit   func() error
 	onRedeem func(Redemption)
+	onCmd    func(ChatCommand)
 	timers   map[string]func()
 	fetches  map[string]func(HTTPResponse)
 	config   json.RawMessage
@@ -206,6 +262,9 @@ func (p *Plugin) OnInit(f func() error) { p.onInit = f }
 // OnRedemption принимает погашения наград. Нужны разрешение PermRedeem в Meta и его выдача пользователем.
 func (p *Plugin) OnRedemption(f func(Redemption)) { p.onRedeem = f }
 
+// OnChatCommand принимает команды чата. Нужны Meta.Commands (какие именно), разрешение PermChatCommandRead и его выдача пользователем.
+func (p *Plugin) OnChatCommand(f func(ChatCommand)) { p.onCmd = f }
+
 // OnTimer вызывается, когда сработал таймер с этим id (см. SetTimer). Нужно разрешение PermTimer.
 func (p *Plugin) OnTimer(id string, f func()) { p.timers[id] = f }
 
@@ -225,7 +284,10 @@ type metaOut struct {
 func (p *Plugin) metaJSON() []byte {
 	out := metaOut{Meta: p.meta, APIVersion: apiVersion, Routes: p.routes}
 	if p.onRedeem != nil {
-		out.Subscriptions = []string{eventRedemption}
+		out.Subscriptions = append(out.Subscriptions, eventRedemption)
+	}
+	if p.onCmd != nil {
+		out.Subscriptions = append(out.Subscriptions, eventChatCommand)
 	}
 	b, _ := json.Marshal(out)
 	return b
@@ -295,6 +357,11 @@ func (p *Plugin) onEvent(arg []byte) {
 		var r Redemption
 		if p.onRedeem != nil && json.Unmarshal(ev.Data, &r) == nil {
 			run(func() { p.onRedeem(r) })
+		}
+	case eventChatCommand:
+		var c ChatCommand
+		if p.onCmd != nil && json.Unmarshal(ev.Data, &c) == nil {
+			run(func() { p.onCmd(c) })
 		}
 	case eventTimer:
 		var t struct {

@@ -20,7 +20,9 @@ import (
 	"github.com/gofiber/fiber/v3"
 
 	"github.com/compico/overlaycomposer/internal/auth"
+	"github.com/compico/overlaycomposer/internal/bundle"
 	"github.com/compico/overlaycomposer/internal/chat"
+	"github.com/compico/overlaycomposer/internal/cloud"
 	"github.com/compico/overlaycomposer/internal/config"
 	"github.com/compico/overlaycomposer/internal/events"
 	"github.com/compico/overlaycomposer/internal/hub"
@@ -31,6 +33,7 @@ import (
 	"github.com/compico/overlaycomposer/internal/paths"
 	"github.com/compico/overlaycomposer/internal/plugins"
 	"github.com/compico/overlaycomposer/internal/proxy"
+	"github.com/compico/overlaycomposer/internal/secret"
 	"github.com/compico/overlaycomposer/internal/store"
 	"github.com/compico/overlaycomposer/internal/twitch"
 	"github.com/compico/overlaycomposer/internal/wasmplugins"
@@ -67,6 +70,7 @@ type Deps struct {
 	Events  *events.Broker       // события плагинов (pub/sub); nil — подписки недоступны
 	Market  *market.Market
 	Notify  *notify.Center
+	Box     *secret.Box // шифрование секретов в базе (токен Google Drive); nil — Google Drive недоступен
 	// CheckPlugins запускает проверку обновлений плагинов (force — по кнопке); nil — недоступно.
 	CheckPlugins func(ctx context.Context, force bool) error
 	App          App
@@ -80,15 +84,35 @@ type Server struct {
 	logWindow time.Time
 	logCount  int
 
+	bundleOnce sync.Once // экспорт/импорт настроек (settings.go)
+	bundleSvc  *bundle.Service
+
+	cloudMu     sync.Mutex // облако для файлов настроек (cloud.go)
+	cloudProv   cloud.Provider
+	cloudDir    string
+	cloudLoaded bool
+	kvImpl      kvStore // подмена БД настроек в тестах (см. snapshots.go)
+	driveOnce   sync.Once
+	drive       *cloud.Drive
+
 	redeem *wasmplugins.Bridge // EventSub для wasm-плагинов; nil — без Twitch или без wasm
+
+	cmdMu sync.Mutex // chatCommands: подписка на чат ради команд wasm-плагинов
+
+	cmdSub bool
 
 	evMu       sync.Mutex // подписки страниц на события плагинов (wasmevents.go)
 	evPeers    map[*hub.Peer]*peerSubs
 	pluginAuth func(plugin, source string) string // подмена authorizePlugin в тестах
 
-	deckMu          sync.Mutex // сохранение раскладки deck
-	deckRate        deckBucket
-	deckObsOverride deckOBS // подмена OBS в тестах
+	deckMu              sync.Mutex // сохранение раскладки deck
+	deckRate            deckBucket
+	deckObsOverride     deckOBS     // подмена OBS в тестах
+	deckPluginsOverride deckPlugins // подмена плагинов в тестах
+	deckHubMu           sync.Mutex
+	deckEventsOverride  deckEvents // подмена брокера событий в тестах
+	deckWatch           deckWatcher
+	deckHub             *deckHub // рассылка состояния панели по WebSocket (создаётся при первом обращении)
 
 	deny *denyLimiter // отказы без токена по адресам (nil — без ограничения, как в тестах)
 
@@ -122,6 +146,9 @@ func New(d Deps) *Server {
 		s.redeem = wasmplugins.NewBridge(func(deliver func(id string, data any), onState func(state, detail string)) wasmplugins.Runner {
 			return d.Twitch.NewEventSub(func(r twitch.Redemption) { deliver(r.ID, r) }, onState)
 		}, d.Wasm.Publish)
+	}
+	if d.Market != nil && d.Wasm != nil {
+		d.Market.SetWasmHost(wasmHost{d.Wasm})
 	}
 	s.openProxyListener()
 	s.routes()
@@ -165,6 +192,8 @@ func (s *Server) routes() {
 	s.storageRoutes()
 	s.deckRoutes()
 	s.marketRoutes()
+	s.settingsRoutes()
+	s.cloudRoutes()
 	s.notifyRoutes()
 	s.wasmRoutes()
 

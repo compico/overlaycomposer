@@ -8,6 +8,8 @@ export interface LivePorts {
   obs(info: ObsInfo): void;
   /** Сцена OBS сменилась (для бейджа). */
   scene(name: string): void;
+  /** Состояние сервера изменилось — перечитать соответствующий раздел. */
+  stateChanged(topic: "config" | "devices" | "twitch"): void;
   loadLayouts(): Promise<void>;
   loadSources(): Promise<void>;
   reloadCurrent(): Promise<void>;
@@ -28,6 +30,10 @@ export function createLiveHandler(p: LivePorts): (msg: ServerMessage) => Promise
         break;
       case "obs:status":
         p.obs(msg.obs);
+        p.stateChanged("config"); // статус obs-websocket в настройках берётся из /api/config
+        break;
+      case "state:changed":
+        p.stateChanged(msg.topic);
         break;
       case "scene:changed":
         p.setActive(msg.layoutId ?? null);

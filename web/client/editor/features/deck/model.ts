@@ -2,8 +2,8 @@
 import { ApiError, isConflict, type Api } from "../../lib/api.ts";
 import { createStore, type Readable } from "../../lib/store.ts";
 import {
-  addGroup, addTile, moveGroup, moveTile, removeGroup, removeTile, renameGroup, updateTile, unusedScenes,
-  type DeckGrid, type DeckLayout, type DeckSize, type TilePatch,
+  addGroup, addMixerGroup, addTile, moveGroup, moveTile, removeGroup, removeTile, renameGroup, setMixerCols, updateTile, unusedScenes,
+  type DeckGrid, type DeckLayout, type DeckSize, type PluginAction, type TilePatch,
 } from "./ops.ts";
 
 export interface DeckState {
@@ -14,6 +14,10 @@ export interface DeckState {
   saved: boolean;
   dirty: boolean;
   scenes: string[];
+  /** Аудиоисточники OBS (общий микшер) для плитки mute. */
+  inputs: string[];
+  /** Действия установленных wasm-плагинов, которые можно повесить на плитку. */
+  pluginActions: PluginAction[];
   /** Цвета Metro: имя → CSS-цвет (список приходит с сервера, чтобы совпадал с тем, что рисует /deck). */
   palette: Record<string, string>;
   /** Значки: имя → символ. */
@@ -27,6 +31,8 @@ interface LayoutResponse {
   layout: DeckLayout;
   saved: boolean;
   scenes: string[] | null;
+  inputs: string[] | null;
+  pluginActions: PluginAction[] | null;
   palette: Record<string, string>;
   icons: Record<string, string>;
   grid: DeckGrid;
@@ -40,6 +46,9 @@ export interface DeckModel extends Readable<DeckState> {
   reset(): Promise<void>;
   select(id: string | null): void;
   addGroup(): string | null;
+  /** Добавить группу-микшер (одна на раскладку); null — уже есть или предел групп. */
+  addMixerGroup(): string | null;
+  setMixerCols(id: string, cols: number): void;
   renameGroup(id: string, name: string): void;
   removeGroup(id: string): void;
   moveGroup(id: string, delta: -1 | 1): void;
@@ -53,7 +62,7 @@ export interface DeckModel extends Readable<DeckState> {
 const DEFAULT_COLORS = ["blue", "teal", "green", "orange", "purple", "magenta", "steel", "red", "cyan", "lime", "brown", "yellow"];
 
 const empty = (): DeckState => ({
-  loaded: false, layout: null, saved: false, dirty: false, scenes: [], palette: {}, icons: {},
+  loaded: false, layout: null, saved: false, dirty: false, scenes: [], inputs: [], pluginActions: [], palette: {}, icons: {},
   grid: { rows: 4, maxGroupCols: 16, sizes: [{ w: 1, h: 1 }, { w: 2, h: 1 }, { w: 3, h: 1 }, { w: 2, h: 3 }] }, selected: null, error: "",
 });
 
@@ -73,7 +82,7 @@ export function createDeckModel(api: Api): DeckModel {
       const r = await api<LayoutResponse>("/api/deck/layout");
       for (const g of r.layout.groups) g.tiles ??= []; // страховка: старый сервер отдавал null для пустой группы
       store.set({
-        loaded: true, layout: r.layout, saved: r.saved, dirty: false, scenes: r.scenes ?? [], palette: r.palette ?? {}, icons: r.icons ?? {},
+        loaded: true, layout: r.layout, saved: r.saved, dirty: false, scenes: r.scenes ?? [], inputs: r.inputs ?? [], pluginActions: r.pluginActions ?? [], palette: r.palette ?? {}, icons: r.icons ?? {},
         grid: { ...r.grid, sizes: r.grid.sizes ?? s().grid.sizes }, selected: null, error: "",
       });
     } catch (e) {
@@ -104,6 +113,14 @@ export function createDeckModel(api: Api): DeckModel {
       apply(r.layout, null);
       return r.id;
     },
+    addMixerGroup() {
+      const l = s().layout;
+      const r = l && addMixerGroup(l);
+      if (!r) return null;
+      apply(r.layout, null);
+      return r.id;
+    },
+    setMixerCols: (id, cols) => { const l = s().layout; if (l) apply(setMixerCols(l, id, cols)); },
     renameGroup: (id, name) => { const l = s().layout; if (l) apply(renameGroup(l, id, name)); },
     removeGroup(id) {
       const l = s().layout;

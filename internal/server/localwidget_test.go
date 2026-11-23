@@ -36,7 +36,7 @@ func TestInstallLocalWidgetEndpoint(t *testing.T) {
 		_ = w.Close()
 		req := httptest.NewRequest("POST", "/api/plugins/local", &buf)
 		req.Header.Set("Content-Type", w.FormDataContentType())
-		resp, err := s.app.Test(req)
+		resp, err := appTest(s.app, req)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -78,7 +78,7 @@ func TestInstallLocalWidgetEndpoint(t *testing.T) {
 	// не multipart
 	req := httptest.NewRequest("POST", "/api/plugins/local", bytes.NewReader([]byte(`{}`)))
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := s.app.Test(req)
+	resp, err := appTest(s.app, req)
 	if err != nil || resp.StatusCode != 400 {
 		t.Fatalf("JSON вместо multipart: %v %v", err, resp)
 	}

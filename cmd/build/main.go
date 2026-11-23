@@ -84,8 +84,20 @@ func projectRoot() (string, error) {
 	}
 }
 
+// hidden — значения, которые нельзя печатать в лог (ключи Google в -ldflags); в выводе заменяются на ***.
+var hidden []string
+
+func redact(s string) string {
+	for _, v := range hidden {
+		if v != "" {
+			s = strings.ReplaceAll(s, v, "***")
+		}
+	}
+	return s
+}
+
 func run(dir string, env []string, name string, args ...string) error {
-	fmt.Printf("$ %s %s\n", name, strings.Join(args, " "))
+	fmt.Printf("$ %s %s\n", name, redact(strings.Join(args, " ")))
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), env...)
@@ -182,6 +194,7 @@ func buildBin(root, which string) error {
 	if err := os.MkdirAll(out, 0o755); err != nil {
 		return err
 	}
+	google := googleCreds(filepath.Join(root, ".env"))
 	version := gitVersion(root)
 	// Релизная сборка (CI): версия — тег релиза, и включается проверка обновлений. Локально этого нет.
 	release := os.Getenv("OC_RELEASE") == "1"
@@ -192,6 +205,13 @@ func buildBin(root, which string) error {
 		ldflags := "-s -w -X main.version=" + version
 		if release {
 			ldflags += " -X main.channel=release"
+		}
+		// OAuth-клиент Google Drive (тип Desktop; секрет такого клиента не конфиденциален, но в репозиторий его не кладём).
+		// Нет переменных — сборка без Google Drive: в редакторе подключение недоступно, остальное работает.
+		if id := google["GOOGLE_CLIENT_ID"]; id != "" {
+			const pkg = "github.com/compico/overlaycomposer/internal/cloud."
+			ldflags += " -X " + pkg + "GoogleClientID=" + id + " -X " + pkg + "GoogleClientSecret=" + google["GOOGLE_CLIENT_SECRET"]
+			hidden = append(hidden, id, google["GOOGLE_CLIENT_SECRET"])
 		}
 		if t.goos == "windows" {
 			ldflags += " -H=windowsgui" // GUI-подсистема: консольное окно не появляется

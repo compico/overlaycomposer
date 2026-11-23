@@ -63,6 +63,7 @@ type env struct {
 	dir   string
 	data  string
 	repos map[string][]byte
+	rel   *fakeReleases // релизы wasm-плагинов: по умолчанию пусты
 	calls atomic.Int32
 	mu    sync.Mutex // repos читают параллельные загрузки каталога
 }
@@ -70,13 +71,13 @@ type env struct {
 func newEnv(t *testing.T, builtin ...string) *env {
 	t.Helper()
 	root := t.TempDir()
-	e := &env{dir: filepath.Join(root, "plugins"), data: filepath.Join(root, "market.json"), repos: map[string][]byte{}}
+	e := &env{dir: filepath.Join(root, "plugins"), data: filepath.Join(root, "market.json"), repos: map[string][]byte{}, rel: &fakeReleases{}}
 	if err := os.MkdirAll(e.dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	reg := plugins.New(nil, os.DirFS(e.dir))
 	m, err := New(Config{
-		File: e.data, Dir: e.dir, Reg: reg,
+		File: e.data, Dir: e.dir, Reg: reg, Releases: e.rel,
 		Fetch: func(_ context.Context, r Repo, _ string) ([]byte, error) {
 			e.calls.Add(1)
 			e.mu.Lock()
@@ -765,6 +766,7 @@ func TestBrokenChangelogIsIgnored(t *testing.T) {
 func TestUpdatesAllSourcesFailing(t *testing.T) {
 	e := newEnv(t)
 	e.m.AddSource(context.Background(), "bob/tools") // каталога нет → ошибка
+	e.rel.err = errors.New("offline")                // и релизов тоже
 	if _, ok := e.m.Updates(context.Background(), true); ok {
 		t.Fatal("при недоступных источниках ok должен быть false")
 	}

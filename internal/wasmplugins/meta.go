@@ -6,10 +6,12 @@
 package wasmplugins
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/compico/overlaycomposer/internal/plugins"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,25 +24,27 @@ const APIVersion = 1
 
 // Разрешения плагина. Плагин их запрашивает в oc_meta, пользователь выдаёт; без выдачи операция отклоняется.
 const (
-	PermStorage       = "storage"
-	PermNetHTTP       = "net.http"
-	PermNetLocal      = "net.local" // HTTP к программе на этом компьютере по адресу из Meta.NetLocal (например, tosu)
-	PermRedeem        = "twitch.redemption"
-	PermTimer         = "timer"
-	PermPublish       = "events.publish" // публиковать события для подписчиков (виджеты, аддоны, deck)
-	PermChat          = "chat.send"      // писать в чат канала от имени бота
-	maxRoutes         = 64
-	maxMetaBytes      = 64 << 10
-	maxWidgets        = 16
-	maxWidgetSettings = 32
-	defWidgetW        = 400
-	defWidgetH        = 300
-	maxWidgetDim      = 8192
+	PermStorage         = "storage"
+	PermNetHTTP         = "net.http"
+	PermNetLocal        = "net.local" // HTTP к программе на этом компьютере по адресу из Meta.NetLocal (например, tosu)
+	PermRedeem          = "twitch.redemption"
+	PermTimer           = "timer"
+	PermPublish         = "events.publish"    // публиковать события для подписчиков (виджеты, аддоны, deck)
+	PermChat            = "chat.send"         // писать в чат канала от имени бота
+	PermChatCommandRead = "chat.command.read" // получать команды чата («!np …») из Meta.Commands; весь чат плагин не видит
+	maxRoutes           = 64
+	maxMetaBytes        = 64 << 10
+	maxWidgets          = 16
+	maxWidgetSettings   = 32
+	defWidgetW          = 400
+	defWidgetH          = 300
+	maxWidgetDim        = 8192
 )
 
 // События, на которые плагин может подписаться.
 const (
 	EventRedemption   = "twitch.redemption"
+	EventChatCommand  = "chat.command"
 	EventTimer        = "timer"
 	EventHTTPResponse = "http.response"
 )
@@ -52,9 +56,9 @@ var (
 	pathSegRe = regexp.MustCompile(`^[A-Za-z0-9._~-]+$`)
 )
 
-var knownPerms = map[string]bool{PermStorage: true, PermNetHTTP: true, PermNetLocal: true, PermRedeem: true, PermTimer: true, PermPublish: true, PermChat: true}
+var knownPerms = map[string]bool{PermStorage: true, PermNetHTTP: true, PermNetLocal: true, PermRedeem: true, PermTimer: true, PermPublish: true, PermChat: true, PermChatCommandRead: true}
 
-var knownEvents = map[string]bool{EventRedemption: true, EventTimer: true, EventHTTPResponse: true}
+var knownEvents = map[string]bool{EventRedemption: true, EventChatCommand: true, EventTimer: true, EventHTTPResponse: true}
 
 // Route — HTTP-маршрут плагина: он доступен как /plugins/<id>/api<Path>.
 type Route struct {
@@ -76,6 +80,9 @@ type Meta struct {
 	NetLocal      []NetLocalTarget `json:"netLocal,omitempty"`
 	Routes        []Route          `json:"routes,omitempty"`
 	Subscriptions []string         `json:"subscriptions,omitempty"`
+	// Commands — команды чата без «!» (в нижнем регистре), которые плагин хочет получать событием chat.command. Остальные команды ему
+	// не доставляются. Нужны подписка chat.command и разрешение chat.command.read.
+	Commands []string `json:"commands,omitempty"`
 	// ConfigSchema — необязательное описание настроек (JSON Schema-подобное), UI строит по нему форму. Хост его не толкует.
 	ConfigSchema map[string]any `json:"configSchema,omitempty"`
 	// Widgets — виджеты плагина (iframe с HTML из секции oc.assets); пользователь добавляет их на сцену как обычные виджеты.
@@ -83,6 +90,8 @@ type Meta struct {
 	// Settings — страница настроек плагина: путь HTML-файла в статике (/plugins/<id>/ui/<settings>). Редактор открывает её
 	// в sandbox-iframe в окне «Plugins → Settings»; страница говорит только с маршрутами своего плагина (oc.plugin.*).
 	Settings string `json:"settings,omitempty"`
+	// Actions — действия, которые плагин предлагает панели Deck и другим «пультам»: по нажатию OC вызывает маршрут плагина.
+	Actions []Action `json:"actions,omitempty"`
 	// Events — топики, которые плагин публикует (events.publish): id, название и описание. Хост пересылает только объявленные.
 	Events []EventDecl `json:"events,omitempty"`
 }
@@ -197,6 +206,15 @@ func (m *Meta) Validate() error {
 	}
 	if subs[EventRedemption] && !perms[PermRedeem] {
 		return fmt.Errorf("subscription %q requires permission %q", EventRedemption, PermRedeem)
+	}
+	if subs[EventChatCommand] && !perms[PermChatCommandRead] {
+		return fmt.Errorf("subscription %q requires permission %q", EventChatCommand, PermChatCommandRead)
+	}
+	if err := m.validateCommands(subs[EventChatCommand]); err != nil {
+		return err
+	}
+	if err := m.validateActions(); err != nil {
+		return err
 	}
 	if err := m.validateWidgets(); err != nil {
 		return err
@@ -407,4 +425,305 @@ func (s NetLocalStream) gap() time.Duration {
 		return defaultStreamGap * time.Millisecond
 	}
 	return time.Duration(s.MinIntervalMs) * time.Millisecond
+}
+
+const maxCommands = 16
+
+var commandRe = regexp.MustCompile(`^[a-z0-9_]{1,32}$`)
+
+func (m *Meta) validateCommands(subscribed bool) error {
+	if len(m.Commands) > maxCommands {
+		return fmt.Errorf("too many commands (max %d)", maxCommands)
+	}
+	if subscribed && len(m.Commands) == 0 {
+		return fmt.Errorf("subscription %q requires at least one command in commands", EventChatCommand)
+	}
+	if !subscribed && len(m.Commands) > 0 {
+		return fmt.Errorf("commands require subscription %q", EventChatCommand)
+	}
+	seen := map[string]bool{}
+	for _, c := range m.Commands {
+		if !commandRe.MatchString(c) {
+			return fmt.Errorf("command %q: lowercase latin letters, digits and _ only (1..32), without !", c)
+		}
+		if seen[c] {
+			return fmt.Errorf("duplicate command %q", c)
+		}
+		seen[c] = true
+	}
+	return nil
+}
+
+// WantsCommand — просил ли плагин команду name (без «!», в нижнем регистре).
+func (m *Meta) WantsCommand(name string) bool {
+	for _, c := range m.Commands {
+		if c == name {
+			return true
+		}
+	}
+	return false
+}
+
+// ChatCommand — команда чата, доставленная плагину событием chat.command.
+type ChatCommand struct {
+	Command       string   `json:"command"` // «np» для «!np»: без «!», в нижнем регистре
+	Args          []string `json:"args"`    // слова после команды (разделитель — пробел), регистр сохранён
+	Channel       string   `json:"channel"`
+	UserID        string   `json:"userId"`
+	User          string   `json:"user"` // ник (login)
+	DisplayName   string   `json:"displayName"`
+	MessageID     string   `json:"messageId"` // id сообщения в Twitch
+	IsBroadcaster bool     `json:"isBroadcaster"`
+	IsMod         bool     `json:"isMod"`
+	IsVip         bool     `json:"isVip"`
+	IsSub         bool     `json:"isSub"`
+	Timestamp     int64    `json:"timestamp"` // мс
+}
+
+// Action — действие плагина для плитки панели Deck: нажатие выполняет запрос Method Path к маршруту этого плагина с готовым Body.
+// Хост вызывает только объявленные действия, поэтому устройство с панелью не может попросить плагин о чём-то ещё.
+type Action struct {
+	ID     string          `json:"id"`               // a-z, 0-9, _ и -, до 32 символов; уникален в плагине
+	Title  string          `json:"title"`            // подпись в редакторе и на плитке по умолчанию
+	Icon   string          `json:"icon,omitempty"`   // имя значка Deck (play, pause, next, ban…), необязательно
+	Method string          `json:"method,omitempty"` // по умолчанию POST
+	Path   string          `json:"path"`             // маршрут из Meta.Routes
+	Body   json.RawMessage `json:"body,omitempty"`   // готовое тело запроса (JSON, до 1 КиБ)
+	// Danger — действие необратимо или заметно зрителям (бан трека, остановка): плитка по умолчанию просит подтверждения.
+	Danger bool `json:"danger,omitempty"`
+	// ActiveWhen — когда плитка подсвечена: последнее событие топика плагина (из Events) удовлетворяет условию. Необязательно.
+	ActiveWhen *ActiveWhen `json:"activeWhen,omitempty"`
+	// Display — текст на плитке из событий плагина (например, «сейчас играет» на крупной плитке). Необязательно.
+	Display *Display `json:"display,omitempty"`
+}
+
+// Display — текст плитки Deck из последнего события топика: каждое поле Fields (путь «a.b») даёт строку. Строка — как есть,
+// число — числом, массив строк — через запятую; пустые и отсутствующие поля пропускаются. Строки обрезаются по maxDisplayRunes.
+type Display struct {
+	Topic  string   `json:"topic"`
+	Fields []string `json:"fields"`
+}
+
+const (
+	maxDisplayFields = 4
+	maxDisplayRunes  = 80
+)
+
+func (m *Meta) validateDisplay(a *Action) error {
+	d := a.Display
+	if d == nil {
+		return nil
+	}
+	declared := false
+	for _, e := range m.Events {
+		if e.ID == d.Topic {
+			declared = true
+		}
+	}
+	if !declared {
+		return fmt.Errorf("action %q: display.topic %q is not declared in events", a.ID, d.Topic)
+	}
+	if len(d.Fields) == 0 || len(d.Fields) > maxDisplayFields {
+		return fmt.Errorf("action %q: display.fields needs 1 to %d paths", a.ID, maxDisplayFields)
+	}
+	for _, f := range d.Fields {
+		if !activeFieldRe.MatchString(f) {
+			return fmt.Errorf("action %q: display.fields must be paths like a.b (letters, digits, _; up to 4 parts)", a.ID)
+		}
+	}
+	return nil
+}
+
+// jsonPath достаёт значение по пути «a.b» из JSON-объекта.
+func jsonPath(v any, path string) (any, bool) {
+	for _, k := range strings.Split(path, ".") {
+		o, ok := v.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		if v, ok = o[k]; !ok {
+			return nil, false
+		}
+	}
+	return v, true
+}
+
+// Lines — строки текста плитки из значения события.
+func (d Display) Lines(data json.RawMessage) []string {
+	var v any
+	if json.Unmarshal(data, &v) != nil {
+		return nil
+	}
+	var out []string
+	for _, f := range d.Fields {
+		x, ok := jsonPath(v, f)
+		if !ok {
+			continue
+		}
+		var s string
+		switch t := x.(type) {
+		case string:
+			s = t
+		case float64:
+			s = strconv.FormatFloat(t, 'f', -1, 64)
+		case []any:
+			parts := make([]string, 0, len(t))
+			for _, e := range t {
+				if es, ok := e.(string); ok && strings.TrimSpace(es) != "" {
+					parts = append(parts, strings.TrimSpace(es))
+				}
+			}
+			s = strings.Join(parts, ", ")
+		}
+		s = strings.Join(strings.Fields(s), " ")
+		if r := []rune(s); len(r) > maxDisplayRunes {
+			s = string(r[:maxDisplayRunes-1]) + "…"
+		}
+		if s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// ActiveWhen — условие подсветки плитки Deck по событиям плагина. Topic — объявленный в Events топик. Field — путь «a.b» к полю
+// объекта события (пусто — само значение события). Equals — скаляр для сравнения (строка, число, bool); без него условие
+// выполнено, когда значение «истинно» (true, ненулевое число, непустая строка).
+type ActiveWhen struct {
+	Topic  string          `json:"topic"`
+	Field  string          `json:"field,omitempty"`
+	Equals json.RawMessage `json:"equals,omitempty"`
+}
+
+var activeFieldRe = regexp.MustCompile(`^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+){0,3}$`)
+
+const maxActiveEquals = 120
+
+func (m *Meta) validateActiveWhen(a *Action) error {
+	w := a.ActiveWhen
+	if w == nil {
+		return nil
+	}
+	declared := false
+	for _, e := range m.Events {
+		if e.ID == w.Topic {
+			declared = true
+		}
+	}
+	if !declared {
+		return fmt.Errorf("action %q: activeWhen.topic %q is not declared in events", a.ID, w.Topic)
+	}
+	if w.Field != "" && !activeFieldRe.MatchString(w.Field) {
+		return fmt.Errorf("action %q: activeWhen.field must be a path like a.b (letters, digits, _; up to 4 parts)", a.ID)
+	}
+	if len(w.Equals) > 0 {
+		var v any
+		if len(w.Equals) > maxActiveEquals || json.Unmarshal(w.Equals, &v) != nil {
+			return fmt.Errorf("action %q: activeWhen.equals must be a short JSON scalar", a.ID)
+		}
+		switch v.(type) {
+		case string, float64, bool:
+		default:
+			return fmt.Errorf("action %q: activeWhen.equals must be a string, number or boolean", a.ID)
+		}
+	}
+	return nil
+}
+
+// Match сообщает, удовлетворяет ли значение события условию.
+func (w ActiveWhen) Match(data json.RawMessage) bool {
+	var v any
+	if json.Unmarshal(data, &v) != nil {
+		return false
+	}
+	if w.Field != "" {
+		for _, k := range strings.Split(w.Field, ".") {
+			o, ok := v.(map[string]any)
+			if !ok {
+				return false
+			}
+			if v, ok = o[k]; !ok {
+				return false
+			}
+		}
+	}
+	if len(w.Equals) > 0 {
+		var want any
+		if json.Unmarshal(w.Equals, &want) != nil {
+			return false
+		}
+		return v == want
+	}
+	switch x := v.(type) {
+	case bool:
+		return x
+	case float64:
+		return x != 0
+	case string:
+		return x != ""
+	}
+	return false
+}
+
+const (
+	maxActions    = 32
+	maxActionBody = 1 << 10
+	maxActionText = 40
+)
+
+var actionIDRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
+
+func (m *Meta) validateActions() error {
+	if len(m.Actions) > maxActions {
+		return fmt.Errorf("too many actions (max %d)", maxActions)
+	}
+	seen := map[string]bool{}
+	for i := range m.Actions {
+		a := &m.Actions[i]
+		if !actionIDRe.MatchString(a.ID) || seen[a.ID] {
+			return fmt.Errorf("action %q: id a-z, 0-9, _ and -, up to 32 characters, unique", a.ID)
+		}
+		seen[a.ID] = true
+		if t := strings.TrimSpace(a.Title); t == "" || len([]rune(t)) > maxActionText || strings.ContainsAny(t, "\r\n\t") {
+			return fmt.Errorf("action %q: title is required, up to %d characters, one line", a.ID, maxActionText)
+		}
+		if len(a.Icon) > 16 {
+			return fmt.Errorf("action %q: icon name is too long", a.ID)
+		}
+		if a.Method == "" {
+			a.Method = "POST"
+		}
+		if !m.hasRoute(a.Method, a.Path) {
+			return fmt.Errorf("action %q: route %s %s is not declared in routes", a.ID, a.Method, a.Path)
+		}
+		if len(a.Body) > maxActionBody || (len(a.Body) > 0 && !json.Valid(a.Body)) {
+			return fmt.Errorf("action %q: body must be JSON up to %d bytes", a.ID, maxActionBody)
+		}
+		if err := m.validateActiveWhen(a); err != nil {
+			return err
+		}
+		if err := m.validateDisplay(a); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (m *Meta) hasRoute(method, path string) bool {
+	for _, r := range m.Routes {
+		if r.Method == method && r.Path == path {
+			return true
+		}
+	}
+	return false
+}
+
+// FindAction — объявленное действие плагина по id.
+func (m *Meta) FindAction(id string) (Action, bool) {
+	for _, a := range m.Actions {
+		if a.ID == id {
+			return a, true
+		}
+	}
+	return Action{}, false
 }

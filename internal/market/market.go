@@ -223,6 +223,14 @@ func parseChangelog(f *zip.File) []Change {
 	if err != nil {
 		return nil
 	}
+	return parseChangelogBytes(raw)
+}
+
+// parseChangelogBytes разбирает содержимое changelog.json (из архива виджета или ассета релиза wasm-плагина).
+func parseChangelogBytes(raw []byte) []Change {
+	if len(raw) > maxChangelogSize {
+		return nil
+	}
 	var list []Change
 	if json.Unmarshal(raw, &list) != nil {
 		return nil
@@ -283,13 +291,14 @@ type Entry struct {
 	Digest string `json:"digest"`
 	Commit string `json:"commit,omitempty"` // коммит, из которого собран архив (короткий), если GitHub его сообщил
 
-	Installed        bool     `json:"installed"`                  // установлен из этого репозитория
-	InstalledVersion string   `json:"installedVersion,omitempty"` //
-	InstalledCommit  string   `json:"installedCommit,omitempty"`  //
-	UpdateAvailable  bool     `json:"updateAvailable"`            // версия выше или файлы изменились
-	AddedPermissions []string `json:"addedPermissions,omitempty"` // права, которых не было у установленной версии
-	Blocked          string   `json:"blocked,omitempty"`          // почему нельзя поставить: "builtin" | "foreign"
-	Changelog        []Change `json:"changelog,omitempty"`        // для установленного плагина с обновлением: записи между его версией и доступной
+	Installed        bool         `json:"installed"`                  // установлен из этого репозитория
+	InstalledVersion string       `json:"installedVersion,omitempty"` //
+	InstalledCommit  string       `json:"installedCommit,omitempty"`  //
+	UpdateAvailable  bool         `json:"updateAvailable"`            // версия выше или файлы изменились
+	AddedPermissions []string     `json:"addedPermissions,omitempty"` // права, которых не было у установленной версии
+	Blocked          string       `json:"blocked,omitempty"`          // почему нельзя поставить: "builtin" | "foreign"
+	Changelog        []Change     `json:"changelog,omitempty"`        // для установленного плагина с обновлением: записи между его версией и доступной
+	Deprecated       *Deprecation `json:"deprecated,omitempty"`       // плагин объявлен устаревшим в deprecated.json источника (см. deprecated.go)
 }
 
 // SourceView — источник и его каталог (или ошибка загрузки).
@@ -297,6 +306,8 @@ type SourceView struct {
 	Repo    string  `json:"repo"`
 	Error   string  `json:"error,omitempty"`
 	Plugins []Entry `json:"plugins"`
+	// Deprecated — все записи deprecated.json источника: и виджеты, и wasm-плагины (их в каталоге нет), и удалённые из репозитория.
+	Deprecated []Deprecation `json:"deprecated"`
 }
 
 // Record — установленный из магазина плагин.
@@ -310,9 +321,10 @@ type Record struct {
 }
 
 type state struct {
-	Sources   []string          `json:"sources"`
-	Installed map[string]Record `json:"installed"`
-	Token     string            `json:"githubToken,omitempty"` // зашифрован (secret.Box)
+	Sources   []string              `json:"sources"`
+	Installed map[string]Record     `json:"installed"`
+	Wasm      map[string]WasmRecord `json:"wasm,omitempty"`        // установленные wasm-плагины: что именно (тег и sha256), для воспроизведения набора
+	Token     string                `json:"githubToken,omitempty"` // зашифрован (secret.Box)
 }
 
 // Market — состояние магазина (список источников, установленные плагины) и операции над ним.
@@ -321,6 +333,9 @@ type Market struct {
 	dir     string // папка пользовательских плагинов
 	reg     *plugins.Registry
 	fetch   Fetcher
+	rel     ReleaseSource
+	wasm    wasmCache
+	whost   WasmHost // nil — автономные плагины недоступны
 	builtin func(id string) bool
 	box     *secret.Box // шифрует токен GitHub; nil — токен хранить нельзя
 
@@ -335,16 +350,18 @@ type Market struct {
 type cached struct {
 	at      time.Time
 	plugins []parsed
+	dep     []Deprecation
 }
 
 // Config — зависимости Market.
 type Config struct {
-	File    string
-	Dir     string
-	Reg     *plugins.Registry
-	Fetch   Fetcher
-	Builtin func(id string) bool // id занят встроенным плагином
-	Box     *secret.Box          // для токена GitHub (приватные репозитории)
+	File     string
+	Dir      string
+	Reg      *plugins.Registry
+	Fetch    Fetcher
+	Releases ReleaseSource        // релизы GitHub для wasm-плагинов (по умолчанию — GitHub API)
+	Builtin  func(id string) bool // id занят встроенным плагином
+	Box      *secret.Box          // для токена GitHub (приватные репозитории)
 }
 
 // New читает состояние; при первом запуске (файла нет) добавляет официальный источник.
@@ -352,10 +369,13 @@ func New(c Config) (*Market, error) {
 	if c.Fetch == nil {
 		c.Fetch = HTTPFetcher("", "")
 	}
+	if c.Releases == nil {
+		c.Releases = HTTPReleases("")
+	}
 	if c.Builtin == nil {
 		c.Builtin = func(string) bool { return false }
 	}
-	m := &Market{file: c.File, dir: c.Dir, reg: c.Reg, fetch: c.Fetch, builtin: c.Builtin, box: c.Box, cache: map[string]cached{}}
+	m := &Market{file: c.File, dir: c.Dir, reg: c.Reg, fetch: c.Fetch, rel: c.Releases, builtin: c.Builtin, box: c.Box, cache: map[string]cached{}}
 	m.st.Installed = map[string]Record{}
 	if c.File != "" {
 		raw, err := os.ReadFile(c.File)
@@ -468,12 +488,16 @@ func (m *Market) Catalog(ctx context.Context, refresh bool) []SourceView {
 		wg.Add(1)
 		go func(i int, s string) {
 			defer wg.Done()
-			v := SourceView{Repo: s, Plugins: []Entry{}}
+			v := SourceView{Repo: s, Plugins: []Entry{}, Deprecated: []Deprecation{}}
 			r, err := ParseRepo(s)
 			if err == nil {
 				var list []parsed
-				if list, err = m.load(ctx, r, refresh); err == nil {
-					v.Plugins = m.entries(s, list)
+				var dep []Deprecation
+				if list, dep, err = m.loadAll(ctx, r, refresh, s); err == nil {
+					v.Plugins = m.entries(s, list, dep)
+					if dep != nil {
+						v.Deprecated = dep
+					}
 				}
 			}
 			if err != nil {
@@ -486,7 +510,7 @@ func (m *Market) Catalog(ctx context.Context, refresh bool) []SourceView {
 	return out
 }
 
-func (m *Market) entries(repo string, list []parsed) []Entry {
+func (m *Market) entries(repo string, list []parsed, dep []Deprecation) []Entry {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make([]Entry, 0, len(list))
@@ -513,6 +537,11 @@ func (m *Market) entries(repo string, list []parsed) []Entry {
 			e.Blocked = "foreign" // уже стоит из другого репозитория
 		case m.existsOnDisk(p.m.ID):
 			e.Blocked = "foreign" // положен руками
+		}
+		for i := range dep {
+			if dep[i].Kind == KindWidget && dep[i].ID == p.m.ID {
+				e.Deprecated = &dep[i]
+			}
 		}
 		out = append(out, e)
 	}
@@ -595,27 +624,34 @@ type parsed struct {
 
 // load возвращает плагины репозитория (с кэшем на catalogTTL).
 func (m *Market) load(ctx context.Context, r Repo, refresh bool) ([]parsed, error) {
+	list, _, err := m.loadAll(ctx, r, refresh, r.String())
+	return list, err
+}
+
+// loadAll — как load, ещё и записи deprecated.json (source — как репозиторий назван в списке источников).
+func (m *Market) loadAll(ctx context.Context, r Repo, refresh bool, source string) ([]parsed, []Deprecation, error) {
 	key := strings.ToLower(r.String())
 	if !refresh {
 		m.cacheMu.Lock()
 		c, ok := m.cache[key]
 		m.cacheMu.Unlock()
 		if ok && time.Since(c.at) < catalogTTL {
-			return c.plugins, nil
+			return c.plugins, c.dep, nil
 		}
 	}
 	data, err := m.fetch(ctx, r, m.token())
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	list, err := parseZip(data)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	dep := parseDeprecatedZip(data, source)
 	m.cacheMu.Lock()
-	m.cache[key] = cached{at: time.Now(), plugins: list}
+	m.cache[key] = cached{at: time.Now(), plugins: list, dep: dep}
 	m.cacheMu.Unlock()
-	return list, nil
+	return list, dep, nil
 }
 
 // parseZip находит в архиве <корень>/plugins/<id>/plugin.json; битые плагины пропускаются.
@@ -835,7 +871,7 @@ func (m *Market) Install(ctx context.Context, repoIn, id, digest string) (Entry,
 	if err != nil {
 		return Entry{}, err
 	}
-	return m.entries(key, []parsed{*p})[0], nil
+	return m.entries(key, []parsed{*p}, nil)[0], nil
 }
 
 // extract записывает файлы плагина в dir (пути уже проверены fs.ValidPath; размеры ограничены).
@@ -977,6 +1013,7 @@ func (m *Market) dropAllCache() {
 
 // Update — доступное обновление установленного плагина (повышена версия; изменение файлов без смены версии сюда не входит).
 type Update struct {
+	Kind             string   `json:"kind,omitempty"` // "wasm" — автономный плагин; пусто — виджет
 	ID               string   `json:"id"`
 	Name             string   `json:"name"`
 	Repo             string   `json:"repo"`
@@ -990,11 +1027,12 @@ type Update struct {
 // ok=false, если не ответил ни один источник (нет сети и т. п.) — тогда вывод «обновлений нет» ненадёжен.
 func (m *Market) Updates(ctx context.Context, refresh bool) (list []Update, ok bool) {
 	list = []Update{}
+	widgetOK := false
 	for _, sv := range m.Catalog(ctx, refresh) {
 		if sv.Error != "" {
 			continue
 		}
-		ok = true
+		widgetOK = true
 		for _, e := range sv.Plugins {
 			if e.Installed && e.UpdateAvailable && newer(e.Version, e.InstalledVersion) {
 				list = append(list, Update{ID: e.ID, Name: e.Name, Repo: e.Repo, From: e.InstalledVersion, To: e.Version,
@@ -1002,5 +1040,24 @@ func (m *Market) Updates(ctx context.Context, refresh bool) (list []Update, ok b
 			}
 		}
 	}
+	// Автономные плагины. Каждый вид надёжен, если ответил хоть один источник или плагинов этого вида нет вовсе (сбой каталога
+	// релизов, например лимит GitHub API без токена, не должен ломать проверку виджетов, и наоборот); отвечать должен хоть кто-то.
+	wasmOK := false
+	for _, sv := range m.WasmCatalog(ctx, refresh) {
+		if sv.Error != "" {
+			continue
+		}
+		wasmOK = true
+		for _, e := range sv.Plugins {
+			if e.Installed && e.UpdateAvailable && newer(e.Version, e.InstalledVersion) {
+				list = append(list, Update{Kind: "wasm", ID: e.ID, Name: e.Name, Repo: e.Repo, From: e.InstalledVersion, To: e.Version,
+					AddedPermissions: e.AddedPermissions, Changelog: between(e.Changelog, e.InstalledVersion, e.Version)})
+			}
+		}
+	}
+	m.mu.Lock()
+	haveWidgets := len(m.st.Installed) > 0
+	m.mu.Unlock()
+	ok = (widgetOK || wasmOK) && (widgetOK || !haveWidgets) && (wasmOK || len(m.WasmLock()) == 0)
 	return list, ok
 }

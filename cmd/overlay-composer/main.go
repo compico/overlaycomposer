@@ -185,13 +185,34 @@ func run() int {
 
 	// Центр уведомлений: обновления плагинов (проверка при запуске и по кнопке) и новая версия приложения.
 	center := notify.Open(filepath.Join(p.DataDir, "notifications.json"))
+	var wasmNames func() map[string]string // id → имя установленных wasm-плагинов; задаётся ниже, когда они загружены
 	checkPlugins := func(ctx context.Context, force bool) error {
 		return center.Check(ctx, force, func(ctx context.Context) ([]notify.Candidate, bool) {
 			ups, ok := mk.Updates(ctx, force)
 			out := make([]notify.Candidate, 0, len(ups))
-			for _, u := range ups {
+			// Устаревшие плагины: каталог только что загружен (кэш), второго запроса в сеть нет.
+			var wn map[string]string
+			if wasmNames != nil {
+				wn = wasmNames()
+			}
+			deps, depOK := mk.DeprecatedInstalled(ctx, false, wn)
+			ok = ok && depOK
+			for _, d := range deps {
 				out = append(out, notify.Candidate{
-					Key:   "plugin:" + u.ID + "@" + u.To,
+					Kind:  notify.KindPluginDeprecated,
+					Key:   "deprecated:" + d.Kind + ":" + d.ID,
+					Title: fmt.Sprintf("%s is deprecated", d.Name),
+					Text:  d.Reason,
+					Data:  d,
+				})
+			}
+			for _, u := range ups {
+				key := "plugin:" + u.ID + "@" + u.To
+				if u.Kind == "wasm" {
+					key = "wasm:" + u.ID + "@" + u.To
+				}
+				out = append(out, notify.Candidate{
+					Key:   key,
 					Title: fmt.Sprintf("%s: update %s", u.Name, u.To),
 					Text:  fmt.Sprintf("Plugin %s %s → %s is available", u.Name, u.From, u.To),
 					Data:  u,
@@ -206,11 +227,20 @@ func run() int {
 	wasmMgr, _ := openWasmPlugins(p, kvSvc, twMgr, chatSvc, pluginReg, eventBus)
 	if wasmMgr != nil {
 		defer wasmMgr.Close()
+		wasmNames = func() map[string]string {
+			infos, _ := wasmMgr.List()
+			names := make(map[string]string, len(infos))
+			for _, in := range infos {
+				names[in.Meta.ID] = in.Meta.Name
+			}
+			return names
+		}
 	}
 
 	srv = server.New(server.Deps{
 		Paths: p, Cfg: cfgStore, Running: cfg, Store: st, Hub: h, Obs: obsClient, Proxy: px,
 		Auth:         authMgr,
+		Box:          box,
 		Twitch:       twMgr,
 		Chat:         chatSvc,
 		KV:           kvSvc,
@@ -402,6 +432,12 @@ func run() int {
 	if r := h.NotifyStopping(stopGrace); r.Waited {
 		slog.Info("плагины уведомлены об остановке", "pages", r.Notified, "noAnswer", r.TimedOut)
 	}
+	// Автоснимок настроек при закрытии (если включён и настройки изменились); не дольше пары секунд.
+	{
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		srv.AutoSnapshot(ctx)
+		cancel()
+	}
 	obsClient.Stop()
 	srv.Shutdown()
 	slog.Info("остановлено")
@@ -491,8 +527,8 @@ func openWasmPlugins(p paths.Paths, kvSvc *kv.Service, tw *twitch.Manager, chatS
 	return wasmplugins.NewManager(context.Background(), wasmplugins.Options{
 		Engine: eng, Dirs: dirs, State: state,
 		Services: wasmplugins.Services{Storage: wasmplugins.KVStorage{S: kvSvc}, Redeem: tw.UpdateRedemption, Log: slog.Default(), Events: bus,
-			Say: func(ctx context.Context, text string) error {
-				return chatSvc.Say(ctx, chat.SayRequest{Text: text, As: twitch.RoleBot})
+			Say: func(ctx context.Context, text, replyTo string) error {
+				return chatSvc.Say(ctx, chat.SayRequest{Text: text, As: twitch.RoleBot, ReplyTo: replyTo})
 			}},
 		Reserved: func(id string) bool { _, ok := reg.Get(id); return ok },
 	}), dirs

@@ -25,8 +25,9 @@ import (
 
 const subprotocol = "obswebsocket.json"
 
-// подписка на события категории Scenes (1<<2): смена сцены, список, создание/удаление/переименование
-const eventSubscriptions = 1 << 2
+// подписка на события категорий Scenes (1<<2): смена сцены, список, создание/удаление/переименование,
+// и Inputs (1<<3): mute, создание/удаление/переименование источников. Высокочастотных событий (уровни звука) нет.
+const eventSubscriptions = 1<<2 | 1<<3
 
 type Client struct {
 	mu        sync.Mutex
@@ -42,6 +43,7 @@ type Client struct {
 	conn      *websocket.Conn
 	reqSeq    int
 	pending   map[string]chan map[string]any
+	mix       mixer // микшер (meters.go)
 
 	writeMu sync.Mutex // запись в сокет — только по одному
 
@@ -49,6 +51,9 @@ type Client struct {
 	onStatus  func(bool)
 	onScenes  func([]string)
 	onRenamed func(from, to string)
+
+	// audio — аудиоисточники OBS (имя → заглушён). Заполняется при подключении, дальше обновляется событиями.
+	audio map[string]bool
 }
 
 func New(url, password string) *Client {
@@ -250,16 +255,22 @@ func (c *Client) session(ctx context.Context, url, password string) (identified 
 			if err := c.write(conn, map[string]any{"op": 1, "d": id}); err != nil {
 				return false, err
 			}
-		case 2: // Identified
+		case 2: // Identified (OBS шлёт его и в ответ на Reidentify — повторно ничего не запускаем, иначе подписка зациклится)
+			first := !identified
 			identified = true
 			c.mu.Lock()
 			c.lastErr, c.loggedErr = "", ""
 			c.mu.Unlock()
 			c.setConnected(true)
 			slog.Info("obs: connected")
-			go c.afterIdentified()
+			if first {
+				go c.afterIdentified()
+				go c.resubscribeMixer()
+			}
 		case 5: // событие
-			c.handleEvent(m.D)
+			if !c.mixerEvent(m.D) {
+				c.handleEvent(m.D)
+			}
 		case 7: // ответ на запрос
 			c.deliver(m.D)
 		}
@@ -267,6 +278,7 @@ func (c *Client) session(ctx context.Context, url, password string) (identified 
 }
 
 func (c *Client) afterIdentified() {
+	c.RefreshAudio()
 	c.RefreshScenes()
 	if r, ok := c.Request("GetCurrentProgramScene", nil); ok {
 		name, _ := r["sceneName"].(string)
@@ -305,6 +317,16 @@ func (c *Client) handleEvent(d map[string]any) {
 		go c.RefreshScenes()
 	case "SceneListChanged", "SceneCreated", "SceneRemoved":
 		go c.RefreshScenes()
+	case "InputMuteStateChanged":
+		name, _ := data["inputName"].(string)
+		muted, _ := data["inputMuted"].(bool)
+		c.mu.Lock()
+		if _, known := c.audio[name]; known {
+			c.audio[name] = muted
+		}
+		c.mu.Unlock()
+	case "InputCreated", "InputRemoved", "InputNameChanged":
+		go c.RefreshAudio()
 	}
 }
 
@@ -538,4 +560,68 @@ func explain(url string, opened bool, code int, reason, errMsg string) string {
 		s += ": " + errMsg
 	}
 	return s + ")"
+}
+
+// RefreshAudio перечитывает аудиоисточники OBS и их mute. Источник считается аудио, если OBS отвечает на GetInputMute
+// (у остальных, например у картинок, запрос завершается ошибкой).
+func (c *Client) RefreshAudio() {
+	r, ok := c.Request("GetInputList", nil)
+	if !ok {
+		return
+	}
+	arr, _ := r["inputs"].([]any)
+	audio := map[string]bool{}
+	for _, it := range arr {
+		m, _ := it.(map[string]any)
+		name, _ := m["inputName"].(string)
+		if name == "" || len(audio) >= maxAudioInputs {
+			continue
+		}
+		if r, ok := c.Request("GetInputMute", map[string]any{"inputName": name}); ok {
+			muted, _ := r["inputMuted"].(bool)
+			audio[name] = muted
+		}
+	}
+	c.mu.Lock()
+	c.audio = audio
+	c.mu.Unlock()
+}
+
+// maxAudioInputs — сколько источников звука запоминаем (защита от огромных коллекций).
+const maxAudioInputs = 200
+
+// AudioInputs — имена аудиоисточников OBS (общий микшер), по алфавиту.
+func (c *Client) AudioInputs() []string {
+	c.mu.Lock()
+	out := make([]string, 0, len(c.audio))
+	for n := range c.audio {
+		out = append(out, n)
+	}
+	c.mu.Unlock()
+	sort.Strings(out)
+	return out
+}
+
+// Muted — заглушён ли источник (неизвестный источник — нет).
+func (c *Client) Muted(name string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.audio[name]
+}
+
+// ErrUnknownInput — такого источника звука нет в OBS.
+var ErrUnknownInput = errors.New("unknown audio input")
+
+// ToggleMute переключает mute источника. Имя должно быть в списке известных аудиоисточников: произвольные имена в OBS не уходят.
+func (c *Client) ToggleMute(name string) error {
+	c.mu.Lock()
+	_, known := c.audio[name]
+	c.mu.Unlock()
+	if !known {
+		return ErrUnknownInput
+	}
+	if _, ok := c.Request("ToggleInputMute", map[string]any{"inputName": name}); !ok {
+		return errors.New("OBS did not confirm the mute change")
+	}
+	return nil
 }

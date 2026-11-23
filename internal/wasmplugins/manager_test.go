@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -209,6 +210,43 @@ func TestMetaValidate(t *testing.T) {
 		"handler chars":    func(m *Meta) { m.Routes = []Route{{"GET", "/x", "a-b"}} },
 		"duplicate route":  func(m *Meta) { m.Routes = []Route{{"GET", "/x", "a"}, {"GET", "/x", "b"}} },
 		"too many routes":  func(m *Meta) { m.Routes = make([]Route, maxRoutes+1) },
+		"cmd sub no perm": func(m *Meta) {
+			m.Permissions = nil
+			m.Subscriptions = []string{EventChatCommand}
+			m.Commands = []string{"np"}
+		},
+		"cmd sub no cmds": func(m *Meta) {
+			m.Permissions = []string{PermRedeem, PermChatCommandRead}
+			m.Subscriptions = []string{EventChatCommand}
+		},
+		"action bad id":     func(m *Meta) { m.Actions = []Action{{ID: "Bad", Title: "t", Path: "/a"}} },
+		"action no title":   func(m *Meta) { m.Actions = []Action{{ID: "a", Title: " ", Path: "/a"}} },
+		"action no route":   func(m *Meta) { m.Actions = []Action{{ID: "a", Title: "t", Path: "/nope"}} },
+		"action wrong verb": func(m *Meta) { m.Actions = []Action{{ID: "a", Title: "t", Method: "GET", Path: "/a/b-c"}} },
+		"action bad body":   func(m *Meta) { m.Actions = []Action{{ID: "a", Title: "t", Path: "/a/b-c", Body: []byte("{")}} },
+		"action big body": func(m *Meta) {
+			m.Actions = []Action{{ID: "a", Title: "t", Path: "/a/b-c", Body: []byte(`"` + strings.Repeat("x", maxActionBody) + `"`)}}
+		},
+		"action dup": func(m *Meta) {
+			m.Actions = []Action{{ID: "a", Title: "t", Path: "/a/b-c"}, {ID: "a", Title: "u", Path: "/a/b-c"}}
+		},
+		"too many actions": func(m *Meta) { m.Actions = make([]Action, maxActions+1) },
+		"cmds no sub":      func(m *Meta) { m.Commands = []string{"np"} },
+		"cmd bad name": func(m *Meta) {
+			m.Permissions = []string{PermChatCommandRead}
+			m.Subscriptions = []string{EventChatCommand}
+			m.Commands = []string{"!np"}
+		},
+		"cmd upper": func(m *Meta) {
+			m.Permissions = []string{PermChatCommandRead}
+			m.Subscriptions = []string{EventChatCommand}
+			m.Commands = []string{"NP"}
+		},
+		"cmd dup": func(m *Meta) {
+			m.Permissions = []string{PermChatCommandRead}
+			m.Subscriptions = []string{EventChatCommand}
+			m.Commands = []string{"np", "np"}
+		},
 	}
 	for name, mut := range cases {
 		m := good
@@ -241,5 +279,140 @@ func TestScanIgnoresHTMLPluginFoldersAndOtherFiles(t *testing.T) {
 	infos, problems := m.List()
 	if len(infos) != 1 || infos[0].Meta.ID != "good" || len(problems) != 0 {
 		t.Fatalf("infos=%+v problems=%+v", infos, problems)
+	}
+}
+
+func TestMetaValidateChatCommands(t *testing.T) {
+	m := baseMeta("cmd")
+	m.Permissions = []string{PermChatCommandRead}
+	m.Subscriptions = []string{EventChatCommand}
+	m.Commands = []string{"np", "info_2"}
+	if err := m.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if !m.WantsCommand("np") || m.WantsCommand("other") {
+		t.Fatal("WantsCommand")
+	}
+}
+
+func TestMetaActions(t *testing.T) {
+	m := baseMeta("music")
+	m.Routes = []Route{{"POST", "/control", "ctl"}}
+	m.Actions = []Action{
+		{ID: "pause", Title: "Pause", Icon: "pause", Path: "/control", Body: []byte(`{"action":"pause"}`)},
+		{ID: "skip-ban", Title: "Skip and ban", Path: "/control", Body: []byte(`{"action":"skip_ban"}`), Danger: true},
+	}
+	if err := m.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if m.Actions[0].Method != "POST" { // метод по умолчанию заполняется при проверке
+		t.Fatalf("method %q", m.Actions[0].Method)
+	}
+	if a, ok := m.FindAction("skip-ban"); !ok || !a.Danger || string(a.Body) != `{"action":"skip_ban"}` {
+		t.Fatalf("%+v %v", a, ok)
+	}
+	if _, ok := m.FindAction("nope"); ok {
+		t.Fatal("несуществующее действие")
+	}
+}
+
+func TestActionActiveWhen(t *testing.T) {
+	m := baseMeta("music")
+	m.Routes = []Route{{"POST", "/control", "ctl"}}
+	m.Events = []EventDecl{{ID: "np"}}
+	ok := func(w *ActiveWhen) error {
+		m.Actions = []Action{{ID: "toggle", Title: "T", Path: "/control", ActiveWhen: w}}
+		return m.Validate()
+	}
+	if err := ok(&ActiveWhen{Topic: "np", Field: "playing", Equals: []byte(`true`)}); err != nil {
+		t.Fatal(err)
+	}
+	for name, w := range map[string]*ActiveWhen{
+		"топик не объявлен": {Topic: "other"},
+		"плохое поле":       {Topic: "np", Field: "a b"},
+		"глубокое поле":     {Topic: "np", Field: "a.b.c.d.e"},
+		"не скаляр":         {Topic: "np", Equals: []byte(`{"a":1}`)},
+		"не JSON":           {Topic: "np", Equals: []byte(`nope`)},
+	} {
+		if ok(w) == nil {
+			t.Errorf("%s: ожидалась ошибка", name)
+		}
+	}
+	cases := []struct {
+		w    ActiveWhen
+		data string
+		want bool
+	}{
+		{ActiveWhen{Topic: "np", Field: "playing", Equals: []byte(`true`)}, `{"playing":true}`, true},
+		{ActiveWhen{Topic: "np", Field: "playing", Equals: []byte(`true`)}, `{"playing":false}`, false},
+		{ActiveWhen{Topic: "np", Field: "playing"}, `{"playing":true}`, true},
+		{ActiveWhen{Topic: "np", Field: "a.b", Equals: []byte(`"x"`)}, `{"a":{"b":"x"}}`, true},
+		{ActiveWhen{Topic: "np", Field: "a.b"}, `{"a":1}`, false},
+		{ActiveWhen{Topic: "np", Field: "n", Equals: []byte(`3`)}, `{"n":3}`, true},
+		{ActiveWhen{Topic: "np"}, `true`, true},
+		{ActiveWhen{Topic: "np"}, `""`, false},
+		{ActiveWhen{Topic: "np"}, `null`, false},
+		{ActiveWhen{Topic: "np"}, `not json`, false},
+		{ActiveWhen{Topic: "np", Field: "x"}, `[1]`, false},
+	}
+	for _, c := range cases {
+		if got := c.w.Match([]byte(c.data)); got != c.want {
+			t.Errorf("%+v на %s: %v", c.w, c.data, got)
+		}
+	}
+}
+
+func TestActionDisplay(t *testing.T) {
+	m := baseMeta("music")
+	m.Routes = []Route{{"POST", "/control", "ctl"}}
+	m.Events = []EventDecl{{ID: "now"}}
+	check := func(d *Display) error {
+		m.Actions = []Action{{ID: "now", Title: "Now", Path: "/control", Display: d}}
+		return m.Validate()
+	}
+	if err := check(&Display{Topic: "now", Fields: []string{"now.title", "now.artists"}}); err != nil {
+		t.Fatal(err)
+	}
+	for name, d := range map[string]*Display{
+		"топик не объявлен": {Topic: "x", Fields: []string{"a"}},
+		"нет полей":         {Topic: "now"},
+		"много полей":       {Topic: "now", Fields: []string{"a", "b", "c", "d", "e"}},
+		"плохое поле":       {Topic: "now", Fields: []string{"a b"}},
+	} {
+		if check(d) == nil {
+			t.Errorf("%s: ожидалась ошибка", name)
+		}
+	}
+	d := Display{Topic: "now", Fields: []string{"now.title", "now.artists", "now.n", "missing", "now.empty"}}
+	got := d.Lines([]byte(`{"now":{"title":"  Song \n Name ","artists":["A"," ","B"],"n":2.5,"empty":""}}`))
+	if want := []string{"Song Name", "A, B", "2.5"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("%q", got)
+	}
+	long := Display{Topic: "now", Fields: []string{"t"}}.Lines([]byte(`{"t":"` + strings.Repeat("я", 200) + `"}`))
+	if len(long) != 1 || len([]rune(long[0])) != maxDisplayRunes {
+		t.Fatalf("обрезка: %d", len([]rune(long[0])))
+	}
+	if (Display{Fields: []string{"a"}}).Lines([]byte(`nope`)) != nil {
+		t.Fatal("не JSON")
+	}
+}
+
+func TestInspectChecksWithoutRegistering(t *testing.T) {
+	dir := t.TempDir()
+	mod := &fakeModule{meta: baseMeta("alpha"), handler: nopHandler}
+	eng := &fakeEngine{mods: map[string]*fakeModule{"A1": mod}}
+	m := newTestManager(t, eng, &MemState{}, dir)
+	meta, err := m.Inspect([]byte("A1"))
+	if err != nil || meta.ID != "alpha" {
+		t.Fatalf("%+v %v", meta, err)
+	}
+	if infos, _ := m.List(); len(infos) != 0 {
+		t.Fatalf("Inspect ничего не регистрирует: %+v", infos)
+	}
+	if _, err := m.Inspect([]byte("nope")); err == nil {
+		t.Fatal("не модуль")
+	}
+	if _, err := m.Inspect(nil); err == nil {
+		t.Fatal("пустой файл")
 	}
 }

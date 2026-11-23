@@ -150,6 +150,13 @@ func (s *Server) configView() configView {
 	}
 }
 
+// stateChanged сообщает редактору, что изменилось состояние (config, devices, twitch): он заново запросит его по REST.
+func (s *Server) stateChanged(topic string) {
+	if s.d.Hub != nil {
+		s.d.Hub.StateChanged(topic)
+	}
+}
+
 func (s *Server) putConfig(c fiber.Ctx) error {
 	var p config.Patch
 	if !body(c, &p) {
@@ -159,8 +166,13 @@ func (s *Server) putConfig(c fiber.Ctx) error {
 	if err != nil {
 		return bad(c, err.Error())
 	}
+	s.configApplied(prev, next)
+	return c.JSON(s.configView())
+}
+
+// configApplied применяет изменённый конфиг сразу: отладка прокси, включение/выключение obs-websocket, смена адреса/пароля.
+func (s *Server) configApplied(prev, next config.Config) {
 	s.d.Proxy.SetDebug(next.DebugProxy)
-	// Применяем сразу: включение/выключение obs-websocket и смена адреса/пароля.
 	switch {
 	case !next.Obs.Enabled:
 		s.d.Obs.Stop()
@@ -168,7 +180,7 @@ func (s *Server) putConfig(c fiber.Ctx) error {
 		s.d.Obs.Reconnect(next.Obs.URL, next.Obs.Password)
 	}
 	s.d.Hub.BroadcastObsStatus()
-	return c.JSON(s.configView())
+	s.stateChanged("config")
 }
 
 // ---- layouts ----

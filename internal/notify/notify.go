@@ -16,6 +16,8 @@ import (
 const (
 	KindPluginUpdate = "plugin-update"
 	KindAppUpdate    = "app-update"
+	// KindPluginDeprecated — установленный плагин объявлен устаревшим (deprecated.json источника); в Data — запись и замена.
+	KindPluginDeprecated = "plugin-deprecated"
 	// KindTwitchReconnect — аккаунт Twitch нужно подключить заново (токен не обновляется или не хватает прав).
 	KindTwitchReconnect = "twitch-reconnect"
 
@@ -243,6 +245,7 @@ func (c *Center) LastCheck() time.Time {
 
 // Candidate — найденное обновление; Check превращает его в уведомление.
 type Candidate struct {
+	Kind             string // KindPluginUpdate (по умолчанию) или KindPluginDeprecated
 	Key, Title, Text string
 	Data             any
 }
@@ -289,13 +292,22 @@ func (c *Center) Check(ctx context.Context, force bool, find Finder) error {
 	if !ok {
 		return errors.New("no update source answered")
 	}
-	keep := map[string]bool{}
+	keep := map[string]map[string]bool{KindPluginUpdate: {}, KindPluginDeprecated: {}}
 	for _, cand := range list {
-		keep[cand.Key] = true
+		kind := cand.Kind
+		if kind == "" {
+			kind = KindPluginUpdate
+		}
+		if keep[kind] == nil {
+			continue
+		}
+		keep[kind][cand.Key] = true
 		raw, _ := json.Marshal(cand.Data)
-		c.Upsert(Item{Key: cand.Key, Kind: KindPluginUpdate, Title: cand.Title, Text: cand.Text, Data: raw})
+		c.Upsert(Item{Key: cand.Key, Kind: kind, Title: cand.Title, Text: cand.Text, Data: raw})
 	}
-	c.Resolve(KindPluginUpdate, keep)
+	for kind, k := range keep { // условие исчезло (плагин обновлён, удалён или больше не устарел) — уведомление снимается
+		c.Resolve(kind, k)
+	}
 	c.mu.Lock()
 	c.f.LastCheckFail = false
 	c.saveLocked()

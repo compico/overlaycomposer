@@ -47,10 +47,22 @@ func sizeOK(w, h int) bool {
 
 // Типы действий плитки. Действие определяет сервер по сохранённой раскладке; клиент присылает только id плитки.
 const (
-	ActionScene = "scene" // сменить сцену OBS (Scene)
+	ActionScene  = "scene"  // сменить сцену OBS (Scene)
+	ActionPlugin = "plugin" // действие wasm-плагина (Plugin, PluginAction): плагин объявляет их в Meta.Actions
+	ActionMute   = "mute"   // переключить mute источника звука OBS (Input)
+	ActionFolder = "folder" // папка со сценами (Scenes): нажатие открывает выбор, сервер принимает только сцены из списка
 )
 
+// MaxFolderScenes — сколько сцен в одной папке.
+const MaxFolderScenes = 8
+
 var idRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
+
+// Идентификаторы плагина и его действия — как в wasmplugins (id плагина: a-z, 0-9, _ и -; действия: то же, до 32).
+var (
+	pluginIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+	actionIDRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
+)
 
 // Palette — цвета Metro: клиенту уходит имя, а не произвольный CSS (нечего внедрять в стиль).
 var Palette = map[string]string{
@@ -71,10 +83,20 @@ type Layout struct {
 
 // Group — набор плиток с заголовком. Плитки лежат на сетке группы: x от 0 вправо (ширина группы — по самой правой плитке), y от 0 вниз до Rows.
 type Group struct {
-	ID    string `json:"id"`
-	Name  string `json:"name,omitempty"`
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty"`
+	// Kind — вид группы: пусто — плитки, GroupMixer — готовый микшер OBS (плиток нет, ширина — Cols).
+	Kind  string `json:"kind,omitempty"`
+	Cols  int    `json:"cols,omitempty"`
 	Tiles []Tile `json:"tiles"`
 }
+
+// Группа-микшер: активные источники звука OBS с уровнями, mute, громкостью и прослушиванием. Не настраивается, в раскладке одна.
+const (
+	GroupMixer      = "mixer"
+	MixerMinCols    = 4
+	MixerDefaultCol = 8
+)
 
 type Tile struct {
 	ID    string `json:"id"` // уникален во всей раскладке: нажатие приходит с одним id
@@ -93,10 +115,58 @@ type Tile struct {
 type Action struct {
 	Type  string `json:"type"`
 	Scene string `json:"scene,omitempty"`
+	// Input — имя аудиоисточника OBS для ActionMute.
+	Input string `json:"input,omitempty"`
+	// Scenes — избранные сцены папки (ActionFolder), 1..MaxFolderScenes, без повторов.
+	Scenes []string `json:"scenes,omitempty"`
+	// Plugin и PluginAction — id плагина и его объявленного действия. Что именно вызвать (маршрут, тело), решает сервер по Meta плагина;
+	// плагина может не быть в момент сохранения (он ещё не установлен) — тогда нажатие вернёт ошибку, а раскладка останется валидной.
+	Plugin       string `json:"plugin,omitempty"`
+	PluginAction string `json:"pluginAction,omitempty"`
+}
+
+// HasScene сообщает, переключает ли действие на эту сцену: сцена плитки или любая сцена из папки.
+func (a Action) HasScene(name string) bool {
+	if name == "" {
+		return false
+	}
+	switch a.Type {
+	case ActionScene:
+		return a.Scene == name
+	case ActionFolder:
+		for _, s := range a.Scenes {
+			if s == name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func validSceneName(s string) bool {
+	n := utf8.RuneCountInString(s)
+	return n > 0 && n <= 200
+}
+
+func validFolder(scenes []string) error {
+	if len(scenes) == 0 || len(scenes) > MaxFolderScenes {
+		return fmt.Errorf("folder needs 1..%d scenes", MaxFolderScenes)
+	}
+	seen := map[string]bool{}
+	for _, s := range scenes {
+		if !validSceneName(s) || seen[s] {
+			return fmt.Errorf("folder scenes: names 1..200 characters, no repeats")
+		}
+		seen[s] = true
+	}
+	return nil
 }
 
 // Width — ширина группы в клетках (минимум 1, чтобы пустая группа оставалась видимой и её можно было наполнить).
 func (g Group) Width() int {
+	if g.Kind == GroupMixer {
+		return g.Cols
+	}
 	w := 1
 	for _, t := range g.Tiles {
 		if t.X+t.W > w {
@@ -130,7 +200,7 @@ func (l *Layout) Validate() error {
 	if len(l.Groups) == 0 || len(l.Groups) > MaxGroups {
 		return fmt.Errorf("groups: 1..%d", MaxGroups)
 	}
-	groups, tiles, total := map[string]bool{}, map[string]bool{}, 0
+	groups, tiles, total, mixers := map[string]bool{}, map[string]bool{}, 0, 0
 	for _, g := range l.Groups {
 		if !idRe.MatchString(g.ID) || groups[g.ID] {
 			return fmt.Errorf("group id %q: a-z, 0-9, -, up to 32 characters, unique", g.ID)
@@ -138,6 +208,24 @@ func (l *Layout) Validate() error {
 		groups[g.ID] = true
 		if utf8.RuneCountInString(g.Name) > MaxName || strings.ContainsAny(g.Name, "\r\n\t") {
 			return fmt.Errorf("group %q: name up to %d characters, one line", g.ID, MaxName)
+		}
+		switch g.Kind {
+		case "":
+			if g.Cols != 0 {
+				return fmt.Errorf("group %q: cols is only for the mixer", g.ID)
+			}
+		case GroupMixer:
+			if mixers++; mixers > 1 {
+				return errors.New("only one mixer group")
+			}
+			if len(g.Tiles) != 0 {
+				return fmt.Errorf("group %q: the mixer has no tiles", g.ID)
+			}
+			if g.Cols < MixerMinCols || g.Cols > MaxGroupCols {
+				return fmt.Errorf("group %q: mixer width %d..%d columns", g.ID, MixerMinCols, MaxGroupCols)
+			}
+		default:
+			return fmt.Errorf("group %q: unknown kind %q", g.ID, g.Kind)
 		}
 		var grid [Rows][MaxGroupCols]bool
 		for _, t := range g.Tiles {
@@ -173,8 +261,20 @@ func (l *Layout) Validate() error {
 			}
 			switch t.Action.Type {
 			case ActionScene:
-				if n := utf8.RuneCountInString(t.Action.Scene); n == 0 || n > 200 {
+				if !validSceneName(t.Action.Scene) {
 					return fmt.Errorf("tile %q: scene name 1..200 characters", t.ID)
+				}
+			case ActionMute:
+				if !validSceneName(t.Action.Input) {
+					return fmt.Errorf("tile %q: audio input name 1..200 characters", t.ID)
+				}
+			case ActionFolder:
+				if err := validFolder(t.Action.Scenes); err != nil {
+					return fmt.Errorf("tile %q: %v", t.ID, err)
+				}
+			case ActionPlugin:
+				if !pluginIDRe.MatchString(t.Action.Plugin) || !actionIDRe.MatchString(t.Action.PluginAction) {
+					return fmt.Errorf("tile %q: plugin action needs a plugin id and an action id", t.ID)
 				}
 			default:
 				return fmt.Errorf("tile %q: unknown action %q", t.ID, t.Action.Type)
@@ -182,6 +282,16 @@ func (l *Layout) Validate() error {
 		}
 	}
 	return nil
+}
+
+// HasMixer — есть ли в раскладке группа-микшер.
+func (l *Layout) HasMixer() bool {
+	for _, g := range l.Groups {
+		if g.Kind == GroupMixer {
+			return true
+		}
+	}
+	return false
 }
 
 // Tile находит плитку по id во всей раскладке.

@@ -15,6 +15,7 @@ export interface WasmMeta {
   settings?: string;
   /** Программы на этом компьютере, к которым плагин ходит при выданном net.local. */
   netLocal?: { target: string; setting?: string }[];
+  commands?: string[]; // команды чата (без «!»), которые плагин получает; см. chat.command.read
 }
 
 export interface WasmPlugin {
@@ -91,6 +92,7 @@ const PERMISSION_TEXT: Record<string, string> = {
   storage: "Keep its own data (queue, settings) in Overlay Composer",
   "events.publish": "Send live events (player state, commands) to widgets and connected apps",
   "chat.send": "Write messages to your channel chat as the bot",
+  "chat.command.read": "See chat commands (messages starting with !) that it asks for; the rest of the chat stays hidden from it",
   "net.http": "Make requests to the internet (never to your local network)",
   "net.local": "Talk to programs on this computer (only the addresses it names)",
   "twitch.redemption": "See channel point redemptions and mark them fulfilled or cancelled",
@@ -102,6 +104,8 @@ export const permissionText = (p: string, meta?: WasmMeta): string => {
   const base = PERMISSION_TEXT[p] ?? p;
   // Для net.local называем адреса: пользователь должен видеть, к чему именно плагин получит доступ.
   if (p === "net.local" && meta?.netLocal?.length) return `${base}: ${meta.netLocal.map((t) => t.target).join(", ")}`;
+  // Для chat.command.read называем команды: пользователь должен видеть, какие именно «!…» плагин получит.
+  if (p === "chat.command.read" && meta?.commands?.length) return `${base}: ${meta.commands.map((c) => "!" + c).join(", ")}`;
   return base;
 };
 

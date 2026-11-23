@@ -16,18 +16,27 @@ export class ApiError extends Error {
 /** 409: layout изменили после того, как мы его прочитали. */
 export const isConflict = (e: unknown): boolean => e instanceof ApiError && e.status === 409;
 
+/** Тело, которое уходит как есть (уже готовый JSON-текст): файл настроек нельзя разбирать и собирать заново — контрольные суммы считаются по исходным байтам. */
+export class RawJson {
+  readonly text: string;
+  constructor(text: string) {
+    this.text = text;
+  }
+}
+
 export type Api = <T = unknown>(path: string, method?: string, body?: unknown) => Promise<T>;
 
 /** Реальный клиент. Заголовок x-overlay-composer нужен серверу для изменяющих запросов (защита от чужих страниц). */
 export const httpApi: Api = async <T = unknown>(path: string, method = "GET", body?: unknown): Promise<T> => {
   // FormData (загрузка файлов) уходит как есть: boundary в content-type браузер ставит сам.
   const form = body instanceof FormData;
+  const raw = body instanceof RawJson;
   const res = await fetch(path, {
     method,
     headers: body !== undefined && !form
       ? { "content-type": "application/json", "x-overlay-composer": "1" }
       : { "x-overlay-composer": "1" },
-    body: body === undefined ? undefined : form ? body : JSON.stringify(body),
+    body: body === undefined ? undefined : form ? body : raw ? body.text : JSON.stringify(body),
   });
   if (!res.ok) {
     const e = await res.json().catch(() => ({ error: res.statusText }));
