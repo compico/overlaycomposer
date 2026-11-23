@@ -43,6 +43,7 @@ type Client struct {
 	conn      *websocket.Conn
 	reqSeq    int
 	pending   map[string]chan map[string]any
+	mix       mixer // микшер (meters.go)
 
 	writeMu sync.Mutex // запись в сокет — только по одному
 
@@ -254,16 +255,22 @@ func (c *Client) session(ctx context.Context, url, password string) (identified 
 			if err := c.write(conn, map[string]any{"op": 1, "d": id}); err != nil {
 				return false, err
 			}
-		case 2: // Identified
+		case 2: // Identified (OBS шлёт его и в ответ на Reidentify — повторно ничего не запускаем, иначе подписка зациклится)
+			first := !identified
 			identified = true
 			c.mu.Lock()
 			c.lastErr, c.loggedErr = "", ""
 			c.mu.Unlock()
 			c.setConnected(true)
 			slog.Info("obs: connected")
-			go c.afterIdentified()
+			if first {
+				go c.afterIdentified()
+				go c.resubscribeMixer()
+			}
 		case 5: // событие
-			c.handleEvent(m.D)
+			if !c.mixerEvent(m.D) {
+				c.handleEvent(m.D)
+			}
 		case 7: // ответ на запрос
 			c.deliver(m.D)
 		}
