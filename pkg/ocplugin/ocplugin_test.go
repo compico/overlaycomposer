@@ -388,6 +388,7 @@ func TestChatMessageEvent(t *testing.T) {
 	if got[2].Event != "status" || got[2].Connected == nil || !*got[2].Connected {
 		t.Fatalf("status: %+v", got[2])
 	}
+	current = nil // New допускается один раз на .wasm: сбрасываем перед вторым плагином
 	if strings.Contains(string(New(Meta{ID: "x", Name: "X", Version: "1.0.0"}).metaJSON()), "chat.message") {
 		t.Fatal("без OnChatMessage подписки быть не должно")
 	}
