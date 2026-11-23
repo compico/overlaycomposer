@@ -123,6 +123,7 @@ type Message struct {
 	IsSub         bool     `json:"isSub"`
 	FirstMsg      bool     `json:"firstMsg"`
 	Emotes        []Emote  `json:"emotes"`
+	Parts         []Part   `json:"parts"`             // текст, нарезанный на обычные куски и смайлы со ссылками на картинки
 	ReplyTo       string   `json:"replyTo,omitempty"` // id сообщения, на которое это ответ
 	Timestamp     int64    `json:"timestamp"`         // мс
 	FromBot       bool     `json:"fromBot"`           // написано подключённым аккаунтом бота (чтобы не реагировать на себя)
@@ -176,6 +177,7 @@ func messageFrom(l ircLine) (Message, bool) {
 		m.Action = true
 		m.Text = strings.TrimSuffix(strings.TrimPrefix(m.Text, "\x01ACTION "), "\x01")
 	}
+	m.Parts = buildParts(m.Text, m.Emotes)
 	for _, b := range strings.Split(t["badges"], ",") {
 		name, _, _ := strings.Cut(b, "/")
 		if name == "" {

@@ -29,6 +29,9 @@ func TestParseLine(t *testing.T) {
 	if len(m.Emotes) != 3 || m.Emotes[0] != (Emote{"25", 0, 4}) || m.Emotes[2] != (Emote{"1902", 6, 10}) {
 		t.Fatalf("emotes: %+v", m.Emotes)
 	}
+	if len(m.Parts) != 5 || m.Parts[0].Emote != "25" || m.Parts[0].Name != "Kappa" || m.Parts[1].Text != " " || m.Parts[4].Emote != "25" {
+		t.Fatalf("parts: %+v", m.Parts)
+	}
 	if len(m.Badges) != 2 || m.Badges[0] != "moderator" {
 		t.Fatalf("badges: %v", m.Badges)
 	}

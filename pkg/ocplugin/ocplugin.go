@@ -196,6 +196,14 @@ type ChatEmote struct {
 	End   int    `json:"end"`
 }
 
+// ChatPart — кусок текста сообщения: обычный текст (Text) или смайл Twitch (Emote) с готовой ссылкой на картинку (URL).
+type ChatPart struct {
+	Text  string `json:"text,omitempty"`
+	Emote string `json:"emote,omitempty"` // id смайла
+	Name  string `json:"name,omitempty"`  // как смайл написан в тексте («Kappa»)
+	URL   string `json:"url,omitempty"`
+}
+
 // ChatMessage — сообщение чата. Текст, ники и всё остальное — данные зрителей: им нельзя доверять.
 type ChatMessage struct {
 	ID            string      `json:"id"`
@@ -213,6 +221,7 @@ type ChatMessage struct {
 	IsSub         bool        `json:"isSub"`
 	FirstMsg      bool        `json:"firstMsg"`
 	Emotes        []ChatEmote `json:"emotes"`
+	Parts         []ChatPart  `json:"parts"`             // Text, нарезанный на обычные куски и смайлы со ссылками: выводите его вместо ручной нарезки по Emotes
 	ReplyTo       string      `json:"replyTo,omitempty"` // id сообщения, на которое это ответ
 	Timestamp     int64       `json:"timestamp"`         // мс
 	FromBot       bool        `json:"fromBot"`           // написано аккаунтом бота OC

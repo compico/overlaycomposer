@@ -77,12 +77,25 @@ interface OCChatMessage {
   /** Первое сообщение пользователя в этом чате. */
   firstMsg: boolean;
   emotes: OCChatEmote[];
+  /** `text`, нарезанный на обычные куски и смайлы Twitch со ссылками на картинки: выводите куски по порядку, позиции считать не нужно. */
+  parts?: OCChatPart[];
   /** id сообщения, на которое это ответ (если ответ). */
   replyTo?: string;
   /** Время отправки, мс (Unix epoch). */
   timestamp: number;
   /** Написано подключённым аккаунтом бота: так плагин не отвечает сам себе. */
   fromBot: boolean;
+}
+
+interface OCChatPart {
+  /** Обычный текст (у куска-смайла не задан). */
+  text?: string;
+  /** id смайла Twitch (только у куска-смайла). */
+  emote?: string;
+  /** Как смайл написан в тексте, например «Kappa»: подходит для alt. */
+  name?: string;
+  /** Ссылка на картинку смайла. */
+  url?: string;
 }
 
 interface OCChatDelete {

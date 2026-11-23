@@ -372,14 +372,15 @@ func TestChatMessageEvent(t *testing.T) {
 	if !strings.Contains(string(p.metaJSON()), `"chat.message"`) {
 		t.Fatalf("meta: %s", p.metaJSON())
 	}
-	p.dispatch("on_event", []byte(`{"type":"chat.message","data":{"event":"message","channel":"s","message":{"id":"m1","login":"v","displayName":"V","text":"hi","isMod":true,"emotes":[{"id":"25","start":0,"end":4}],"timestamp":5}}}`))
+	p.dispatch("on_event", []byte(`{"type":"chat.message","data":{"event":"message","channel":"s","message":{"id":"m1","login":"v","displayName":"V","text":"hi","isMod":true,"emotes":[{"id":"25","start":0,"end":4}],"parts":[{"emote":"25","name":"Kappa","url":"https://x/25"},{"text":" hi"}],"timestamp":5}}}`))
 	p.dispatch("on_event", []byte(`{"type":"chat.message","data":{"event":"delete","targetId":"m1"}}`))
 	p.dispatch("on_event", []byte(`{"type":"chat.message","data":{"event":"status","connected":true}}`))
 	if len(got) != 3 {
 		t.Fatalf("events: %+v", got)
 	}
 	m := got[0].Message
-	if got[0].Event != "message" || m == nil || m.ID != "m1" || m.Login != "v" || !m.IsMod || len(m.Emotes) != 1 || m.Emotes[0].ID != "25" || m.Timestamp != 5 {
+	if got[0].Event != "message" || m == nil || m.ID != "m1" || m.Login != "v" || !m.IsMod || len(m.Emotes) != 1 || m.Emotes[0].ID != "25" || m.Timestamp != 5 ||
+		len(m.Parts) != 2 || m.Parts[0].Emote != "25" || m.Parts[0].Name != "Kappa" || m.Parts[0].URL != "https://x/25" || m.Parts[1].Text != " hi" {
 		t.Fatalf("message: %+v", got[0])
 	}
 	if got[1].Event != "delete" || got[1].TargetID != "m1" {
