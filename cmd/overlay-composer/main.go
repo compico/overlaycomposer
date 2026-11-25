@@ -175,7 +175,7 @@ func run() int {
 
 	pluginReg := plugins.New(plugins.Builtin(), os.DirFS(p.PluginsDir))
 	mk, err := market.New(market.Config{
-		File: filepath.Join(p.DataDir, "market.json"), Dir: p.PluginsDir, Reg: pluginReg, Builtin: pluginReg.IsBuiltin, Box: box,
+		File: filepath.Join(p.DataDir, "market.json"), Dir: p.PluginsDir, Reg: pluginReg, Builtin: pluginReg.IsBuiltin, Box: box, HostVersion: version,
 	})
 	if err != nil {
 		slog.Error("магазин плагинов", "err", err)
@@ -530,6 +530,7 @@ func openWasmPlugins(p paths.Paths, kvSvc *kv.Service, tw *twitch.Manager, chatS
 			Say: func(ctx context.Context, text, replyTo string) error {
 				return chatSvc.Say(ctx, chat.SayRequest{Text: text, As: twitch.RoleBot, ReplyTo: replyTo})
 			}},
-		Reserved: func(id string) bool { _, ok := reg.Get(id); return ok },
+		Reserved:    func(id string) bool { _, ok := reg.Get(id); return ok },
+		HostVersion: version,
 	}), dirs
 }

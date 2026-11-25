@@ -69,3 +69,12 @@ test("uninstall", async () => {
   assert.equal(changed(), 1);
   assert.deepEqual(calls, ["POST /api/market/wasm/uninstall", "GET /api/market/wasm"]);
 });
+
+test("minHost и hostTooOld приходят из каталога как есть", async () => {
+  const src: WasmSource[] = [{ repo: "o/r", plugins: [{ id: "chat", name: "Chat", version: "0.2.0", repo: "o/r", tag: "chat-v0.2.0", versions: [], installed: false, updateAvailable: false, minHost: "v2026.11.25.7", hostTooOld: true }] }];
+  const { model } = setup({ "GET /api/market/wasm": () => ({ sources: src }) });
+  await model.load();
+  const p = model.get().sources[0].plugins[0];
+  assert.equal(p.minHost, "v2026.11.25.7");
+  assert.equal(p.hostTooOld, true);
+});

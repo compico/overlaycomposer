@@ -15,6 +15,8 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"github.com/compico/overlaycomposer/internal/update"
 )
 
 // Каталог автономных (wasm) плагинов. Они выпускаются в Releases репозитория-источника: тег <id>-v<версия>, ассеты
@@ -169,18 +171,21 @@ type WasmVersion struct {
 
 // WasmEntry — wasm-плагин из релизов источника (последняя версия и список всех).
 type WasmEntry struct {
-	ID          string        `json:"id"`
-	Name        string        `json:"name"`
-	Version     string        `json:"version"`
-	Description string        `json:"description,omitempty"`
-	Author      string        `json:"author,omitempty"`
-	Permissions []string      `json:"permissions,omitempty"`
-	Repo        string        `json:"repo"`
-	Tag         string        `json:"tag"`
-	Sha256      string        `json:"sha256,omitempty"`
-	Size        int64         `json:"size,omitempty"`
-	NoInfo      bool          `json:"noInfo,omitempty"` // у последнего релиза нет <id>.json: имя, права и sha256 неизвестны
-	Versions    []WasmVersion `json:"versions"`         // от новой к старой
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Version     string   `json:"version"`
+	Description string   `json:"description,omitempty"`
+	Author      string   `json:"author,omitempty"`
+	Permissions []string `json:"permissions,omitempty"`
+	// MinHost — минимальная версия Overlay Composer последней версии плагина (если она объявлена); HostTooOld — она новее установленной.
+	MinHost    string        `json:"minHost,omitempty"`
+	HostTooOld bool          `json:"hostTooOld,omitempty"`
+	Repo       string        `json:"repo"`
+	Tag        string        `json:"tag"`
+	Sha256     string        `json:"sha256,omitempty"`
+	Size       int64         `json:"size,omitempty"`
+	NoInfo     bool          `json:"noInfo,omitempty"` // у последнего релиза нет <id>.json: имя, права и sha256 неизвестны
+	Versions   []WasmVersion `json:"versions"`         // от новой к старой
 	// Changelog — журнал изменений из <id>.changelog.json последнего релиза (вся история). Отдаётся только для установленных плагинов:
 	// редактор показывает из него записи пропущенных версий (между установленной и выбранной).
 	Changelog []Change `json:"changelog,omitempty"`
@@ -321,6 +326,7 @@ type wasmInfo struct {
 		Description string   `json:"description"`
 		Author      string   `json:"author"`
 		Permissions []string `json:"permissions"`
+		MinHost     string   `json:"minHost"`
 	} `json:"meta"`
 }
 
@@ -362,6 +368,10 @@ func (m *Market) fillWasmInfo(ctx context.Context, r Repo, e *WasmEntry, rel Rel
 	e.Name = oneLine(in.Meta.Name, 80, e.ID)
 	e.Description = oneLine(in.Meta.Description, 500, "")
 	e.Author = oneLine(in.Meta.Author, 80, "")
+	if update.IsRelease(in.Meta.MinHost) { // чужой текст вместо версии не показываем
+		e.MinHost = in.Meta.MinHost
+		e.HostTooOld = m.hostTooOld(e.MinHost)
+	}
 	for _, p := range in.Meta.Permissions {
 		// Название права не обрезаем: длинное или с мусором — не право, а чужой текст; такое не показываем.
 		if p != "" && len(p) <= 40 && p == oneLine(p, 40, "") && len(e.Permissions) < 32 {

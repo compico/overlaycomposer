@@ -363,3 +363,50 @@ func TestUpdatesWasmCatalogFailure(t *testing.T) {
 		t.Fatal("поставленный wasm-плагин и сбой каталога релизов: ответ ненадёжен")
 	}
 }
+
+func TestWasmInstallMinHost(t *testing.T) {
+	m, h, f := installEnv(t)
+	m.hostVer = "v2026.11.23.6"
+	f.addRelease("chat", "0.1.0", "chat 0.1.0 storage", true)
+	f.addRelease("chat", "0.2.0", "chat 0.2.0 storage", true)
+	// 0.2.0 требует OC новее установленного; 0.1.0 — без требований
+	for i := range f.list {
+		if f.list[i].Tag != "chat-v0.2.0" {
+			continue
+		}
+		for _, a := range f.list[i].Assets {
+			if a.Name == "chat.json" {
+				f.files[a.ID] = strings.Replace(f.files[a.ID], `"permissions"`, `"minHost":"v2026.11.25.7","permissions"`, 1)
+			}
+		}
+	}
+	ctx := context.Background()
+
+	srcs := m.WasmCatalog(ctx, true)
+	e := srcs[0].Plugins[0]
+	if e.Version != "0.2.0" || e.MinHost != "v2026.11.25.7" || !e.HostTooOld {
+		t.Fatalf("каталог: %+v", e)
+	}
+
+	var tooOld *HostTooOldError
+	if _, err := m.WasmInstall(ctx, "o/n", "chat", "chat-v0.2.0", ""); !errors.As(err, &tooOld) || tooOld.Need != "v2026.11.25.7" {
+		t.Fatalf("установка: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(h.dir, "chat.wasm")); err == nil {
+		t.Fatal("при отказе файл не кладётся")
+	}
+	// старая версия без требований ставится
+	if _, err := m.WasmInstall(ctx, "o/n", "chat", "chat-v0.1.0", ""); err != nil {
+		t.Fatal(err)
+	}
+	// после обновления приложения (и для dev-сборки) та же версия доступна
+	for _, v := range []string{"v2026.11.25.7", "dev"} {
+		m.hostVer = v
+		if _, err := m.WasmInstall(ctx, "o/n", "chat", "chat-v0.2.0", ""); err != nil {
+			t.Fatalf("хост %s: %v", v, err)
+		}
+		if _, err := m.WasmInstall(ctx, "o/n", "chat", "chat-v0.1.0", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

@@ -3,6 +3,7 @@ package wasmplugins
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -433,5 +434,42 @@ func TestInspectChecksWithoutRegistering(t *testing.T) {
 	}
 	if _, err := m.Inspect(nil); err == nil {
 		t.Fatal("пустой файл")
+	}
+}
+
+func TestMinHost(t *testing.T) {
+	m := baseMeta("alpha")
+	m.MinHost = "v2026.11.25.7"
+	if err := m.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	m.MinHost = "2026.11"
+	if m.Validate() == nil {
+		t.Fatal("minHost не в формате тега релиза должен отклоняться")
+	}
+
+	// Инспекция: хост старее — понятная ошибка раньше «unknown permission»; новее, равный и dev — проверки нет.
+	nm := baseMeta("alpha")
+	nm.MinHost = "v2026.11.25.7"
+	nm.Permissions = []string{"from.the.future"}
+	eng := &fakeEngine{mods: map[string]*fakeModule{"A1": {meta: nm, handler: nopHandler}}}
+	check := func(host string) error {
+		mgr := NewManager(context.Background(), Options{Engine: eng, Dirs: []string{t.TempDir()}, State: &MemState{}, Services: Services{Log: quietLog()}, HostVersion: host})
+		defer mgr.Close()
+		_, err := mgr.Inspect([]byte("A1"))
+		return err
+	}
+	var tooOld *HostTooOldError
+	if err := check("v2026.11.23.6"); !errors.As(err, &tooOld) || tooOld.Need != "v2026.11.25.7" || tooOld.Have != "v2026.11.23.6" {
+		t.Fatalf("старый хост: %v", err)
+	}
+	for _, host := range []string{"v2026.11.25.7", "v2026.12.01.8", "dev", ""} {
+		err := check(host)
+		if errors.As(err, &tooOld) {
+			t.Fatalf("хост %q не старее: %v", host, err)
+		}
+		if err == nil || !strings.Contains(err.Error(), "unknown permission") {
+			t.Fatalf("хост %q: ждали обычную проверку меты, получили %v", host, err)
+		}
 	}
 }
