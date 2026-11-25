@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/compico/overlaycomposer/internal/update"
 )
 
 // Установка автономных (wasm) плагинов из Releases источника. Один вызов WasmInstall ставит, обновляет и меняет версию (в том числе
@@ -21,6 +23,18 @@ var (
 	ErrNoWasmHost = errors.New("standalone plugins are unavailable")
 	ErrNoRelease  = errors.New("release not found (reload the catalog)")
 )
+
+// HostTooOldError — плагину нужен более новый Overlay Composer (Meta.MinHost).
+type HostTooOldError struct{ Need, Have string }
+
+func (e *HostTooOldError) Error() string {
+	return fmt.Sprintf("this plugin requires Overlay Composer %s or newer (this is %s): update the app first", e.Need, e.Have)
+}
+
+// hostTooOld — minHost новее версии приложения; для нерелизной сборки и пустого minHost — false.
+func (m *Market) hostTooOld(minHost string) bool {
+	return minHost != "" && update.IsRelease(m.hostVer) && update.Newer(minHost, m.hostVer)
+}
 
 // WasmRecord — установленный через магазин wasm-плагин.
 type WasmRecord struct {
@@ -199,6 +213,10 @@ func (m *Market) WasmInstall(ctx context.Context, repoIn, id, tag, sha string) (
 	if rel == nil {
 		return res, ErrNoRelease
 	}
+	// Нужный OC новее установленного — отказываем до скачивания (файл сам скажет то же самое при проверке ниже).
+	if in, ok := m.readWasmInfo(ctx, r, id, version, *rel); ok && m.hostTooOld(in.Meta.MinHost) {
+		return res, &HostTooOldError{Need: in.Meta.MinHost, Have: m.hostVer}
+	}
 	data, got, err := m.wasmDownload(ctx, r, id, version, *rel)
 	if err != nil {
 		return res, err
@@ -207,6 +225,10 @@ func (m *Market) WasmInstall(ctx context.Context, repoIn, id, tag, sha string) (
 		return res, ErrChanged
 	}
 	gotID, gotVer, perms, err := host.Inspect(data)
+	var tooOld *HostTooOldError
+	if errors.As(err, &tooOld) {
+		return res, err
+	}
 	if err != nil {
 		return res, fmt.Errorf("the file in the release is not a valid plugin: %w", err)
 	}
