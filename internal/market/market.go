@@ -338,6 +338,7 @@ type Market struct {
 	whost   WasmHost // nil — автономные плагины недоступны
 	builtin func(id string) bool
 	box     *secret.Box // шифрует токен GitHub; nil — токен хранить нельзя
+	hostAPI int         // версия API плагинов приложения; см. Config.HostAPI
 
 	opMu sync.Mutex // одна операция установки/удаления за раз
 	mu   sync.Mutex
@@ -362,6 +363,9 @@ type Config struct {
 	Releases ReleaseSource        // релизы GitHub для wasm-плагинов (по умолчанию — GitHub API)
 	Builtin  func(id string) bool // id занят встроенным плагином
 	Box      *secret.Box          // для токена GitHub (приватные репозитории)
+	// HostAPI — версия API плагинов, которую понимает приложение: плагины с apiVersion новее каталог помечает, а установка отклоняет.
+	// 0 — не проверять.
+	HostAPI int
 }
 
 // New читает состояние; при первом запуске (файла нет) добавляет официальный источник.
@@ -375,7 +379,7 @@ func New(c Config) (*Market, error) {
 	if c.Builtin == nil {
 		c.Builtin = func(string) bool { return false }
 	}
-	m := &Market{file: c.File, dir: c.Dir, reg: c.Reg, fetch: c.Fetch, rel: c.Releases, builtin: c.Builtin, box: c.Box, cache: map[string]cached{}}
+	m := &Market{file: c.File, dir: c.Dir, reg: c.Reg, fetch: c.Fetch, rel: c.Releases, builtin: c.Builtin, box: c.Box, hostAPI: c.HostAPI, cache: map[string]cached{}}
 	m.st.Installed = map[string]Record{}
 	if c.File != "" {
 		raw, err := os.ReadFile(c.File)

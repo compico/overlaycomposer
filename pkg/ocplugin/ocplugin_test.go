@@ -405,3 +405,25 @@ func TestSayReply(t *testing.T) {
 		t.Fatalf("chat.send: %+v", c)
 	}
 }
+
+func TestAPIVersionNeeded(t *testing.T) {
+	apiOf := func(p *Plugin) int {
+		var m struct{ APIVersion int }
+		if err := json.Unmarshal(p.metaJSON(), &m); err != nil {
+			t.Fatal(err)
+		}
+		return m.APIVersion
+	}
+	current = nil
+	plain := New(Meta{ID: "plain", Name: "P", Version: "0.1.0"})
+	if v := apiOf(plain); v != 1 {
+		t.Fatalf("плагину без новых возможностей нужен API 1, получили %d", v)
+	}
+	current = nil
+	chat := New(Meta{ID: "chat", Name: "C", Version: "0.1.0", Permissions: []string{PermChatRead}})
+	chat.OnChatMessage(func(ChatEvent) {})
+	if v := apiOf(chat); v != 2 {
+		t.Fatalf("чтение чата — API 2, получили %d", v)
+	}
+	current = nil
+}

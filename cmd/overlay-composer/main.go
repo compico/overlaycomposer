@@ -175,7 +175,7 @@ func run() int {
 
 	pluginReg := plugins.New(plugins.Builtin(), os.DirFS(p.PluginsDir))
 	mk, err := market.New(market.Config{
-		File: filepath.Join(p.DataDir, "market.json"), Dir: p.PluginsDir, Reg: pluginReg, Builtin: pluginReg.IsBuiltin, Box: box,
+		File: filepath.Join(p.DataDir, "market.json"), Dir: p.PluginsDir, Reg: pluginReg, Builtin: pluginReg.IsBuiltin, Box: box, HostAPI: wasmplugins.APIVersion,
 	})
 	if err != nil {
 		slog.Error("магазин плагинов", "err", err)

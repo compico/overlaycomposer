@@ -19,8 +19,27 @@ import (
 	"github.com/compico/overlaycomposer/internal/wasmassets"
 )
 
-// APIVersion — версия ABI между хостом и плагином.
-const APIVersion = 1
+// APIVersion — версия API плагинов, которую понимает этот хост. Плагин в oc_meta.apiVersion объявляет, какая версия API ему нужна:
+// хост принимает плагины с apiVersion от 1 до APIVersion, более новые отклоняет с просьбой обновить приложение.
+// Поднимайте её на 1 в том же PR, где в API появляется новое право, событие или поле меты, и записывайте здесь, что вошло:
+//
+//	1 — всё до v2026.11.23.6 включительно;
+//	2 — право chat.read и событие chat.message.
+const APIVersion = 2
+
+// minAPI — с какой версии API доступны право или событие (нет в карте — с первой). Плагин, который их использует, обязан
+// объявить apiVersion не ниже: так более старый хост отклонит его по версии, а не по незнакомому названию.
+var (
+	permMinAPI  = map[string]int{PermChatRead: 2}
+	eventMinAPI = map[string]int{EventChatMessage: 2}
+)
+
+// APITooNewError — плагину нужна более новая версия API, чем понимает этот хост.
+type APITooNewError struct{ Need, Have int }
+
+func (e *APITooNewError) Error() string {
+	return fmt.Sprintf("the plugin needs plugin API version %d, this Overlay Composer supports up to %d: update the app", e.Need, e.Have)
+}
 
 // Разрешения плагина. Плагин их запрашивает в oc_meta, пользователь выдаёт; без выдачи операция отклоняется.
 const (
@@ -158,8 +177,11 @@ func (m *Meta) Validate() error {
 	if !semverRe.MatchString(m.Version) {
 		return fmt.Errorf("version %q: semver expected (1.2.3)", m.Version)
 	}
-	if m.APIVersion != APIVersion {
-		return fmt.Errorf("apiVersion %d is not supported (host speaks %d)", m.APIVersion, APIVersion)
+	if m.APIVersion < 1 {
+		return fmt.Errorf("apiVersion %d: 1 or more expected", m.APIVersion)
+	}
+	if m.APIVersion > APIVersion { // раньше проверок прав и подписок: право из новой версии API хост ещё не знает
+		return &APITooNewError{Need: m.APIVersion, Have: APIVersion}
 	}
 	perms := map[string]bool{}
 	for _, p := range m.Permissions {
@@ -168,6 +190,9 @@ func (m *Meta) Validate() error {
 		}
 		if perms[p] {
 			return fmt.Errorf("duplicate permission %q", p)
+		}
+		if min := permMinAPI[p]; m.APIVersion < min {
+			return fmt.Errorf("permission %q needs apiVersion %d or more", p, min)
 		}
 		perms[p] = true
 	}
@@ -203,6 +228,9 @@ func (m *Meta) Validate() error {
 		}
 		if subs[s] {
 			return fmt.Errorf("duplicate subscription %q", s)
+		}
+		if min := eventMinAPI[s]; m.APIVersion < min {
+			return fmt.Errorf("subscription %q needs apiVersion %d or more", s, min)
 		}
 		subs[s] = true
 	}

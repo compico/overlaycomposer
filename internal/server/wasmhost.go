@@ -1,6 +1,8 @@
 package server
 
 import (
+	"errors"
+
 	"github.com/compico/overlaycomposer/internal/market"
 	"github.com/compico/overlaycomposer/internal/wasmplugins"
 )
@@ -17,6 +19,10 @@ func (h wasmHost) Dir() string {
 
 func (h wasmHost) Inspect(data []byte) (id, version string, perms []string, err error) {
 	meta, err := h.m.Inspect(data)
+	var tooNew *wasmplugins.APITooNewError
+	if errors.As(err, &tooNew) {
+		return "", "", nil, &market.HostTooOldError{Need: tooNew.Need, Have: tooNew.Have}
+	}
 	if err != nil {
 		return "", "", nil, err
 	}

@@ -16,6 +16,7 @@ import (
 	"github.com/compico/overlaycomposer/internal/model"
 	"github.com/compico/overlaycomposer/internal/plugins"
 	"github.com/compico/overlaycomposer/internal/store"
+	"github.com/compico/overlaycomposer/internal/wasmplugins"
 )
 
 func bad(c fiber.Ctx, msg string) error {
@@ -497,6 +498,7 @@ func (s *Server) appInfo(c fiber.Ctx) error {
 		"tray":          a.TrayRunning != nil && a.TrayRunning(),
 		"trayAvailable": a.TrayAvailable,
 		"version":       a.Version,
+		"pluginApi":     wasmplugins.APIVersion, // версия API wasm-плагинов, которую понимает это приложение
 		"update":        upd,
 	})
 }

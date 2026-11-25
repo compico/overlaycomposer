@@ -43,7 +43,8 @@ const (
 )
 
 const (
-	apiVersion        = 1
+	apiVersion        = 1 // версия API плагинов по умолчанию; плагин, которому нужно больше, получает её сам (см. apiVersionNeeded)
+	apiChatRead       = 2 // версия API, с которой есть право chat.read и событие chat.message
 	eventRedemption   = "twitch.redemption"
 	eventChatCommand  = "chat.command"
 	eventChatMessage  = "chat.message"
@@ -339,8 +340,21 @@ type metaOut struct {
 	Subscriptions []string `json:"subscriptions,omitempty"`
 }
 
+// apiVersionNeeded — какая версия API плагинов нужна этому плагину: хост старее отклонит его с просьбой обновить приложение.
+func (p *Plugin) apiVersionNeeded() int {
+	v := apiVersion
+	needsChat := p.onChat != nil
+	for _, perm := range p.meta.Permissions {
+		needsChat = needsChat || perm == PermChatRead
+	}
+	if needsChat && v < apiChatRead {
+		v = apiChatRead
+	}
+	return v
+}
+
 func (p *Plugin) metaJSON() []byte {
-	out := metaOut{Meta: p.meta, APIVersion: apiVersion, Routes: p.routes}
+	out := metaOut{Meta: p.meta, APIVersion: p.apiVersionNeeded(), Routes: p.routes}
 	if p.onRedeem != nil {
 		out.Subscriptions = append(out.Subscriptions, eventRedemption)
 	}

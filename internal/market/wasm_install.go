@@ -22,6 +22,16 @@ var (
 	ErrNoRelease  = errors.New("release not found (reload the catalog)")
 )
 
+// HostTooOldError — плагину нужна более новая версия API плагинов, чем понимает приложение.
+type HostTooOldError struct{ Need, Have int }
+
+func (e *HostTooOldError) Error() string {
+	return fmt.Sprintf("this plugin needs plugin API version %d, this Overlay Composer supports up to %d: update the app first", e.Need, e.Have)
+}
+
+// hostTooOld — версия API плагина новее, чем понимает приложение (HostAPI задан).
+func (m *Market) hostTooOld(api int) bool { return m.hostAPI > 0 && api > m.hostAPI }
+
 // WasmRecord — установленный через магазин wasm-плагин.
 type WasmRecord struct {
 	Repo    string `json:"repo"`
@@ -199,6 +209,10 @@ func (m *Market) WasmInstall(ctx context.Context, repoIn, id, tag, sha string) (
 	if rel == nil {
 		return res, ErrNoRelease
 	}
+	// Нужный API новее, чем у приложения, — отказываем до скачивания (файл сам скажет то же при проверке ниже).
+	if in, ok := m.readWasmInfo(ctx, r, id, version, *rel); ok && m.hostTooOld(in.Meta.APIVersion) {
+		return res, &HostTooOldError{Need: in.Meta.APIVersion, Have: m.hostAPI}
+	}
 	data, got, err := m.wasmDownload(ctx, r, id, version, *rel)
 	if err != nil {
 		return res, err
@@ -207,6 +221,10 @@ func (m *Market) WasmInstall(ctx context.Context, repoIn, id, tag, sha string) (
 		return res, ErrChanged
 	}
 	gotID, gotVer, perms, err := host.Inspect(data)
+	var tooOld *HostTooOldError
+	if errors.As(err, &tooOld) {
+		return res, err
+	}
 	if err != nil {
 		return res, fmt.Errorf("the file in the release is not a valid plugin: %w", err)
 	}

@@ -3,6 +3,7 @@ package wasmplugins
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -195,7 +196,8 @@ func TestMetaValidate(t *testing.T) {
 		"id leading dash":  func(m *Meta) { m.ID = "-a" },
 		"name empty":       func(m *Meta) { m.Name = " " },
 		"version":          func(m *Meta) { m.Version = "1.0" },
-		"api version":      func(m *Meta) { m.APIVersion = 2 },
+		"api version":      func(m *Meta) { m.APIVersion = APIVersion + 1 },
+		"api version zero": func(m *Meta) { m.APIVersion = 0 },
 		"unknown perm":     func(m *Meta) { m.Permissions = []string{"fs"} },
 		"dup perm":         func(m *Meta) { m.Permissions = []string{PermRedeem, PermRedeem} },
 		"sub without perm": func(m *Meta) { m.Permissions = nil },
@@ -433,5 +435,42 @@ func TestInspectChecksWithoutRegistering(t *testing.T) {
 	}
 	if _, err := m.Inspect(nil); err == nil {
 		t.Fatal("пустой файл")
+	}
+}
+
+func TestPluginAPIVersion(t *testing.T) {
+	// Версия 1 принимается и дальше: хост совместим назад.
+	m := baseMeta("alpha")
+	m.APIVersion = 1
+	if err := m.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	// chat.read и chat.message появились в API 2: плагин с версией 1 обязан объявить 2.
+	m.Permissions = []string{PermChatRead}
+	if m.Validate() == nil {
+		t.Fatal("chat.read при apiVersion 1 должен отклоняться")
+	}
+	m.Permissions = nil
+	m.Subscriptions = []string{EventChatMessage}
+	m.Permissions = []string{PermChatRead}
+	m.APIVersion = 2
+	if err := m.Validate(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Плагин из будущего: понятная ошибка о версии API раньше «unknown permission».
+	future := baseMeta("alpha")
+	future.APIVersion = APIVersion + 1
+	future.Permissions = []string{"from.the.future"}
+	err := future.Validate()
+	var tooNew *APITooNewError
+	if !errors.As(err, &tooNew) || tooNew.Need != APIVersion+1 || tooNew.Have != APIVersion {
+		t.Fatalf("ждали APITooNewError, получили %v", err)
+	}
+	// Тот же ответ через Inspect (магазин), с оберткой из readMeta.
+	eng := &fakeEngine{mods: map[string]*fakeModule{"A1": {meta: future, handler: nopHandler}}}
+	mgr := newTestManager(t, eng, &MemState{}, t.TempDir())
+	if _, err := mgr.Inspect([]byte("A1")); !errors.As(err, &tooNew) {
+		t.Fatalf("Inspect: %v", err)
 	}
 }
