@@ -9,8 +9,8 @@ export interface WasmEntry {
   repo: string; tag: string; sha256?: string; size?: number;
   /** У последнего релиза нет <id>.json: имя, права и sha256 неизвестны. */
   noInfo?: boolean;
-  /** Минимальная версия Overlay Composer последней версии плагина; hostTooOld — приложение старее (установка недоступна). */
-  minHost?: string; hostTooOld?: boolean;
+  /** Версия API плагинов, нужная последней версии плагина; hostTooOld — приложение её не поддерживает (установка недоступна). */
+  apiVersion?: number; hostTooOld?: boolean;
   versions: WasmVersion[];
   /** Журнал изменений последнего релиза (вся история); приходит только для установленных плагинов. */
   changelog?: WasmChange[];

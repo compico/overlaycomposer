@@ -9,8 +9,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"github.com/compico/overlaycomposer/internal/update"
 )
 
 // Установка автономных (wasm) плагинов из Releases источника. Один вызов WasmInstall ставит, обновляет и меняет версию (в том числе
@@ -24,17 +22,15 @@ var (
 	ErrNoRelease  = errors.New("release not found (reload the catalog)")
 )
 
-// HostTooOldError — плагину нужен более новый Overlay Composer (Meta.MinHost).
-type HostTooOldError struct{ Need, Have string }
+// HostTooOldError — плагину нужна более новая версия API плагинов, чем понимает приложение.
+type HostTooOldError struct{ Need, Have int }
 
 func (e *HostTooOldError) Error() string {
-	return fmt.Sprintf("this plugin requires Overlay Composer %s or newer (this is %s): update the app first", e.Need, e.Have)
+	return fmt.Sprintf("this plugin needs plugin API version %d, this Overlay Composer supports up to %d: update the app first", e.Need, e.Have)
 }
 
-// hostTooOld — minHost новее версии приложения; для нерелизной сборки и пустого minHost — false.
-func (m *Market) hostTooOld(minHost string) bool {
-	return minHost != "" && update.IsRelease(m.hostVer) && update.Newer(minHost, m.hostVer)
-}
+// hostTooOld — версия API плагина новее, чем понимает приложение (HostAPI задан).
+func (m *Market) hostTooOld(api int) bool { return m.hostAPI > 0 && api > m.hostAPI }
 
 // WasmRecord — установленный через магазин wasm-плагин.
 type WasmRecord struct {
@@ -213,9 +209,9 @@ func (m *Market) WasmInstall(ctx context.Context, repoIn, id, tag, sha string) (
 	if rel == nil {
 		return res, ErrNoRelease
 	}
-	// Нужный OC новее установленного — отказываем до скачивания (файл сам скажет то же самое при проверке ниже).
-	if in, ok := m.readWasmInfo(ctx, r, id, version, *rel); ok && m.hostTooOld(in.Meta.MinHost) {
-		return res, &HostTooOldError{Need: in.Meta.MinHost, Have: m.hostVer}
+	// Нужный API новее, чем у приложения, — отказываем до скачивания (файл сам скажет то же при проверке ниже).
+	if in, ok := m.readWasmInfo(ctx, r, id, version, *rel); ok && m.hostTooOld(in.Meta.APIVersion) {
+		return res, &HostTooOldError{Need: in.Meta.APIVersion, Have: m.hostAPI}
 	}
 	data, got, err := m.wasmDownload(ctx, r, id, version, *rel)
 	if err != nil {

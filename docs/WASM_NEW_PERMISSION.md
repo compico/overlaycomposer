@@ -9,6 +9,12 @@
 
 ## 1. overlaycomposer (один PR)
 
+**Версия API (всегда, если добавляется право, событие или поле меты)**
+
+- [ ] `internal/wasmplugins/meta.go`: поднять `APIVersion` на 1 и дописать в комментарий, что вошло в новую версию. Для нового права или события добавить запись в `permMinAPI` / `eventMinAPI` (с какой версии API они доступны): `Validate` потребует от плагина `apiVersion` не ниже.
+- [ ] SDK (`pkg/ocplugin`): `apiVersionNeeded` возвращает новую версию для плагина, который использует новую возможность, иначе плагин объявит прежний API и старое приложение отклонит его по «unknown permission», а не по версии. Тест `TestAPIVersionNeeded`.
+- [ ] Версия API показывается в настройках редактора (`pluginApi`) сама — ничего делать не нужно.
+
 **Разрешение**
 
 - [ ] `internal/wasmplugins/meta.go`: константа `Perm…` с комментарием «что это даёт» и запись в `knownPerms`.
@@ -37,11 +43,10 @@
 
 ## 2. oc-plugins (после merge в `dev`)
 
-- [ ] `scripts/wasm.mjs`: `PERMS`, `EVENTS` и правило «подписка требует права» в `checkMeta`; тест в `test/wasm-scripts.test.mjs`. Это **единственная** проверка метаданных wasm-плагинов в CI: `ocpack` права не проверяет.
+- [ ] `scripts/wasm.mjs`: `PERMS`, `EVENTS`, `MAX_API` (максимальная `apiVersion`), `PERM_API` / `EVENT_API` (с какой версии API доступны право и событие) и правило «подписка требует права» в `checkMeta`; тест в `test/wasm-scripts.test.mjs`. Это **единственная** проверка метаданных wasm-плагинов в CI: `ocpack` права не проверяет.
 - [ ] `scripts/validate.mjs` относится только к HTML-плагинам (`plugins/`), там свой список `PERMS`; для wasm-плагинов его не трогаем.
 - [ ] Плагин подключает SDK из `dev`: в `go.mod` версия вида `v0.0.0-<UTC-время коммита>-<12 символов>`. Если нужной версии ещё нет в прокси, `go mod tidy` с доступом к сети допишет `go.sum`.
 - [ ] Новая версия плагина, `changelog.json` (в `migration` сказать, какое разрешение выдать), README плагина.
-- [ ] `minHost` в метаданных плагина (`Meta.MinHost` в SDK) = версия релиза OC, в котором появилось право или событие. Номер известен только после релиза OC, поэтому плагин с новым правом выпускают после него; без `minHost` старый OC покажет невнятную ошибку установки.
 
 ## 3. compico.github.io
 
@@ -68,5 +73,5 @@ cd oc-plugins && npm test
 | В окне прав сырое имя права вместо текста | `model.ts` (описание права) |
 | Право выдано, события не приходят | `Deliver…` / `Wants` в `plugin.go`, `manager.go` или источник в `internal/server/wasm.go` |
 | `ocplugin: New is called twice` в тесте SDK | нет `current = nil` перед вторым `New` |
-| Старый OC при установке пишет «unknown permission» вместо «нужна новая версия» | у плагина не задан `minHost` |
+| Приложение пишет «unknown permission» вместо «нужен API N» | плагин объявил `apiVersion` ниже нужного: не обновлён `apiVersionNeeded` в SDK или `permMinAPI` / `eventMinAPI` |
 | Хеш `go.sum` не сходится | `go mod tidy` с сетью; версия в `go.mod` должна быть коммитом, который есть в `dev` |

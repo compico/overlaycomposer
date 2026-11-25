@@ -15,8 +15,6 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
-
-	"github.com/compico/overlaycomposer/internal/update"
 )
 
 // Каталог автономных (wasm) плагинов. Они выпускаются в Releases репозитория-источника: тег <id>-v<версия>, ассеты
@@ -177,8 +175,8 @@ type WasmEntry struct {
 	Description string   `json:"description,omitempty"`
 	Author      string   `json:"author,omitempty"`
 	Permissions []string `json:"permissions,omitempty"`
-	// MinHost — минимальная версия Overlay Composer последней версии плагина (если она объявлена); HostTooOld — она новее установленной.
-	MinHost    string        `json:"minHost,omitempty"`
+	// APIVersion — версия API плагинов, нужная последней версии плагина; HostTooOld — приложение её не поддерживает (нужно обновить).
+	APIVersion int           `json:"apiVersion,omitempty"`
 	HostTooOld bool          `json:"hostTooOld,omitempty"`
 	Repo       string        `json:"repo"`
 	Tag        string        `json:"tag"`
@@ -326,7 +324,7 @@ type wasmInfo struct {
 		Description string   `json:"description"`
 		Author      string   `json:"author"`
 		Permissions []string `json:"permissions"`
-		MinHost     string   `json:"minHost"`
+		APIVersion  int      `json:"apiVersion"`
 	} `json:"meta"`
 }
 
@@ -368,9 +366,9 @@ func (m *Market) fillWasmInfo(ctx context.Context, r Repo, e *WasmEntry, rel Rel
 	e.Name = oneLine(in.Meta.Name, 80, e.ID)
 	e.Description = oneLine(in.Meta.Description, 500, "")
 	e.Author = oneLine(in.Meta.Author, 80, "")
-	if update.IsRelease(in.Meta.MinHost) { // чужой текст вместо версии не показываем
-		e.MinHost = in.Meta.MinHost
-		e.HostTooOld = m.hostTooOld(e.MinHost)
+	if v := in.Meta.APIVersion; v >= 1 && v <= 1000 {
+		e.APIVersion = v
+		e.HostTooOld = m.hostTooOld(v)
 	}
 	for _, p := range in.Meta.Permissions {
 		// Название права не обрезаем: длинное или с мусором — не право, а чужой текст; такое не показываем.

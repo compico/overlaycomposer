@@ -196,7 +196,8 @@ func TestMetaValidate(t *testing.T) {
 		"id leading dash":  func(m *Meta) { m.ID = "-a" },
 		"name empty":       func(m *Meta) { m.Name = " " },
 		"version":          func(m *Meta) { m.Version = "1.0" },
-		"api version":      func(m *Meta) { m.APIVersion = 2 },
+		"api version":      func(m *Meta) { m.APIVersion = APIVersion + 1 },
+		"api version zero": func(m *Meta) { m.APIVersion = 0 },
 		"unknown perm":     func(m *Meta) { m.Permissions = []string{"fs"} },
 		"dup perm":         func(m *Meta) { m.Permissions = []string{PermRedeem, PermRedeem} },
 		"sub without perm": func(m *Meta) { m.Permissions = nil },
@@ -437,39 +438,39 @@ func TestInspectChecksWithoutRegistering(t *testing.T) {
 	}
 }
 
-func TestMinHost(t *testing.T) {
+func TestPluginAPIVersion(t *testing.T) {
+	// Версия 1 принимается и дальше: хост совместим назад.
 	m := baseMeta("alpha")
-	m.MinHost = "v2026.11.25.7"
+	m.APIVersion = 1
 	if err := m.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	m.MinHost = "2026.11"
+	// chat.read и chat.message появились в API 2: плагин с версией 1 обязан объявить 2.
+	m.Permissions = []string{PermChatRead}
 	if m.Validate() == nil {
-		t.Fatal("minHost не в формате тега релиза должен отклоняться")
+		t.Fatal("chat.read при apiVersion 1 должен отклоняться")
+	}
+	m.Permissions = nil
+	m.Subscriptions = []string{EventChatMessage}
+	m.Permissions = []string{PermChatRead}
+	m.APIVersion = 2
+	if err := m.Validate(); err != nil {
+		t.Fatal(err)
 	}
 
-	// Инспекция: хост старее — понятная ошибка раньше «unknown permission»; новее, равный и dev — проверки нет.
-	nm := baseMeta("alpha")
-	nm.MinHost = "v2026.11.25.7"
-	nm.Permissions = []string{"from.the.future"}
-	eng := &fakeEngine{mods: map[string]*fakeModule{"A1": {meta: nm, handler: nopHandler}}}
-	check := func(host string) error {
-		mgr := NewManager(context.Background(), Options{Engine: eng, Dirs: []string{t.TempDir()}, State: &MemState{}, Services: Services{Log: quietLog()}, HostVersion: host})
-		defer mgr.Close()
-		_, err := mgr.Inspect([]byte("A1"))
-		return err
+	// Плагин из будущего: понятная ошибка о версии API раньше «unknown permission».
+	future := baseMeta("alpha")
+	future.APIVersion = APIVersion + 1
+	future.Permissions = []string{"from.the.future"}
+	err := future.Validate()
+	var tooNew *APITooNewError
+	if !errors.As(err, &tooNew) || tooNew.Need != APIVersion+1 || tooNew.Have != APIVersion {
+		t.Fatalf("ждали APITooNewError, получили %v", err)
 	}
-	var tooOld *HostTooOldError
-	if err := check("v2026.11.23.6"); !errors.As(err, &tooOld) || tooOld.Need != "v2026.11.25.7" || tooOld.Have != "v2026.11.23.6" {
-		t.Fatalf("старый хост: %v", err)
-	}
-	for _, host := range []string{"v2026.11.25.7", "v2026.12.01.8", "dev", ""} {
-		err := check(host)
-		if errors.As(err, &tooOld) {
-			t.Fatalf("хост %q не старее: %v", host, err)
-		}
-		if err == nil || !strings.Contains(err.Error(), "unknown permission") {
-			t.Fatalf("хост %q: ждали обычную проверку меты, получили %v", host, err)
-		}
+	// Тот же ответ через Inspect (магазин), с оберткой из readMeta.
+	eng := &fakeEngine{mods: map[string]*fakeModule{"A1": {meta: future, handler: nopHandler}}}
+	mgr := newTestManager(t, eng, &MemState{}, t.TempDir())
+	if _, err := mgr.Inspect([]byte("A1")); !errors.As(err, &tooNew) {
+		t.Fatalf("Inspect: %v", err)
 	}
 }

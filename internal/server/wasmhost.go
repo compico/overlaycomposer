@@ -19,9 +19,9 @@ func (h wasmHost) Dir() string {
 
 func (h wasmHost) Inspect(data []byte) (id, version string, perms []string, err error) {
 	meta, err := h.m.Inspect(data)
-	var tooOld *wasmplugins.HostTooOldError
-	if errors.As(err, &tooOld) {
-		return "", "", nil, &market.HostTooOldError{Need: tooOld.Need, Have: tooOld.Have}
+	var tooNew *wasmplugins.APITooNewError
+	if errors.As(err, &tooNew) {
+		return "", "", nil, &market.HostTooOldError{Need: tooNew.Need, Have: tooNew.Have}
 	}
 	if err != nil {
 		return "", "", nil, err
