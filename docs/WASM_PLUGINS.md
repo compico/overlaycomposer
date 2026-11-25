@@ -58,7 +58,6 @@
   "id": "music", "name": "Music requests", "version": "0.1.0", "apiVersion": 1,
   "description": "…", "author": "…",
   "permissions": ["storage", "timer", "net.http", "twitch.redemption"],
-  "minHost": "v2026.11.25.7",
   "netLocal": [{"target": "127.0.0.1:24050", "setting": "tosuHost", "paths": ["/files/beatmap/"],
                "streams": [{"path": "/websocket/v2", "topic": "live", "fields": {"file": "directPath.beatmapFile"}, "minIntervalMs": 250}]}],
   "subscriptions": ["twitch.redemption"],
@@ -69,12 +68,6 @@
 
 * `id` — `a-z`, `0-9`, `-`, до 64 символов; не должен совпадать с id HTML-плагина.
 * `version` — semver. `apiVersion` — сейчас `1`.
-* `minHost` — необязательно: минимальная версия Overlay Composer в формате тега релиза (`vГГГГ.ММ.ДД.N`), с которой плагин работает.
-  Укажите её, когда плагину нужно право или событие, появившееся в конкретном релизе OC. Более старое приложение не загрузит
-  плагин и скажет, какая версия нужна (эта проверка идёт раньше остальных, поэтому незнакомое старому OC право не даёт невнятного
-  «unknown permission»); магазин показывает у такого плагина «обновите приложение» и не даёт его поставить. Сборки без релизной
-  версии (`dev`, `git describe`) проверку пропускают. В Go SDK это поле `Meta.MinHost`. Приложения, вышедшие до появления
-  `minHost` (до `v2026.11.23.6` включительно), поле игнорируют: на них плагин с неизвестным правом просто не установится.
 * Маршрут доступен как `/plugins/<id>/api<path>` (методы GET/POST/PUT/PATCH/DELETE). Имя обработчика `on_event` занято.
 * Подписка `twitch.redemption` требует разрешения `twitch.redemption`.
 * Подписка `chat.command` требует разрешения `chat.command.read` и непустого `commands` — списка команд без `!`

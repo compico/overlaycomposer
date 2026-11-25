@@ -31,9 +31,6 @@ const (
 // Версия релиза: vГГГГ.ММ.ДД.N (см. .github/workflows/release.yml).
 var versionRe = regexp.MustCompile(`^v(\d{4})\.(\d{2})\.(\d{2})\.(\d+)$`)
 
-// IsRelease — версия имеет вид релизного тега (vГГГГ.ММ.ДД.N).
-func IsRelease(v string) bool { return versionRe.MatchString(v) }
-
 // Enabled — проверки включены: сборка помечена как релизная и версия имеет вид релизного тега.
 // Локальные сборки (go run, make, git describe вида v…-3-gabc, dev) не обновляются.
 func Enabled(channel, version string) bool {

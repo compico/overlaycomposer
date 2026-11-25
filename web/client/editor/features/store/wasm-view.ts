@@ -134,11 +134,8 @@ export function mountWasmStore(box: HTMLElement, model: WasmStoreModel, ports: W
       const c = chosen();
       if (!c) { button.textContent = "No releases"; button.disabled = true; return; }
       const a = installAction(p.installed ? p.installedVersion : undefined, c.version);
-      // Требование minHost каталог знает только у последней версии; у остальных хост проверит файл при установке.
-      const blocked = !!p.hostTooOld && c.tag === p.tag;
-      button.textContent = blocked ? "Update the app" : a.label;
-      button.title = blocked ? `This version needs Overlay Composer ${p.minHost} or newer` : "";
-      button.disabled = a.kind === "same" || blocked;
+      button.textContent = a.label;
+      button.disabled = a.kind === "same";
       button.className = a.kind === "downgrade" ? "danger" : "primary";
     };
     select.addEventListener("change", refreshButton);
@@ -191,7 +188,6 @@ export function mountWasmStore(box: HTMLElement, model: WasmStoreModel, ports: W
         el("div", { textContent: `${p.name} ${p.version}${state}${p.deprecated ? " — deprecated" : ""}` }),
         el("div", { class: "hint", textContent: [p.author, p.description].filter(Boolean).join(" — ") }),
         el("div", { class: "hint", textContent: perms }),
-        ...(p.hostTooOld ? [el("div", { class: "hint warn", textContent: `The latest version needs Overlay Composer ${p.minHost} or newer — update the app. Older versions can be chosen in the list.` })] : []),
         ...dep),
       el("div", { class: "row", style: "gap:6px;flex-wrap:wrap;justify-content:flex-end" }, ...controls));
     rows.set(p.id, row);

@@ -59,9 +59,6 @@ type Meta struct {
 	Description string   `json:"description,omitempty"`
 	Author      string   `json:"author,omitempty"`
 	Permissions []string `json:"permissions,omitempty"`
-	// MinHost — минимальная версия Overlay Composer (тег релиза, например "v2026.11.25.7"), с которой плагин работает: там появилось
-	// нужное ему право или событие. Более старое приложение не загрузит плагин и скажет об этом; магазин не даст его поставить.
-	MinHost string `json:"minHost,omitempty"`
 	// NetLocal — программы на этом компьютере, к которым плагин ходит через Fetch (нужно PermNetLocal).
 	NetLocal []NetLocalTarget `json:"netLocal,omitempty"`
 	// ConfigSchema — описание настроек для формы в интерфейсе (хост его не толкует).

@@ -53,8 +53,6 @@ type Options struct {
 	State    StateStore
 	// Reserved — id, которые заняты чем-то другим (HTML-плагины): wasm-плагин с таким id не загружается.
 	Reserved func(id string) bool
-	// HostVersion — версия Overlay Composer (тег релиза); плагин с Meta.MinHost новее неё не загружается. Пусто или не релизная — без проверки.
-	HostVersion string
 }
 
 // Manager находит плагины в папках, загружает их и раздаёт им маршруты и события.
@@ -193,7 +191,7 @@ func (m *Manager) load(c candidate) (*Plugin, error) {
 	if err != nil {
 		return nil, err
 	}
-	meta, err := readMeta(m.ctx, mod, m.opts.HostVersion)
+	meta, err := readMeta(m.ctx, mod)
 	if err != nil {
 		_ = mod.Close(m.ctx)
 		return nil, err
@@ -236,7 +234,7 @@ func (m *Manager) Inspect(data []byte) (*Meta, error) {
 		return nil, err
 	}
 	defer mod.Close(m.ctx)
-	meta, err := readMeta(m.ctx, mod, m.opts.HostVersion)
+	meta, err := readMeta(m.ctx, mod)
 	if err != nil {
 		return nil, err
 	}
@@ -267,7 +265,7 @@ func stubHost(context.Context, string, []byte) []byte {
 }
 
 // readMeta вызывает oc_meta на одноразовом экземпляре: он ничего не может, кроме как вернуть метаданные.
-func readMeta(ctx context.Context, mod Module, hostVersion string) (*Meta, error) {
+func readMeta(ctx context.Context, mod Module) (*Meta, error) {
 	inst, err := mod.New(ctx, stubHost, io.Discard)
 	if err != nil {
 		return nil, fmt.Errorf("instantiate: %w", err)
@@ -285,10 +283,6 @@ func readMeta(ctx context.Context, mod Module, hostVersion string) (*Meta, error
 	var meta Meta
 	if err := json.Unmarshal(raw, &meta); err != nil {
 		return nil, fmt.Errorf("oc_meta: %w", err)
-	}
-	// Версия хоста — раньше остального: право или событие из будущей версии иначе дали бы невнятное «unknown permission».
-	if err := meta.checkHost(hostVersion); err != nil {
-		return nil, err
 	}
 	if err := meta.Validate(); err != nil {
 		return nil, fmt.Errorf("oc_meta: %w", err)

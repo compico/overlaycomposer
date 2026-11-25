@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/compico/overlaycomposer/internal/plugins"
-	"github.com/compico/overlaycomposer/internal/update"
 	"path"
 	"regexp"
 	"strconv"
@@ -79,9 +78,6 @@ type Meta struct {
 	Author      string   `json:"author,omitempty"`
 	APIVersion  int      `json:"apiVersion"`
 	Permissions []string `json:"permissions,omitempty"`
-	// MinHost — минимальная версия Overlay Composer (формат тега релиза: v2026.11.25.7), с которой плагин работает: например, там
-	// появилось нужное ему право или событие. Хост старее отказывается загружать плагин с понятной ошибкой. Пусто — любая версия.
-	MinHost string `json:"minHost,omitempty"`
 	// NetLocal — программы на этом компьютере, к которым плагин ходит через Fetch при выданном net.local.
 	NetLocal      []NetLocalTarget `json:"netLocal,omitempty"`
 	Routes        []Route          `json:"routes,omitempty"`
@@ -151,21 +147,6 @@ type Widget struct {
 	Settings []plugins.Setting `json:"settings,omitempty"`
 }
 
-// HostTooOldError — плагину нужен более новый Overlay Composer.
-type HostTooOldError struct{ Need, Have string }
-
-func (e *HostTooOldError) Error() string {
-	return fmt.Sprintf("the plugin requires Overlay Composer %s or newer (this is %s): update the app", e.Need, e.Have)
-}
-
-// checkHost сверяет MinHost с версией приложения. Версия не релизная (dev, git describe) — проверки нет, чтобы не мешать разработке.
-func (m *Meta) checkHost(host string) error {
-	if m.MinHost != "" && update.IsRelease(host) && update.Newer(m.MinHost, host) {
-		return &HostTooOldError{Need: m.MinHost, Have: host}
-	}
-	return nil
-}
-
 // Validate проверяет метаданные, чтобы кривой плагин не попал в маршруты и интерфейс.
 func (m *Meta) Validate() error {
 	if !idRe.MatchString(m.ID) {
@@ -179,9 +160,6 @@ func (m *Meta) Validate() error {
 	}
 	if m.APIVersion != APIVersion {
 		return fmt.Errorf("apiVersion %d is not supported (host speaks %d)", m.APIVersion, APIVersion)
-	}
-	if m.MinHost != "" && !update.IsRelease(m.MinHost) {
-		return fmt.Errorf("minHost %q: release version expected (v2026.11.25.7)", m.MinHost)
 	}
 	perms := map[string]bool{}
 	for _, p := range m.Permissions {
