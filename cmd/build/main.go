@@ -135,6 +135,7 @@ func buildClient(root string, dev bool) error {
 		EntryPointsAdvanced: []api.EntryPoint{
 			{OutputPath: "runtime", InputPath: "client/runtime/main.ts"},
 			{OutputPath: "editor", InputPath: "client/editor/main.ts"},
+			{OutputPath: "dashboard", InputPath: "client/dashboard/main.ts"},
 		},
 		Outdir:    dist,
 		Bundle:    true,

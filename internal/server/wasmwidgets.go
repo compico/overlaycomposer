@@ -124,6 +124,9 @@ type pluginCallRes struct {
 	Error  string          `json:"error,omitempty"`
 }
 
+// dashboardSourcePrefix — префикс «виртуального» источника виджета в окне Dashboard (dashboard:<id виджета>).
+const dashboardSourcePrefix = "dashboard:"
+
 const (
 	maxPluginCallBody = 1 << 20
 	maxPluginCallPath = 256
@@ -144,6 +147,17 @@ func (s *Server) authorizePlugin(plugin, source string) string {
 		// Страница настроек плагина (окно «Plugins → Settings»): источника нет, но плагин должен её объявлять.
 		if plugin == "" || !s.hasSettingsPage(plugin) {
 			return "unknown settings page"
+		}
+		return ""
+	}
+	if wid, ok := strings.CutPrefix(source, dashboardSourcePrefix); ok {
+		// Виртуальный источник окна Dashboard: в БД его нет, страница названа самим сервером (маршрут «/»). Плагин должен быть
+		// загружен и объявлять такой виджет — больше окну ничего не нужно, права плагина выданы в окне Plugins как обычно.
+		if plugin == "" || wid == "" {
+			return "unknown widget"
+		}
+		if _, ok := s.widgetOf(plugin, wid); !ok {
+			return "plugin is not loaded"
 		}
 		return ""
 	}

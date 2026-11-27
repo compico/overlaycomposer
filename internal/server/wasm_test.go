@@ -394,6 +394,21 @@ func TestWasmWidgets(t *testing.T) {
 		if !ok.OK || ok.Status != 200 || string(ok.Body) != `"api"` || ok.ReqID != 7 || ok.Type != "plugin:result" {
 			t.Fatalf("ok: %+v", ok)
 		}
+		// Виртуальный источник окна Dashboard: источника в БД нет, но плагин загружен и виджет им объявлен.
+		if r := call(pluginCallReq{ReqID: 8, Plugin: "ui", Source: "dashboard:main", Method: "GET", Path: "/secret"}); !r.OK || string(r.Body) != `"api"` {
+			t.Fatalf("dashboard: %+v", r)
+		}
+		for name, m := range map[string]pluginCallReq{
+			"dashboard: виджет не объявлен":  {Plugin: "ui", Source: "dashboard:nope", Method: "GET", Path: "/secret"},
+			"dashboard: пустой виджет":       {Plugin: "ui", Source: "dashboard:", Method: "GET", Path: "/secret"},
+			"dashboard: пустой плагин":       {Plugin: "", Source: "dashboard:main", Method: "GET", Path: "/secret"},
+			"dashboard: плагин не загружен":  {Plugin: "other", Source: "dashboard:main", Method: "GET", Path: "/secret"},
+			"dashboard: маршрут не объявлен": {Plugin: "ui", Source: "dashboard:main", Method: "GET", Path: "/undeclared"},
+		} {
+			if r := call(m); r.OK || r.Error == "" {
+				t.Errorf("%s: ожидалась ошибка, получено %+v", name, r)
+			}
+		}
 		big := make([]byte, maxPluginCallBody+1)
 		for i := range big {
 			big[i] = ' '
