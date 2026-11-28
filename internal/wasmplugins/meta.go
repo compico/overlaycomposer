@@ -24,7 +24,7 @@ import (
 // Поднимайте её на 1 в том же PR, где в API появляется новое право, событие или поле меты, и записывайте здесь, что вошло:
 //
 //	1 — всё до v2026.11.23.6 включительно;
-//	2 — право chat.read и событие chat.message.
+//	2 — право chat.read и событие chat.message, поле Widget.Surfaces (область виджета).
 const APIVersion = 2
 
 // minAPI — с какой версии API доступны право или событие (нет в карте — с первой). Плагин, который их использует, обязан
@@ -154,6 +154,19 @@ func (m *Meta) EventTopics() []string {
 	return out
 }
 
+// Области, в которых виджет можно показывать. Overlay — сцена OBS (источник на сцене), Dashboard — окно управления стримом (/),
+// Deck — панель на планшете. У виджета один тип на все области: он сам решает, как выглядеть, по info.surface из oc.ready.
+const (
+	SurfaceOverlay   = "overlay"
+	SurfaceDashboard = "dashboard"
+	SurfaceDeck      = "deck"
+)
+
+// IsSurface — известная область.
+func IsSurface(s string) bool {
+	return s == SurfaceOverlay || s == SurfaceDashboard || s == SurfaceDeck
+}
+
 // Widget — виджет плагина. Entry — путь HTML-файла в статике плагина (/plugins/<id>/ui/<entry>).
 type Widget struct {
 	ID     string `json:"id"`
@@ -164,6 +177,19 @@ type Widget struct {
 	// Settings — настройки источника на сцене (формат как в plugin.json HTML-плагинов): редактор строит по ним форму,
 	// значения уходят виджету как ?key=value (читайте через oc.param). У каждого источника на сцене они свои.
 	Settings []plugins.Setting `json:"settings,omitempty"`
+	// Surfaces — где виджет можно показывать (overlay, dashboard, deck). Пусто — только overlay, как было до появления областей.
+	// После Validate всегда заполнено.
+	Surfaces []string `json:"surfaces,omitempty"`
+}
+
+// HasSurface — виджет можно показывать в этой области.
+func (w Widget) HasSurface(s string) bool {
+	for _, x := range w.Surfaces {
+		if x == s {
+			return true
+		}
+	}
+	return len(w.Surfaces) == 0 && s == SurfaceOverlay
 }
 
 // Validate проверяет метаданные, чтобы кривой плагин не попал в маршруты и интерфейс.
@@ -305,6 +331,19 @@ func (m *Meta) validateWidgets() error {
 		}
 		if ext := strings.ToLower(path.Ext(w.Entry)); ext != ".html" && ext != ".htm" {
 			return fmt.Errorf("widget %q: entry must be an HTML file", w.ID)
+		}
+		if len(w.Surfaces) == 0 {
+			w.Surfaces = []string{SurfaceOverlay}
+		}
+		seenSurf := map[string]bool{}
+		for _, s := range w.Surfaces {
+			if !IsSurface(s) {
+				return fmt.Errorf("widget %q: unknown surface %q (overlay, dashboard, deck)", w.ID, s)
+			}
+			if seenSurf[s] {
+				return fmt.Errorf("widget %q: duplicate surface %q", w.ID, s)
+			}
+			seenSurf[s] = true
 		}
 		if len(w.Settings) > maxWidgetSettings {
 			return fmt.Errorf("widget %q: too many settings (max %d)", w.ID, maxWidgetSettings)

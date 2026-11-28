@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { PluginManifest, Source } from "../../../../shared/types.ts";
 import { fakeApi } from "../../lib/fakeapi.test-helper.ts";
-import { createAddSourceModel, defaultWidgetName, existingMeta, stripCommonRoot, maskUrl, pickSelection, pluginHint, pluginTitle, uniqueName, urlView } from "./model.ts";
+import { createAddSourceModel, defaultWidgetName, existingMeta, onOverlay, stripCommonRoot, maskUrl, pickSelection, pluginHint, pluginTitle, uniqueName, urlView } from "./model.ts";
 
 test("maskUrl прячет всё после ? и #", () => {
   assert.equal(maskUrl("http://a/b"), "http://a/b");
@@ -180,4 +180,11 @@ test("pluginTitle/pluginHint/existingMeta различают автономны�
   assert.match(pluginHint({ wasm: true }), /of a plugin/);
   assert.equal(existingMeta({ type: "plugin", data: { plugin: "music", widget: "queue" } }), "plugin · music/queue");
   assert.equal(existingMeta({ type: "plugin", data: { plugin: "demo" } }), "plugin · demo");
+});
+
+test("onOverlay: на сцену добавляются виджеты без областей и с областью overlay", () => {
+  assert.equal(onOverlay({}), true);
+  assert.equal(onOverlay({ surfaces: [] }), true);
+  assert.equal(onOverlay({ surfaces: ["overlay", "dashboard"] }), true);
+  assert.equal(onOverlay({ surfaces: ["dashboard"] }), false);
 });

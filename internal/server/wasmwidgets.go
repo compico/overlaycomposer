@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -39,7 +40,7 @@ func widgetManifest(m wasmplugins.Meta, w wasmplugins.Widget) plugins.Manifest {
 	return plugins.Manifest{
 		ID: m.ID, Name: w.Name, Version: m.Version, Description: m.Description, Author: m.Author,
 		Entry: w.Entry, DefaultSize: plugins.Size{Width: w.Width, Height: w.Height},
-		Widget: w.ID, Wasm: true, Settings: w.Settings,
+		Widget: w.ID, Wasm: true, Settings: w.Settings, Surfaces: w.Surfaces,
 	}
 }
 
@@ -124,9 +125,6 @@ type pluginCallRes struct {
 	Error  string          `json:"error,omitempty"`
 }
 
-// dashboardSourcePrefix — префикс «виртуального» источника виджета в окне Dashboard (dashboard:<id виджета>).
-const dashboardSourcePrefix = "dashboard:"
-
 const (
 	maxPluginCallBody = 1 << 20
 	maxPluginCallPath = 256
@@ -150,14 +148,19 @@ func (s *Server) authorizePlugin(plugin, source string) string {
 		}
 		return ""
 	}
-	if wid, ok := strings.CutPrefix(source, dashboardSourcePrefix); ok {
-		// Виртуальный источник окна Dashboard: в БД его нет, страница названа самим сервером (маршрут «/»). Плагин должен быть
-		// загружен и объявлять такой виджет — больше окну ничего не нужно, права плагина выданы в окне Plugins как обычно.
+	if surface, wid, ok := strings.Cut(source, ":"); ok && wasmplugins.IsSurface(surface) && surface != wasmplugins.SurfaceOverlay {
+		// Виртуальный источник области (dashboard:<виджет>, deck:<виджет>): в БД его нет, а сама область названа сервером
+		// (маршрут окна). Плагин должен быть загружен и объявлять этот виджет именно для этой области; права плагина выданы
+		// в окне Plugins как обычно. Виджеты сцены (overlay) — всегда настоящие источники из БД.
 		if plugin == "" || wid == "" {
 			return "unknown widget"
 		}
-		if _, ok := s.widgetOf(plugin, wid); !ok {
+		w, ok := s.widgetOf(plugin, wid)
+		if !ok {
 			return "plugin is not loaded"
+		}
+		if !slices.Contains(w.Surfaces, surface) {
+			return "widget is not available here"
 		}
 		return ""
 	}

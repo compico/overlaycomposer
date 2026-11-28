@@ -236,7 +236,7 @@ func (uiInst) Meta(context.Context) ([]byte, error) {
 	return json.Marshal(wasmplugins.Meta{
 		ID: "ui", Name: "UI", Version: "1.0.0", APIVersion: 1,
 		Routes:  []wasmplugins.Route{{Method: "GET", Path: "/secret", Handler: "secret"}},
-		Widgets: []wasmplugins.Widget{{ID: "main", Name: "Main", Entry: "index.html"}},
+		Widgets: []wasmplugins.Widget{{ID: "main", Name: "Main", Entry: "index.html", Surfaces: []string{"overlay", "dashboard"}}},
 	})
 }
 func (uiInst) Init(context.Context, []byte) ([]byte, error) { return nil, nil }
@@ -399,11 +399,13 @@ func TestWasmWidgets(t *testing.T) {
 			t.Fatalf("dashboard: %+v", r)
 		}
 		for name, m := range map[string]pluginCallReq{
-			"dashboard: виджет не объявлен":  {Plugin: "ui", Source: "dashboard:nope", Method: "GET", Path: "/secret"},
-			"dashboard: пустой виджет":       {Plugin: "ui", Source: "dashboard:", Method: "GET", Path: "/secret"},
-			"dashboard: пустой плагин":       {Plugin: "", Source: "dashboard:main", Method: "GET", Path: "/secret"},
-			"dashboard: плагин не загружен":  {Plugin: "other", Source: "dashboard:main", Method: "GET", Path: "/secret"},
-			"dashboard: маршрут не объявлен": {Plugin: "ui", Source: "dashboard:main", Method: "GET", Path: "/undeclared"},
+			"dashboard: виджет не объявлен":    {Plugin: "ui", Source: "dashboard:nope", Method: "GET", Path: "/secret"},
+			"deck: область не объявлена":       {Plugin: "ui", Source: "deck:main", Method: "GET", Path: "/secret"},
+			"dashboard: пустой виджет":         {Plugin: "ui", Source: "dashboard:", Method: "GET", Path: "/secret"},
+			"dashboard: пустой плагин":         {Plugin: "", Source: "dashboard:main", Method: "GET", Path: "/secret"},
+			"overlay: не виртуальный источник": {Plugin: "ui", Source: "overlay:main", Method: "GET", Path: "/secret"},
+			"dashboard: плагин не загружен":    {Plugin: "other", Source: "dashboard:main", Method: "GET", Path: "/secret"},
+			"dashboard: маршрут не объявлен":   {Plugin: "ui", Source: "dashboard:main", Method: "GET", Path: "/undeclared"},
 		} {
 			if r := call(m); r.OK || r.Error == "" {
 				t.Errorf("%s: ожидалась ошибка, получено %+v", name, r)

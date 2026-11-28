@@ -60,6 +60,8 @@ export interface PluginManifest {
   /** виджет автономного плагина: id виджета (id плагина — в `id`) */
   widget?: string;
   wasm?: boolean;
+  /** области, где виджет можно показывать (пусто — только сцена) */
+  surfaces?: string[];
 }
 
 export interface Transform {

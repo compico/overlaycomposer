@@ -474,3 +474,32 @@ func TestPluginAPIVersion(t *testing.T) {
 		t.Fatalf("Inspect: %v", err)
 	}
 }
+
+func TestWidgetSurfaces(t *testing.T) {
+	widget := func(surfaces ...string) Meta {
+		m := baseMeta("alpha")
+		m.Widgets = []Widget{{ID: "w", Name: "W", Entry: "index.html", Surfaces: surfaces}}
+		return m
+	}
+	// Без областей — только сцена (как до их появления); после Validate поле заполнено.
+	m := widget()
+	if err := m.Validate(); err != nil || len(m.Widgets[0].Surfaces) != 1 || m.Widgets[0].Surfaces[0] != SurfaceOverlay {
+		t.Fatalf("по умолчанию: %v %v", err, m.Widgets[0].Surfaces)
+	}
+	m = widget(SurfaceOverlay, SurfaceDashboard)
+	if err := m.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	w := m.Widgets[0]
+	if !w.HasSurface(SurfaceDashboard) || !w.HasSurface(SurfaceOverlay) || w.HasSurface(SurfaceDeck) {
+		t.Fatalf("HasSurface: %v", w.Surfaces)
+	}
+	if !(Widget{}).HasSurface(SurfaceOverlay) || (Widget{}).HasSurface(SurfaceDashboard) {
+		t.Fatal("без областей виджет только на сцене")
+	}
+	for name, bad := range map[string]Meta{"неизвестная": widget("tv"), "повтор": widget(SurfaceDeck, SurfaceDeck)} {
+		if bad.Validate() == nil {
+			t.Errorf("%s область должна отклоняться", name)
+		}
+	}
+}
