@@ -23,7 +23,14 @@
     .panel > h2 .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .panel > h2 button { padding: 0 6px; font-size: 12px; line-height: 20px; }
     .body { position: relative; flex: 1; min-height: 0; }
-    .body iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: transparent; }
+    .body iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: transparent; color-scheme: light; }
+    #grid.dragging { user-select: none; cursor: grabbing; }
+    #grid.dragging iframe { pointer-events: none; }
+    #grid.editing .panel { position: relative; outline: 1px dashed var(--line); }
+    #grid.editing .panel > h2 { cursor: grab; }
+    #grid.editing .panel.active { outline: 2px solid var(--accent); }
+    #grid.editing .panel.active::after { content: attr(data-size); position: absolute; right: 18px; bottom: 6px; padding: 1px 6px; border-radius: 4px; background: var(--accent); color: #fff; font-size: 12px; pointer-events: none; }
+    .grip { position: absolute; right: 0; bottom: 0; width: 18px; height: 18px; cursor: nwse-resize; z-index: 2; background: linear-gradient(135deg, transparent 50%, var(--accent) 50%); border-bottom-right-radius: 8px; }
     .hint { padding: 14px; color: var(--dim); }
     .hint a { color: var(--accent); }
     .empty { padding: 30px; color: var(--dim); text-align: center; }

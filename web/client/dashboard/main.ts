@@ -98,6 +98,14 @@ function buildView(p: Panel): View {
   return { el, body, frame: null, key: "" };
 }
 
+function applyGeometry(v: View, p: Panel, i: number) {
+  // Порядок — через CSS order: перестановка DOM перезагружала бы iframe.
+  v.el.style.order = String(i);
+  v.el.style.gridColumn = `span ${clamp(p.w, 1, grid.cols)}`;
+  v.el.style.gridRow = `span ${clamp(p.h, 1, grid.maxRows)}`;
+  v.el.dataset.size = `${p.w}×${p.h}`;
+}
+
 function renderPanels() {
   const ids = new Set(layout.panels.map((p) => p.id));
   for (const [id, v] of views) {
@@ -107,6 +115,7 @@ function renderPanels() {
       views.delete(id);
     }
   }
+  gridEl.classList.toggle("editing", editing);
   layout.panels.forEach((p, i) => {
     let v = views.get(p.id);
     if (!v) {
@@ -114,32 +123,27 @@ function renderPanels() {
       views.set(p.id, v);
       gridEl.append(v.el);
     }
-    // Порядок — через CSS order: перестановка DOM перезагружала бы iframe.
-    v.el.style.order = String(i);
-    v.el.style.gridColumn = `span ${clamp(p.w, 1, grid.cols)}`;
-    v.el.style.gridRow = `span ${clamp(p.h, 1, grid.maxRows)}`;
+    applyGeometry(v, p, i);
 
     const wi = widgetOf(p);
     const head = v.el.firstElementChild as HTMLElement;
-    const key = `${editing}|${wi?.name ?? ""}|${i}|${p.w}|${p.h}|${layout.panels.length}`;
+    const key = `${editing}|${wi?.name ?? ""}`;
     if (v.key !== key) {
       v.key = key;
       const name = document.createElement("span");
       name.className = "name";
       name.textContent = wi?.name ?? `${p.plugin}/${p.widget}`;
       head.replaceChildren(name);
+      v.el.querySelector(".grip")?.remove();
       if (editing) {
-        const n = layout.panels.length;
-        head.append(
-          btn("◀", "Move earlier", () => move(i, -1), i === 0),
-          btn("▶", "Move later", () => move(i, 1), i === n - 1),
-          btn("W−", "Narrower", () => resize(p, -1, 0), p.w <= 1),
-          btn("W+", "Wider", () => resize(p, 1, 0), p.w >= grid.cols),
-          btn("H−", "Shorter", () => resize(p, 0, -1), p.h <= 1),
-          btn("H+", "Taller", () => resize(p, 0, 1), p.h >= grid.maxRows),
-          btn("✕", "Remove", () => remove(p)),
-        );
-      }
+        head.append(btn("✕", "Remove", () => remove(p)));
+        head.onpointerdown = (e) => startMove(e, p);
+        const grip = document.createElement("div");
+        grip.className = "grip";
+        grip.title = "Drag to resize";
+        grip.onpointerdown = (e) => startResize(e, p);
+        v.el.append(grip);
+      } else head.onpointerdown = null;
     }
 
     const prob = problem(p);
@@ -158,6 +162,66 @@ function renderPanels() {
   renderAdd();
 }
 
+// ---------- перетаскивание: размер уголком, порядок — за заголовок ----------
+/** Общий каркас жеста: пока тянем, iframe не должны перехватывать указатель. */
+function drag(e: PointerEvent, onMove: (ev: PointerEvent) => boolean, onEnd: (moved: boolean) => void) {
+  if (e.button !== 0 || (e.target as HTMLElement).closest("button")) return;
+  e.preventDefault();
+  gridEl.classList.add("dragging");
+  let moved = false;
+  const move = (ev: PointerEvent) => { if (onMove(ev)) moved = true; };
+  const end = () => {
+    removeEventListener("pointermove", move);
+    removeEventListener("pointerup", end);
+    removeEventListener("pointercancel", end);
+    gridEl.classList.remove("dragging");
+    onEnd(moved);
+  };
+  addEventListener("pointermove", move);
+  addEventListener("pointerup", end);
+  addEventListener("pointercancel", end);
+}
+
+function startResize(e: PointerEvent, p: Panel) {
+  const gap = parseFloat(getComputedStyle(gridEl).columnGap) || 0;
+  const stepX = (gridEl.clientWidth - gap * (grid.cols - 1)) / grid.cols + gap;
+  const stepY = grid.rowPx + gap;
+  const x0 = e.clientX, y0 = e.clientY, w0 = p.w, h0 = p.h;
+  const v = views.get(p.id)!;
+  v.el.classList.add("active");
+  drag(e, (ev) => {
+    const w = clamp(Math.round(w0 + (ev.clientX - x0) / stepX), 1, grid.cols);
+    const h = clamp(Math.round(h0 + (ev.clientY - y0) / stepY), 1, grid.maxRows);
+    if (w === p.w && h === p.h) return false;
+    p.w = w;
+    p.h = h;
+    applyGeometry(v, p, layout.panels.indexOf(p));
+    return true;
+  }, (moved) => {
+    v.el.classList.remove("active");
+    if (moved) changed();
+  });
+}
+
+function startMove(e: PointerEvent, p: Panel) {
+  const v = views.get(p.id)!;
+  v.el.classList.add("active");
+  drag(e, (ev) => {
+    const over = document.elementFromPoint(ev.clientX, ev.clientY)?.closest(".panel");
+    const target = [...views.entries()].find(([, x]) => x.el === over)?.[0];
+    if (!target || target === p.id) return false;
+    const from = layout.panels.indexOf(p);
+    const to = layout.panels.findIndex((x) => x.id === target);
+    if (from < 0 || to < 0) return false;
+    layout.panels.splice(to, 0, layout.panels.splice(from, 1)[0]);
+    layout.panels.forEach((x, i) => applyGeometry(views.get(x.id)!, x, i));
+    return true;
+  }, (moved) => {
+    v.el.classList.remove("active");
+    if (moved) changed();
+  });
+}
+
 function renderAdd() {
   addEl.hidden = resetEl.hidden = !editing;
   if (!editing) return;
@@ -173,19 +237,6 @@ function changed() {
   renderPanels();
   clearTimeout(saveTimer);
   saveTimer = window.setTimeout(() => void save(), 400);
-}
-
-function move(i: number, d: number) {
-  const j = i + d;
-  if (j < 0 || j >= layout.panels.length) return;
-  [layout.panels[i], layout.panels[j]] = [layout.panels[j], layout.panels[i]];
-  changed();
-}
-
-function resize(p: Panel, dw: number, dh: number) {
-  p.w = clamp(p.w + dw, 1, grid.cols);
-  p.h = clamp(p.h + dh, 1, grid.maxRows);
-  changed();
 }
 
 function remove(p: Panel) {
