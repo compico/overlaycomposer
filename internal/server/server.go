@@ -106,6 +106,7 @@ type Server struct {
 	pluginAuth func(plugin, source string) string // подмена authorizePlugin в тестах
 
 	deckMu              sync.Mutex // сохранение раскладки deck
+	dashMu              sync.Mutex // сохранение раскладки Dashboard
 	deckRate            deckBucket
 	deckObsOverride     deckOBS     // подмена OBS в тестах
 	deckPluginsOverride deckPlugins // подмена плагинов в тестах
@@ -191,6 +192,7 @@ func (s *Server) routes() {
 	s.twitchRoutes()
 	s.storageRoutes()
 	s.deckRoutes()
+	s.dashboardRoutes()
 	s.marketRoutes()
 	s.settingsRoutes()
 	s.cloudRoutes()
