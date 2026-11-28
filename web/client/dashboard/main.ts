@@ -57,7 +57,7 @@ function showChat() {
   frame.src = url;
   box.append(frame);
   hint.hidden = true;
-  plugins.register(frame, { pluginId: CHAT_PLUGIN, widget: CHAT_WIDGET, sourceId: `dashboard:${CHAT_WIDGET}`, settings: CHAT_SETTINGS, permissions: CHAT_PERMS });
+  plugins.register(frame, { pluginId: CHAT_PLUGIN, widget: CHAT_WIDGET, sourceId: `dashboard:${CHAT_WIDGET}`, surface: "dashboard", settings: CHAT_SETTINGS, permissions: CHAT_PERMS });
 }
 
 function hideChat() {

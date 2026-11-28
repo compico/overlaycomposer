@@ -145,7 +145,17 @@ type Widget struct {
 	Height int    `json:"height,omitempty"`
 	// Settings — настройки источника на сцене: редактор рисует по ним форму, значения приходят виджету как ?key=value (oc.param).
 	Settings []WidgetSetting `json:"settings,omitempty"`
+	// Surfaces — где виджет можно показывать: SurfaceOverlay (сцена OBS), SurfaceDashboard (окно управления стримом), SurfaceDeck.
+	// Пусто — только сцена. Виджет узнаёт, где он, по info.surface из oc.ready.
+	Surfaces []string `json:"surfaces,omitempty"`
 }
+
+// Области виджета (Widget.Surfaces).
+const (
+	SurfaceOverlay   = "overlay"
+	SurfaceDashboard = "dashboard"
+	SurfaceDeck      = "deck"
+)
 
 // WidgetSetting — одна настройка виджета (как в plugin.json HTML-плагинов). Type: string, text, number, range, bool, color,
 // font, select (нужны Options). Default должен совпадать со значением по умолчанию в коде виджета.
