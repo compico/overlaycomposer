@@ -9,7 +9,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 // Права для наград: читать погашения (EventSub) и управлять наградами (создание, смена статуса погашения).
@@ -24,14 +26,27 @@ const (
 	RedemptionCanceled  = "CANCELED" // баллы возвращаются зрителю
 )
 
-// ErrNeedScopes — у аккаунта стримера нет прав на награды: нужно подключить его заново.
-var ErrNeedScopes = errors.New("streamer account needs channel:read:redemptions and channel:manage:redemptions: connect it again")
+// ErrNeedScopes — у аккаунта стримера не хватает прав Twitch (награды, модерация чата): нужно подключить его заново.
+var ErrNeedScopes = errors.New("streamer account needs new Twitch permissions: connect it again in Settings → Twitch")
+
+// Права для модерации чата: удалять сообщения и банить (в том числе timeout) от имени стримера как модератора своего канала.
+const (
+	ScopeManageChatMessages = "moderator:manage:chat_messages"
+	ScopeManageBans         = "moderator:manage:banned_users"
+)
+
+var redemptionScopes = []string{ScopeReadRedemptions, ScopeManageRedemptions}
 
 // UseAPIBase подменяет https://api.twitch.tv (для тестов).
 func (m *Manager) UseAPIBase(u string) { m.apiBase = strings.TrimRight(u, "/") }
 
 // streamer возвращает действующий токен и данные стримера; проверяет, что для наград хватает прав.
 func (m *Manager) streamer(ctx context.Context) (token, userID, clientID string, err error) {
+	return m.streamerWith(ctx, redemptionScopes)
+}
+
+// streamerWith — то же с произвольным набором нужных прав: нехватка любого — ErrNeedScopes.
+func (m *Manager) streamerWith(ctx context.Context, need []string) (token, userID, clientID string, err error) {
 	acc, err := m.st.GetAccount(RoleStreamer)
 	if err != nil {
 		return "", "", "", err
@@ -39,7 +54,7 @@ func (m *Manager) streamer(ctx context.Context) (token, userID, clientID string,
 	if acc == nil {
 		return "", "", "", ErrNoAccount
 	}
-	for _, s := range []string{ScopeReadRedemptions, ScopeManageRedemptions} {
+	for _, s := range need {
 		if !hasScope(acc.Scopes, s) {
 			return "", "", "", ErrNeedScopes
 		}
@@ -66,7 +81,12 @@ func hasScope(list []string, s string) bool {
 
 // helix выполняет запрос к Helix API от имени стримера. out может быть nil (ответ без тела).
 func (m *Manager) helix(ctx context.Context, method, path string, q url.Values, in, out any) error {
-	token, userID, clientID, err := m.streamer(ctx)
+	return m.helixWith(ctx, redemptionScopes, method, path, q, in, out)
+}
+
+// helixWith — helix с явным набором нужных прав. Для /helix/moderation/ добавляет moderator_id: модератор — сам стример.
+func (m *Manager) helixWith(ctx context.Context, need []string, method, path string, q url.Values, in, out any) error {
+	token, userID, clientID, err := m.streamerWith(ctx, need)
 	if err != nil {
 		return err
 	}
@@ -75,6 +95,9 @@ func (m *Manager) helix(ctx context.Context, method, path string, q url.Values, 
 	}
 	if q.Get("broadcaster_id") == "" && !strings.HasPrefix(path, "/helix/eventsub/") {
 		q.Set("broadcaster_id", userID)
+	}
+	if strings.HasPrefix(path, "/helix/moderation/") && q.Get("moderator_id") == "" {
+		q.Set("moderator_id", userID)
 	}
 	u := m.apiBase + path
 	if len(q) > 0 {
@@ -218,4 +241,46 @@ func (m *Manager) UpdateRedemption(ctx context.Context, rewardID, redemptionID, 
 	}
 	q := url.Values{"id": {redemptionID}, "reward_id": {rewardID}}
 	return m.helix(ctx, http.MethodPatch, "/helix/channel_points/custom_rewards/redemptions", q, map[string]string{"status": status}, nil)
+}
+
+// ErrInvalidModeration — неверные аргументы модерации (идентификатор, длительность).
+var ErrInvalidModeration = errors.New("invalid moderation request")
+
+var twitchIDRe = regexp.MustCompile(`^[0-9A-Za-z_-]{1,64}$`)
+
+const (
+	maxTimeoutSeconds = 1209600 // 14 дней — предел Twitch
+	maxReasonRunes    = 500
+)
+
+var moderationScopesMessages = []string{ScopeManageChatMessages}
+var moderationScopesBans = []string{ScopeManageBans}
+
+// DeleteChatMessage удаляет сообщение зрителя в чате канала стримера.
+func (m *Manager) DeleteChatMessage(ctx context.Context, messageID string) error {
+	if !twitchIDRe.MatchString(messageID) {
+		return fmt.Errorf("%w: message id", ErrInvalidModeration)
+	}
+	return m.helixWith(ctx, moderationScopesMessages, http.MethodDelete, "/helix/moderation/chat", url.Values{"message_id": {messageID}}, nil, nil)
+}
+
+// Ban блокирует пользователя на seconds секунд (timeout: 1..1209600); seconds == 0 — бессрочный бан.
+func (m *Manager) Ban(ctx context.Context, userID string, seconds int, reason string) error {
+	if !twitchIDRe.MatchString(userID) {
+		return fmt.Errorf("%w: user id", ErrInvalidModeration)
+	}
+	if seconds < 0 || seconds > maxTimeoutSeconds {
+		return fmt.Errorf("%w: duration 1..%d seconds or 0 for a ban", ErrInvalidModeration, maxTimeoutSeconds)
+	}
+	if utf8.RuneCountInString(reason) > maxReasonRunes {
+		return fmt.Errorf("%w: reason is too long", ErrInvalidModeration)
+	}
+	data := map[string]any{"user_id": userID}
+	if seconds > 0 {
+		data["duration"] = seconds
+	}
+	if reason != "" {
+		data["reason"] = reason
+	}
+	return m.helixWith(ctx, moderationScopesBans, http.MethodPost, "/helix/moderation/bans", nil, map[string]any{"data": data}, nil)
 }

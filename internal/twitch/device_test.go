@@ -59,7 +59,7 @@ func newFakeDevice(t *testing.T) *fakeDevice {
 		}
 	})
 	mux.HandleFunc("/oauth2/validate", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"user_id":"42","login":"streamer","scopes":["chat:read","chat:edit","channel:read:redemptions","channel:manage:redemptions"]}`))
+		w.Write([]byte(`{"user_id":"42","login":"streamer","scopes":["chat:read","chat:edit","channel:read:redemptions","channel:manage:redemptions","moderator:manage:chat_messages","moderator:manage:banned_users"]}`))
 	})
 	f.srv = httptest.NewServer(mux)
 	t.Cleanup(f.srv.Close)

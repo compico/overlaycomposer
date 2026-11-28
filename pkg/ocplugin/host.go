@@ -142,6 +142,27 @@ func SayReply(messageID, text string) error {
 	return err
 }
 
+// ---- модерация чата (PermChatModerate) ----
+
+// DeleteMessage удаляет сообщение зрителя из чата канала. messageID — ChatMessage.ID. Выполняется от имени стримера и синхронно:
+// ошибка (нет прав Twitch, сообщение уже удалено, лимит частоты) приходит в ответ.
+func DeleteMessage(messageID string) error {
+	_, err := call("chat.delete", map[string]any{"messageId": messageID})
+	return err
+}
+
+// Timeout не даёт зрителю писать в чат seconds секунд (1..1209600). userID — ChatMessage.UserID, reason (до 500 символов) необязателен.
+func Timeout(userID string, seconds int, reason string) error {
+	_, err := call("chat.timeout", map[string]any{"userId": userID, "seconds": seconds, "reason": reason})
+	return err
+}
+
+// Ban блокирует зрителя в чате канала бессрочно. userID — ChatMessage.UserID, reason (до 500 символов) необязателен.
+func Ban(userID, reason string) error {
+	_, err := call("chat.ban", map[string]any{"userId": userID, "reason": reason})
+	return err
+}
+
 // ---- сеть (PermNetHTTP) ----
 
 // FetchRequest — исходящий HTTP-запрос. В локальную сеть ходить нельзя.

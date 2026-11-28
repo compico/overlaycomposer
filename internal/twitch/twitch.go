@@ -29,9 +29,9 @@ const (
 )
 
 // Scopes — права по ролям. Чат читается и пишется через IRC (chat:read / chat:edit); стримеру — ещё награды за баллы канала
-// (заявки на треки): читать погашения через EventSub и управлять наградами.
+// (заявки на треки): читать погашения через EventSub и управлять наградами; и модерация чата (удалить сообщение, timeout, бан).
 var Scopes = map[string][]string{
-	RoleStreamer: {"chat:read", "chat:edit", ScopeReadRedemptions, ScopeManageRedemptions},
+	RoleStreamer: {"chat:read", "chat:edit", ScopeReadRedemptions, ScopeManageRedemptions, ScopeManageChatMessages, ScopeManageBans},
 	RoleBot:      {"chat:read", "chat:edit"},
 }
 

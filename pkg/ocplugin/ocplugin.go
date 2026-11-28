@@ -40,11 +40,14 @@ const (
 	PermChatCommandRead = "chat.command.read"
 	// PermChatRead — получать все сообщения чата канала по умолчанию (OnChatMessage). Весь чат виден плагину целиком, а текст зрителей недоверенный.
 	PermChatRead = "chat.read"
+	// PermChatModerate — удалять сообщения, давать timeout и бан в чате канала от имени стримера (DeleteMessage, Timeout, Ban).
+	// Нужны права Twitch moderator:manage:chat_messages и moderator:manage:banned_users: после обновления OC стример переподключает Twitch.
+	PermChatModerate = "chat.moderate"
 )
 
 const (
 	apiVersion        = 1 // версия API плагинов по умолчанию; плагин, которому нужно больше, получает её сам (см. apiVersionNeeded)
-	apiChatRead       = 2 // версия API, с которой есть право chat.read и событие chat.message
+	apiChatRead       = 2 // версия API, с которой есть права chat.read и chat.moderate и событие chat.message
 	eventRedemption   = "twitch.redemption"
 	eventChatCommand  = "chat.command"
 	eventChatMessage  = "chat.message"
@@ -355,7 +358,7 @@ func (p *Plugin) apiVersionNeeded() int {
 	v := apiVersion
 	needsChat := p.onChat != nil
 	for _, perm := range p.meta.Permissions {
-		needsChat = needsChat || perm == PermChatRead
+		needsChat = needsChat || perm == PermChatRead || perm == PermChatModerate
 	}
 	if needsChat && v < apiChatRead {
 		v = apiChatRead

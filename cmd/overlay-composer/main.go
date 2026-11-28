@@ -527,6 +527,17 @@ func openWasmPlugins(p paths.Paths, kvSvc *kv.Service, tw *twitch.Manager, chatS
 	return wasmplugins.NewManager(context.Background(), wasmplugins.Options{
 		Engine: eng, Dirs: dirs, State: state,
 		Services: wasmplugins.Services{Storage: wasmplugins.KVStorage{S: kvSvc}, Redeem: tw.UpdateRedemption, Log: slog.Default(), Events: bus,
+			Moderate: func(ctx context.Context, a wasmplugins.ModerateAction) error {
+				switch a.Op {
+				case "delete":
+					return tw.DeleteChatMessage(ctx, a.MessageID)
+				case "timeout":
+					return tw.Ban(ctx, a.UserID, a.Seconds, a.Reason)
+				case "ban":
+					return tw.Ban(ctx, a.UserID, 0, a.Reason)
+				}
+				return fmt.Errorf("unknown moderation action %q", a.Op)
+			},
 			Say: func(ctx context.Context, text, replyTo string) error {
 				return chatSvc.Say(ctx, chat.SayRequest{Text: text, As: twitch.RoleBot, ReplyTo: replyTo})
 			}},
