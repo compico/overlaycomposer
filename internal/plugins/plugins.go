@@ -83,6 +83,9 @@ type Manifest struct {
 	// они не читаются (Validate их обнуляет), чтобы HTML-плагин не мог выдать себя за автономный.
 	Widget string `json:"widget,omitempty"`
 	Wasm   bool   `json:"wasm,omitempty"`
+	// Surfaces — области, где виджет можно показывать (overlay, dashboard, deck); у HTML-плагинов пусто (= только overlay).
+	// Заполняет сервер для виджетов wasm-плагинов, из plugin.json не читается.
+	Surfaces []string `json:"surfaces,omitempty"`
 }
 
 // Известные разрешения плагинов.
@@ -113,7 +116,7 @@ var settingKeyRe = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]{0,31}$`)
 
 // Validate проверяет и нормализует манифест.
 func (m *Manifest) Validate() error {
-	m.Widget, m.Wasm = "", false
+	m.Widget, m.Wasm, m.Surfaces = "", false, nil
 	if !model.IsValidID(m.ID) {
 		return errors.New("invalid id")
 	}

@@ -17,7 +17,7 @@ export function mountApp(refs: AppRefs, model: AppModel, ui: Ui) {
   let updateToasted = false;
   model.subscribe((a) => {
     if (!a) return;
-    refs.version.textContent = a.version ? `Version: ${a.version}` : "";
+    refs.version.textContent = [a.version ? `Version: ${a.version}` : "", a.pluginApi ? `Plugin API: ${a.pluginApi}` : ""].filter(Boolean).join(" · ");
     if (a.update?.available && /^https:\/\/github\.com\//.test(a.update.url)) {
       const link = el("a", { href: a.update.url, target: "_blank", rel: "noopener noreferrer", textContent: `New version ${a.update.latest} is available` });
       refs.version.append(" — ", link);

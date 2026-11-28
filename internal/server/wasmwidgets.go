@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -39,7 +40,7 @@ func widgetManifest(m wasmplugins.Meta, w wasmplugins.Widget) plugins.Manifest {
 	return plugins.Manifest{
 		ID: m.ID, Name: w.Name, Version: m.Version, Description: m.Description, Author: m.Author,
 		Entry: w.Entry, DefaultSize: plugins.Size{Width: w.Width, Height: w.Height},
-		Widget: w.ID, Wasm: true, Settings: w.Settings,
+		Widget: w.ID, Wasm: true, Settings: w.Settings, Surfaces: w.Surfaces,
 	}
 }
 
@@ -144,6 +145,22 @@ func (s *Server) authorizePlugin(plugin, source string) string {
 		// Страница настроек плагина (окно «Plugins → Settings»): источника нет, но плагин должен её объявлять.
 		if plugin == "" || !s.hasSettingsPage(plugin) {
 			return "unknown settings page"
+		}
+		return ""
+	}
+	if surface, wid, ok := strings.Cut(source, ":"); ok && wasmplugins.IsSurface(surface) && surface != wasmplugins.SurfaceOverlay {
+		// Виртуальный источник области (dashboard:<виджет>, deck:<виджет>): в БД его нет, а сама область названа сервером
+		// (маршрут окна). Плагин должен быть загружен и объявлять этот виджет именно для этой области; права плагина выданы
+		// в окне Plugins как обычно. Виджеты сцены (overlay) — всегда настоящие источники из БД.
+		if plugin == "" || wid == "" {
+			return "unknown widget"
+		}
+		w, ok := s.widgetOf(plugin, wid)
+		if !ok {
+			return "plugin is not loaded"
+		}
+		if !slices.Contains(w.Surfaces, surface) {
+			return "widget is not available here"
 		}
 		return ""
 	}

@@ -363,3 +363,48 @@ func TestUpdatesWasmCatalogFailure(t *testing.T) {
 		t.Fatal("поставленный wasm-плагин и сбой каталога релизов: ответ ненадёжен")
 	}
 }
+
+func TestWasmInstallPluginAPI(t *testing.T) {
+	m, h, f := installEnv(t)
+	m.hostAPI = 1
+	f.addRelease("chat", "0.1.0", "chat 0.1.0 storage", true)
+	f.addRelease("chat", "0.2.0", "chat 0.2.0 storage", true)
+	// 0.2.0 требует API 2, 0.1.0 — API 1
+	setAPI := func(tag string, api int) {
+		for i := range f.list {
+			if f.list[i].Tag != tag {
+				continue
+			}
+			for _, a := range f.list[i].Assets {
+				if a.Name == "chat.json" {
+					f.files[a.ID] = strings.Replace(f.files[a.ID], `"permissions"`, fmt.Sprintf(`"apiVersion":%d,"permissions"`, api), 1)
+				}
+			}
+		}
+	}
+	setAPI("chat-v0.1.0", 1)
+	setAPI("chat-v0.2.0", 2)
+	ctx := context.Background()
+
+	e := m.WasmCatalog(ctx, true)[0].Plugins[0]
+	if e.Version != "0.2.0" || e.APIVersion != 2 || !e.HostTooOld {
+		t.Fatalf("каталог: %+v", e)
+	}
+	var tooOld *HostTooOldError
+	if _, err := m.WasmInstall(ctx, "o/n", "chat", "chat-v0.2.0", ""); !errors.As(err, &tooOld) || tooOld.Need != 2 || tooOld.Have != 1 {
+		t.Fatalf("установка: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(h.dir, "chat.wasm")); err == nil {
+		t.Fatal("при отказе файл не кладётся")
+	}
+	if _, err := m.WasmInstall(ctx, "o/n", "chat", "chat-v0.1.0", ""); err != nil {
+		t.Fatal(err) // прежняя версия с API 1 ставится
+	}
+	m.hostAPI = 2 // приложение обновили
+	if _, err := m.WasmInstall(ctx, "o/n", "chat", "chat-v0.2.0", ""); err != nil {
+		t.Fatal(err)
+	}
+	if e := m.WasmCatalog(ctx, true)[0].Plugins[0]; e.HostTooOld {
+		t.Fatalf("после обновления приложения: %+v", e)
+	}
+}

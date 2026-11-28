@@ -55,6 +55,9 @@ export const pluginTitle = (p: Pick<PluginManifest, "name" | "version" | "builti
   `${p.name}${p.version ? ` ${p.version}` : ""}${p.wasm ? " (plugin)" : p.builtin ? "" : " (custom)"}`;
 
 /** Подсказка под списком плагинов. */
+/** Виджет можно добавить на сцену: области не заданы (HTML-плагины) или среди них есть overlay. */
+export const onOverlay = (p: Pick<PluginManifest, "surfaces">): boolean => !p.surfaces?.length || p.surfaces.includes("overlay");
+
 export function pluginHint(p: Pick<PluginManifest, "permissions" | "wasm"> | undefined): string {
   if (!p) return "";
   if (p.wasm) return "Widget of a plugin: it talks only to its own plugin. The plugin’s own permissions are in the Plugins button.";

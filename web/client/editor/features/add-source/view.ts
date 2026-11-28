@@ -1,7 +1,7 @@
 import type { PluginManifest, Source } from "../../../../shared/types.ts";
 import { pluginKey } from "../../../shared/pluginkey.ts";
 import { el } from "../../lib/dom.ts";
-import { type AddSourceModel, defaultWidgetName, existingMeta, type PickedFile, pickSelection, pluginHint, pluginTitle, stripCommonRoot } from "./model.ts";
+import { type AddSourceModel, defaultWidgetName, existingMeta, onOverlay, type PickedFile, pickSelection, pluginHint, pluginTitle, stripCommonRoot } from "./model.ts";
 
 export interface AddSourceRefs {
   dialog: HTMLDialogElement;
@@ -79,7 +79,7 @@ export function mountAddSource(refs: AddSourceRefs, model: AddSourceModel, ports
   }
 
   function renderPlugins() {
-    const plugins = ports.plugins();
+    const plugins = ports.plugins().filter(onOverlay);
     selectedPluginId = pickSelection(plugins.map(pluginKey), selectedPluginId);
     refs.pluginList.replaceChildren(...plugins.map((p) => pickItem(
       pluginKey(p) === selectedPluginId, pluginTitle(p), p.description ?? "",

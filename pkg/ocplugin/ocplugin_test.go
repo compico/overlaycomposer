@@ -364,6 +364,37 @@ func TestChatCommandEvent(t *testing.T) {
 	}
 }
 
+func TestChatMessageEvent(t *testing.T) {
+	useFakeHost(t)
+	p := New(Meta{ID: "chat", Name: "Chat", Version: "1.0.0", Permissions: []string{PermChatRead}})
+	var got []ChatEvent
+	p.OnChatMessage(func(e ChatEvent) { got = append(got, e) })
+	if !strings.Contains(string(p.metaJSON()), `"chat.message"`) {
+		t.Fatalf("meta: %s", p.metaJSON())
+	}
+	p.dispatch("on_event", []byte(`{"type":"chat.message","data":{"event":"message","channel":"s","message":{"id":"m1","login":"v","displayName":"V","text":"hi","isMod":true,"emotes":[{"id":"25","start":0,"end":4}],"parts":[{"emote":"25","name":"Kappa","url":"https://x/25"},{"text":" hi"}],"timestamp":5}}}`))
+	p.dispatch("on_event", []byte(`{"type":"chat.message","data":{"event":"delete","targetId":"m1"}}`))
+	p.dispatch("on_event", []byte(`{"type":"chat.message","data":{"event":"status","connected":true}}`))
+	if len(got) != 3 {
+		t.Fatalf("events: %+v", got)
+	}
+	m := got[0].Message
+	if got[0].Event != "message" || m == nil || m.ID != "m1" || m.Login != "v" || !m.IsMod || len(m.Emotes) != 1 || m.Emotes[0].ID != "25" || m.Timestamp != 5 ||
+		len(m.Parts) != 2 || m.Parts[0].Emote != "25" || m.Parts[0].Name != "Kappa" || m.Parts[0].URL != "https://x/25" || m.Parts[1].Text != " hi" {
+		t.Fatalf("message: %+v", got[0])
+	}
+	if got[1].Event != "delete" || got[1].TargetID != "m1" {
+		t.Fatalf("delete: %+v", got[1])
+	}
+	if got[2].Event != "status" || got[2].Connected == nil || !*got[2].Connected {
+		t.Fatalf("status: %+v", got[2])
+	}
+	current = nil // New допускается один раз на .wasm: сбрасываем перед вторым плагином
+	if strings.Contains(string(New(Meta{ID: "x", Name: "X", Version: "1.0.0"}).metaJSON()), "chat.message") {
+		t.Fatal("без OnChatMessage подписки быть не должно")
+	}
+}
+
 func TestSayReply(t *testing.T) {
 	f := useFakeHost(t)
 	if err := SayReply("m1", "привет"); err != nil {
@@ -373,4 +404,26 @@ func TestSayReply(t *testing.T) {
 	if c.Arg["text"] != "привет" || c.Arg["replyTo"] != "m1" {
 		t.Fatalf("chat.send: %+v", c)
 	}
+}
+
+func TestAPIVersionNeeded(t *testing.T) {
+	apiOf := func(p *Plugin) int {
+		var m struct{ APIVersion int }
+		if err := json.Unmarshal(p.metaJSON(), &m); err != nil {
+			t.Fatal(err)
+		}
+		return m.APIVersion
+	}
+	current = nil
+	plain := New(Meta{ID: "plain", Name: "P", Version: "0.1.0"})
+	if v := apiOf(plain); v != 1 {
+		t.Fatalf("плагину без новых возможностей нужен API 1, получили %d", v)
+	}
+	current = nil
+	chat := New(Meta{ID: "chat", Name: "C", Version: "0.1.0", Permissions: []string{PermChatRead}})
+	chat.OnChatMessage(func(ChatEvent) {})
+	if v := apiOf(chat); v != 2 {
+		t.Fatalf("чтение чата — API 2, получили %d", v)
+	}
+	current = nil
 }

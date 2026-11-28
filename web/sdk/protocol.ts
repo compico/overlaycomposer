@@ -7,6 +7,8 @@ export interface PluginInfo {
   /** страница настроек wasm-плагина (окно Plugins → Settings): источника нет, вызывать можно только маршруты этого плагина */
   page?: "settings";
   sourceId: string;
+  /** где показан виджет: на сцене (по умолчанию), в окне Dashboard или на панели Deck; виджет сам решает, как выглядеть */
+  surface?: "overlay" | "dashboard" | "deck";
   settings: Record<string, string | number | boolean>;
   permissions: string[];
   preview: boolean;

@@ -19,8 +19,27 @@ import (
 	"github.com/compico/overlaycomposer/internal/wasmassets"
 )
 
-// APIVersion — версия ABI между хостом и плагином.
-const APIVersion = 1
+// APIVersion — версия API плагинов, которую понимает этот хост. Плагин в oc_meta.apiVersion объявляет, какая версия API ему нужна:
+// хост принимает плагины с apiVersion от 1 до APIVersion, более новые отклоняет с просьбой обновить приложение.
+// Поднимайте её на 1 в том же PR, где в API появляется новое право, событие или поле меты, и записывайте здесь, что вошло:
+//
+//	1 — всё до v2026.11.23.6 включительно;
+//	2 — право chat.read и событие chat.message, поле Widget.Surfaces (область виджета).
+const APIVersion = 2
+
+// minAPI — с какой версии API доступны право или событие (нет в карте — с первой). Плагин, который их использует, обязан
+// объявить apiVersion не ниже: так более старый хост отклонит его по версии, а не по незнакомому названию.
+var (
+	permMinAPI  = map[string]int{PermChatRead: 2}
+	eventMinAPI = map[string]int{EventChatMessage: 2}
+)
+
+// APITooNewError — плагину нужна более новая версия API, чем понимает этот хост.
+type APITooNewError struct{ Need, Have int }
+
+func (e *APITooNewError) Error() string {
+	return fmt.Sprintf("the plugin needs plugin API version %d, this Overlay Composer supports up to %d: update the app", e.Need, e.Have)
+}
 
 // Разрешения плагина. Плагин их запрашивает в oc_meta, пользователь выдаёт; без выдачи операция отклоняется.
 const (
@@ -32,6 +51,7 @@ const (
 	PermPublish         = "events.publish"    // публиковать события для подписчиков (виджеты, аддоны, deck)
 	PermChat            = "chat.send"         // писать в чат канала от имени бота
 	PermChatCommandRead = "chat.command.read" // получать команды чата («!np …») из Meta.Commands; весь чат плагин не видит
+	PermChatRead        = "chat.read"         // получать все сообщения чата канала по умолчанию (событие chat.message)
 	maxRoutes           = 64
 	maxMetaBytes        = 64 << 10
 	maxWidgets          = 16
@@ -45,6 +65,7 @@ const (
 const (
 	EventRedemption   = "twitch.redemption"
 	EventChatCommand  = "chat.command"
+	EventChatMessage  = "chat.message" // message | delete | clear | status; нужно разрешение chat.read
 	EventTimer        = "timer"
 	EventHTTPResponse = "http.response"
 )
@@ -56,9 +77,9 @@ var (
 	pathSegRe = regexp.MustCompile(`^[A-Za-z0-9._~-]+$`)
 )
 
-var knownPerms = map[string]bool{PermStorage: true, PermNetHTTP: true, PermNetLocal: true, PermRedeem: true, PermTimer: true, PermPublish: true, PermChat: true, PermChatCommandRead: true}
+var knownPerms = map[string]bool{PermStorage: true, PermNetHTTP: true, PermNetLocal: true, PermRedeem: true, PermTimer: true, PermPublish: true, PermChat: true, PermChatCommandRead: true, PermChatRead: true}
 
-var knownEvents = map[string]bool{EventRedemption: true, EventChatCommand: true, EventTimer: true, EventHTTPResponse: true}
+var knownEvents = map[string]bool{EventRedemption: true, EventChatCommand: true, EventChatMessage: true, EventTimer: true, EventHTTPResponse: true}
 
 // Route — HTTP-маршрут плагина: он доступен как /plugins/<id>/api<Path>.
 type Route struct {
@@ -133,6 +154,19 @@ func (m *Meta) EventTopics() []string {
 	return out
 }
 
+// Области, в которых виджет можно показывать. Overlay — сцена OBS (источник на сцене), Dashboard — окно управления стримом (/),
+// Deck — панель на планшете. У виджета один тип на все области: он сам решает, как выглядеть, по info.surface из oc.ready.
+const (
+	SurfaceOverlay   = "overlay"
+	SurfaceDashboard = "dashboard"
+	SurfaceDeck      = "deck"
+)
+
+// IsSurface — известная область.
+func IsSurface(s string) bool {
+	return s == SurfaceOverlay || s == SurfaceDashboard || s == SurfaceDeck
+}
+
 // Widget — виджет плагина. Entry — путь HTML-файла в статике плагина (/plugins/<id>/ui/<entry>).
 type Widget struct {
 	ID     string `json:"id"`
@@ -143,6 +177,19 @@ type Widget struct {
 	// Settings — настройки источника на сцене (формат как в plugin.json HTML-плагинов): редактор строит по ним форму,
 	// значения уходят виджету как ?key=value (читайте через oc.param). У каждого источника на сцене они свои.
 	Settings []plugins.Setting `json:"settings,omitempty"`
+	// Surfaces — где виджет можно показывать (overlay, dashboard, deck). Пусто — только overlay, как было до появления областей.
+	// После Validate всегда заполнено.
+	Surfaces []string `json:"surfaces,omitempty"`
+}
+
+// HasSurface — виджет можно показывать в этой области.
+func (w Widget) HasSurface(s string) bool {
+	for _, x := range w.Surfaces {
+		if x == s {
+			return true
+		}
+	}
+	return len(w.Surfaces) == 0 && s == SurfaceOverlay
 }
 
 // Validate проверяет метаданные, чтобы кривой плагин не попал в маршруты и интерфейс.
@@ -156,8 +203,11 @@ func (m *Meta) Validate() error {
 	if !semverRe.MatchString(m.Version) {
 		return fmt.Errorf("version %q: semver expected (1.2.3)", m.Version)
 	}
-	if m.APIVersion != APIVersion {
-		return fmt.Errorf("apiVersion %d is not supported (host speaks %d)", m.APIVersion, APIVersion)
+	if m.APIVersion < 1 {
+		return fmt.Errorf("apiVersion %d: 1 or more expected", m.APIVersion)
+	}
+	if m.APIVersion > APIVersion { // раньше проверок прав и подписок: право из новой версии API хост ещё не знает
+		return &APITooNewError{Need: m.APIVersion, Have: APIVersion}
 	}
 	perms := map[string]bool{}
 	for _, p := range m.Permissions {
@@ -166,6 +216,9 @@ func (m *Meta) Validate() error {
 		}
 		if perms[p] {
 			return fmt.Errorf("duplicate permission %q", p)
+		}
+		if min := permMinAPI[p]; m.APIVersion < min {
+			return fmt.Errorf("permission %q needs apiVersion %d or more", p, min)
 		}
 		perms[p] = true
 	}
@@ -202,6 +255,9 @@ func (m *Meta) Validate() error {
 		if subs[s] {
 			return fmt.Errorf("duplicate subscription %q", s)
 		}
+		if min := eventMinAPI[s]; m.APIVersion < min {
+			return fmt.Errorf("subscription %q needs apiVersion %d or more", s, min)
+		}
 		subs[s] = true
 	}
 	if subs[EventRedemption] && !perms[PermRedeem] {
@@ -209,6 +265,9 @@ func (m *Meta) Validate() error {
 	}
 	if subs[EventChatCommand] && !perms[PermChatCommandRead] {
 		return fmt.Errorf("subscription %q requires permission %q", EventChatCommand, PermChatCommandRead)
+	}
+	if subs[EventChatMessage] && !perms[PermChatRead] {
+		return fmt.Errorf("subscription %q requires permission %q", EventChatMessage, PermChatRead)
 	}
 	if err := m.validateCommands(subs[EventChatCommand]); err != nil {
 		return err
@@ -272,6 +331,19 @@ func (m *Meta) validateWidgets() error {
 		}
 		if ext := strings.ToLower(path.Ext(w.Entry)); ext != ".html" && ext != ".htm" {
 			return fmt.Errorf("widget %q: entry must be an HTML file", w.ID)
+		}
+		if len(w.Surfaces) == 0 {
+			w.Surfaces = []string{SurfaceOverlay}
+		}
+		seenSurf := map[string]bool{}
+		for _, s := range w.Surfaces {
+			if !IsSurface(s) {
+				return fmt.Errorf("widget %q: unknown surface %q (overlay, dashboard, deck)", w.ID, s)
+			}
+			if seenSurf[s] {
+				return fmt.Errorf("widget %q: duplicate surface %q", w.ID, s)
+			}
+			seenSurf[s] = true
 		}
 		if len(w.Settings) > maxWidgetSettings {
 			return fmt.Errorf("widget %q: too many settings (max %d)", w.ID, maxWidgetSettings)

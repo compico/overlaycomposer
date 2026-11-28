@@ -12,6 +12,8 @@ export interface AppInfo {
   tray: boolean;
   trayAvailable: boolean;
   version?: string;
+  /** Версия API wasm-плагинов, которую понимает это приложение. */
+  pluginApi?: number;
   update?: { latest: string; url: string; notes: string; available: boolean } | null;
 }
 

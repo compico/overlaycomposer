@@ -38,12 +38,16 @@ const (
 	PermChat     = "chat.send" // писать в чат канала от имени бота
 	// PermChatCommandRead — получать команды чата («!np …»), перечисленные в Meta.Commands. Весь чат плагину недоступен.
 	PermChatCommandRead = "chat.command.read"
+	// PermChatRead — получать все сообщения чата канала по умолчанию (OnChatMessage). Весь чат виден плагину целиком, а текст зрителей недоверенный.
+	PermChatRead = "chat.read"
 )
 
 const (
-	apiVersion        = 1
+	apiVersion        = 1 // версия API плагинов по умолчанию; плагин, которому нужно больше, получает её сам (см. apiVersionNeeded)
+	apiChatRead       = 2 // версия API, с которой есть право chat.read и событие chat.message
 	eventRedemption   = "twitch.redemption"
 	eventChatCommand  = "chat.command"
+	eventChatMessage  = "chat.message"
 	eventTimer        = "timer"
 	eventHTTPResponse = "http.response"
 )
@@ -141,7 +145,17 @@ type Widget struct {
 	Height int    `json:"height,omitempty"`
 	// Settings — настройки источника на сцене: редактор рисует по ним форму, значения приходят виджету как ?key=value (oc.param).
 	Settings []WidgetSetting `json:"settings,omitempty"`
+	// Surfaces — где виджет можно показывать: SurfaceOverlay (сцена OBS), SurfaceDashboard (окно управления стримом), SurfaceDeck.
+	// Пусто — только сцена. Виджет узнаёт, где он, по info.surface из oc.ready.
+	Surfaces []string `json:"surfaces,omitempty"`
 }
+
+// Области виджета (Widget.Surfaces).
+const (
+	SurfaceOverlay   = "overlay"
+	SurfaceDashboard = "dashboard"
+	SurfaceDeck      = "deck"
+)
 
 // WidgetSetting — одна настройка виджета (как в plugin.json HTML-плагинов). Type: string, text, number, range, bool, color,
 // font, select (нужны Options). Default должен совпадать со значением по умолчанию в коде виджета.
@@ -186,6 +200,56 @@ type Redemption struct {
 	RedeemedAt  string `json:"redeemedAt"`
 }
 
+// ChatEmote — смайл в тексте сообщения: id и позиции (в символах Unicode, включительно).
+type ChatEmote struct {
+	ID    string `json:"id"`
+	Start int    `json:"start"`
+	End   int    `json:"end"`
+}
+
+// ChatPart — кусок текста сообщения: обычный текст (Text) или смайл Twitch (Emote) с готовой ссылкой на картинку (URL).
+type ChatPart struct {
+	Text  string `json:"text,omitempty"`
+	Emote string `json:"emote,omitempty"` // id смайла
+	Name  string `json:"name,omitempty"`  // как смайл написан в тексте («Kappa»)
+	URL   string `json:"url,omitempty"`
+}
+
+// ChatMessage — сообщение чата. Текст, ники и всё остальное — данные зрителей: им нельзя доверять.
+type ChatMessage struct {
+	ID            string      `json:"id"`
+	Channel       string      `json:"channel"`
+	UserID        string      `json:"userId"`
+	Login         string      `json:"login"`
+	DisplayName   string      `json:"displayName"`
+	Color         string      `json:"color"`
+	Text          string      `json:"text"`
+	Action        bool        `json:"action"` // /me
+	Badges        []string    `json:"badges"` // broadcaster, moderator, subscriber, vip, …
+	IsBroadcaster bool        `json:"isBroadcaster"`
+	IsMod         bool        `json:"isMod"`
+	IsVip         bool        `json:"isVip"`
+	IsSub         bool        `json:"isSub"`
+	FirstMsg      bool        `json:"firstMsg"`
+	Emotes        []ChatEmote `json:"emotes"`
+	Parts         []ChatPart  `json:"parts"`             // Text, нарезанный на обычные куски и смайлы со ссылками: выводите его вместо ручной нарезки по Emotes
+	ReplyTo       string      `json:"replyTo,omitempty"` // id сообщения, на которое это ответ
+	Timestamp     int64       `json:"timestamp"`         // мс
+	FromBot       bool        `json:"fromBot"`           // написано аккаунтом бота OC
+}
+
+// ChatEvent — событие чата для плагина с PermChatRead: Event — message (Message), delete (TargetID — удалённое сообщение
+// или Login — все сообщения пользователя), clear (чат очищен целиком или Login — у пользователя) или status (Connected, Error).
+type ChatEvent struct {
+	Event     string       `json:"event"`
+	Channel   string       `json:"channel,omitempty"`
+	Message   *ChatMessage `json:"message,omitempty"`
+	TargetID  string       `json:"targetId,omitempty"`
+	Login     string       `json:"login,omitempty"`
+	Connected *bool        `json:"connected,omitempty"`
+	Error     string       `json:"error,omitempty"`
+}
+
 // ChatCommand — команда зрителя в чате («!np арг1 арг2»). Приходит только для команд из Meta.Commands.
 type ChatCommand struct {
 	Command       string   `json:"command"` // «np» для «!np»: без «!», в нижнем регистре
@@ -218,6 +282,7 @@ type Plugin struct {
 	onInit   func() error
 	onRedeem func(Redemption)
 	onCmd    func(ChatCommand)
+	onChat   func(ChatEvent)
 	timers   map[string]func()
 	fetches  map[string]func(HTTPResponse)
 	config   json.RawMessage
@@ -265,6 +330,10 @@ func (p *Plugin) OnRedemption(f func(Redemption)) { p.onRedeem = f }
 // OnChatCommand принимает команды чата. Нужны Meta.Commands (какие именно), разрешение PermChatCommandRead и его выдача пользователем.
 func (p *Plugin) OnChatCommand(f func(ChatCommand)) { p.onCmd = f }
 
+// OnChatMessage принимает все события чата канала по умолчанию: сообщения, удаления, очистку и состояние связи.
+// Нужны разрешение PermChatRead и его выдача пользователем. Сообщения самого бота тоже приходят (ChatMessage.FromBot).
+func (p *Plugin) OnChatMessage(f func(ChatEvent)) { p.onChat = f }
+
 // OnTimer вызывается, когда сработал таймер с этим id (см. SetTimer). Нужно разрешение PermTimer.
 func (p *Plugin) OnTimer(id string, f func()) { p.timers[id] = f }
 
@@ -281,13 +350,29 @@ type metaOut struct {
 	Subscriptions []string `json:"subscriptions,omitempty"`
 }
 
+// apiVersionNeeded — какая версия API плагинов нужна этому плагину: хост старее отклонит его с просьбой обновить приложение.
+func (p *Plugin) apiVersionNeeded() int {
+	v := apiVersion
+	needsChat := p.onChat != nil
+	for _, perm := range p.meta.Permissions {
+		needsChat = needsChat || perm == PermChatRead
+	}
+	if needsChat && v < apiChatRead {
+		v = apiChatRead
+	}
+	return v
+}
+
 func (p *Plugin) metaJSON() []byte {
-	out := metaOut{Meta: p.meta, APIVersion: apiVersion, Routes: p.routes}
+	out := metaOut{Meta: p.meta, APIVersion: p.apiVersionNeeded(), Routes: p.routes}
 	if p.onRedeem != nil {
 		out.Subscriptions = append(out.Subscriptions, eventRedemption)
 	}
 	if p.onCmd != nil {
 		out.Subscriptions = append(out.Subscriptions, eventChatCommand)
+	}
+	if p.onChat != nil {
+		out.Subscriptions = append(out.Subscriptions, eventChatMessage)
 	}
 	b, _ := json.Marshal(out)
 	return b
@@ -362,6 +447,11 @@ func (p *Plugin) onEvent(arg []byte) {
 		var c ChatCommand
 		if p.onCmd != nil && json.Unmarshal(ev.Data, &c) == nil {
 			run(func() { p.onCmd(c) })
+		}
+	case eventChatMessage:
+		var c ChatEvent
+		if p.onChat != nil && json.Unmarshal(ev.Data, &c) == nil {
+			run(func() { p.onChat(c) })
 		}
 	case eventTimer:
 		var t struct {

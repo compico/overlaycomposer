@@ -3,6 +3,7 @@ package wasmplugins
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -195,7 +196,8 @@ func TestMetaValidate(t *testing.T) {
 		"id leading dash":  func(m *Meta) { m.ID = "-a" },
 		"name empty":       func(m *Meta) { m.Name = " " },
 		"version":          func(m *Meta) { m.Version = "1.0" },
-		"api version":      func(m *Meta) { m.APIVersion = 2 },
+		"api version":      func(m *Meta) { m.APIVersion = APIVersion + 1 },
+		"api version zero": func(m *Meta) { m.APIVersion = 0 },
 		"unknown perm":     func(m *Meta) { m.Permissions = []string{"fs"} },
 		"dup perm":         func(m *Meta) { m.Permissions = []string{PermRedeem, PermRedeem} },
 		"sub without perm": func(m *Meta) { m.Permissions = nil },
@@ -292,6 +294,25 @@ func TestMetaValidateChatCommands(t *testing.T) {
 	}
 	if !m.WantsCommand("np") || m.WantsCommand("other") {
 		t.Fatal("WantsCommand")
+	}
+}
+
+func TestMetaValidateChatMessages(t *testing.T) {
+	m := baseMeta("chat")
+	m.Subscriptions = []string{EventChatMessage}
+	if m.Validate() == nil {
+		t.Fatal("подписка chat.message без разрешения chat.read должна отклоняться")
+	}
+	m.Permissions = []string{PermChatRead}
+	if err := m.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	// Разрешение chat.read не даёт команд и не требует Commands: это разные права.
+	if m.WantsCommand("np") {
+		t.Fatal("chat.read не объявляет команд")
+	}
+	if !KnownPermission(PermChatRead) {
+		t.Fatal("chat.read должно быть известным правом")
 	}
 }
 
@@ -414,5 +435,71 @@ func TestInspectChecksWithoutRegistering(t *testing.T) {
 	}
 	if _, err := m.Inspect(nil); err == nil {
 		t.Fatal("пустой файл")
+	}
+}
+
+func TestPluginAPIVersion(t *testing.T) {
+	// Версия 1 принимается и дальше: хост совместим назад.
+	m := baseMeta("alpha")
+	m.APIVersion = 1
+	if err := m.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	// chat.read и chat.message появились в API 2: плагин с версией 1 обязан объявить 2.
+	m.Permissions = []string{PermChatRead}
+	if m.Validate() == nil {
+		t.Fatal("chat.read при apiVersion 1 должен отклоняться")
+	}
+	m.Permissions = nil
+	m.Subscriptions = []string{EventChatMessage}
+	m.Permissions = []string{PermChatRead}
+	m.APIVersion = 2
+	if err := m.Validate(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Плагин из будущего: понятная ошибка о версии API раньше «unknown permission».
+	future := baseMeta("alpha")
+	future.APIVersion = APIVersion + 1
+	future.Permissions = []string{"from.the.future"}
+	err := future.Validate()
+	var tooNew *APITooNewError
+	if !errors.As(err, &tooNew) || tooNew.Need != APIVersion+1 || tooNew.Have != APIVersion {
+		t.Fatalf("ждали APITooNewError, получили %v", err)
+	}
+	// Тот же ответ через Inspect (магазин), с оберткой из readMeta.
+	eng := &fakeEngine{mods: map[string]*fakeModule{"A1": {meta: future, handler: nopHandler}}}
+	mgr := newTestManager(t, eng, &MemState{}, t.TempDir())
+	if _, err := mgr.Inspect([]byte("A1")); !errors.As(err, &tooNew) {
+		t.Fatalf("Inspect: %v", err)
+	}
+}
+
+func TestWidgetSurfaces(t *testing.T) {
+	widget := func(surfaces ...string) Meta {
+		m := baseMeta("alpha")
+		m.Widgets = []Widget{{ID: "w", Name: "W", Entry: "index.html", Surfaces: surfaces}}
+		return m
+	}
+	// Без областей — только сцена (как до их появления); после Validate поле заполнено.
+	m := widget()
+	if err := m.Validate(); err != nil || len(m.Widgets[0].Surfaces) != 1 || m.Widgets[0].Surfaces[0] != SurfaceOverlay {
+		t.Fatalf("по умолчанию: %v %v", err, m.Widgets[0].Surfaces)
+	}
+	m = widget(SurfaceOverlay, SurfaceDashboard)
+	if err := m.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	w := m.Widgets[0]
+	if !w.HasSurface(SurfaceDashboard) || !w.HasSurface(SurfaceOverlay) || w.HasSurface(SurfaceDeck) {
+		t.Fatalf("HasSurface: %v", w.Surfaces)
+	}
+	if !(Widget{}).HasSurface(SurfaceOverlay) || (Widget{}).HasSurface(SurfaceDashboard) {
+		t.Fatal("без областей виджет только на сцене")
+	}
+	for name, bad := range map[string]Meta{"неизвестная": widget("tv"), "повтор": widget(SurfaceDeck, SurfaceDeck)} {
+		if bad.Validate() == nil {
+			t.Errorf("%s область должна отклоняться", name)
+		}
 	}
 }

@@ -7,10 +7,13 @@ import (
 	"io/fs"
 )
 
-//go:embed client/editor/index.html client/runtime/index.html sdk/oc.d.ts all:dist
+//go:embed client/editor/index.html client/runtime/index.html client/dashboard/index.html sdk/oc.d.ts all:dist
 var files embed.FS
 
 func read(name string) ([]byte, error) { return files.ReadFile(name) }
+
+// DashboardHTML — окно управления стримом по /.
+func DashboardHTML() ([]byte, error) { return read("client/dashboard/index.html") }
 
 func EditorHTML() ([]byte, error) { return read("client/editor/index.html") }
 

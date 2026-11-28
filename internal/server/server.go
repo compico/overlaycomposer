@@ -106,6 +106,7 @@ type Server struct {
 	pluginAuth func(plugin, source string) string // подмена authorizePlugin в тестах
 
 	deckMu              sync.Mutex // сохранение раскладки deck
+	dashMu              sync.Mutex // сохранение раскладки Dashboard
 	deckRate            deckBucket
 	deckObsOverride     deckOBS     // подмена OBS в тестах
 	deckPluginsOverride deckPlugins // подмена плагинов в тестах
@@ -191,6 +192,7 @@ func (s *Server) routes() {
 	s.twitchRoutes()
 	s.storageRoutes()
 	s.deckRoutes()
+	s.dashboardRoutes()
 	s.marketRoutes()
 	s.settingsRoutes()
 	s.cloudRoutes()
@@ -208,7 +210,7 @@ func (s *Server) routes() {
 
 	// 3. API и страницы
 	s.api()
-	app.Get("/", func(c fiber.Ctx) error { return c.Redirect().To("/editor") })
+	app.Get("/", s.page(web.DashboardHTML)) // окно управления стримом; редактор — /editor
 	app.Get("/editor", s.page(web.EditorHTML))
 	app.Get("/overlay", s.page(web.OverlayHTML))
 	app.Get("/dist/*", s.dist)
@@ -222,7 +224,7 @@ func (s *Server) routes() {
 // accessLog пишет в лог запросы к страницам, бандлам и /ws (с User-Agent: так видно, что это именно OBS/CEF).
 func (s *Server) accessLog(c fiber.Ctx) error {
 	p := c.Path()
-	known := p == "/overlay" || p == "/editor" || p == "/ws" || strings.HasPrefix(p, "/dist/")
+	known := p == "/" || p == "/overlay" || p == "/editor" || p == "/ws" || strings.HasPrefix(p, "/dist/")
 	err := c.Next()
 	status := c.Response().StatusCode()
 	switch {
