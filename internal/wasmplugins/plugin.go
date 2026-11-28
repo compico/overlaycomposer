@@ -65,8 +65,20 @@ type Services struct {
 	Log        *slog.Logger
 	// Events — брокер событий для events.publish; nil — публикация недоступна.
 	Events EventBus
+	// Moderate выполняет действие модерации чата от имени стримера (chat.moderate); nil — недоступно. Вызывается синхронно,
+	// с таймаутом, чтобы плагин узнал результат.
+	Moderate func(ctx context.Context, a ModerateAction) error
 	// Say пишет в чат канала стримера от имени бота (chat.send); nil — недоступно. Вызывается в отдельной горутине.
 	Say func(ctx context.Context, text, replyTo string) error
+}
+
+// ModerateAction — действие модерации: Op — "delete" (MessageID), "timeout" (UserID, Seconds 1..1209600) или "ban" (UserID).
+type ModerateAction struct {
+	Op        string
+	MessageID string
+	UserID    string
+	Seconds   int
+	Reason    string
 }
 
 // EventBus — то, что плагинам нужно от брокера событий (его реализует *events.Broker).
@@ -144,6 +156,10 @@ type Plugin struct {
 	chatMu     sync.Mutex // ограничитель chat.send
 	chatTokens float64
 	chatLast   time.Time
+
+	modMu     sync.Mutex // ограничитель chat.delete/timeout/ban
+	modTokens float64
+	modLast   time.Time
 
 	infly chan struct{}
 	http  *http.Client
@@ -498,6 +514,9 @@ func (p *Plugin) hostCall(ctx context.Context, op string, arg []byte) []byte {
 		"timer.set": PermTimer, "timer.clear": PermTimer,
 		"events.publish":           PermPublish,
 		"chat.send":                PermChat,
+		"chat.delete":              PermChatModerate,
+		"chat.timeout":             PermChatModerate,
+		"chat.ban":                 PermChatModerate,
 		"twitch.redemption.update": PermRedeem,
 	}
 	if perm, ok := need[op]; ok && !p.granted(perm) {
@@ -523,6 +542,8 @@ func (p *Plugin) hostCall(ctx context.Context, op string, arg []byte) []byte {
 		return p.opPublish(arg)
 	case "chat.send":
 		return p.opChatSend(arg)
+	case "chat.delete", "chat.timeout", "chat.ban":
+		return p.opModerate(ctx, op, arg)
 	case "http.fetch":
 		return p.opFetch(arg)
 	case "twitch.redemption.update":
@@ -684,6 +705,86 @@ func (p *Plugin) opChatSend(arg []byte) []byte {
 			p.log.Warn("chat.send: message was not sent", "err", err)
 		}
 	}()
+	return jsonOut(map[string]any{})
+}
+
+// chat.delete / chat.timeout / chat.ban: модерация от имени стримера. Хост сам выбирает канал и аккаунт, проверяет форматы
+// идентификаторов и режет частоту (всплеск modBurst, затем одно действие в modEvery), чтобы зависший виджет не завалил Twitch.
+const (
+	modBurst   = 5
+	modEvery   = time.Second
+	modTimeout = 10 * time.Second
+	modMaxSecs = 1209600 // 14 дней — предел Twitch
+	modMaxWhy  = 500
+)
+
+var modIDRe = regexp.MustCompile(`^[0-9A-Za-z_-]{1,64}$`)
+
+func (p *Plugin) modAllow(now time.Time) bool {
+	p.modMu.Lock()
+	defer p.modMu.Unlock()
+	if p.modLast.IsZero() {
+		p.modTokens = modBurst
+	} else {
+		p.modTokens += float64(now.Sub(p.modLast)) / float64(modEvery)
+		if p.modTokens > modBurst {
+			p.modTokens = modBurst
+		}
+	}
+	p.modLast = now
+	if p.modTokens < 1 {
+		return false
+	}
+	p.modTokens--
+	return true
+}
+
+func (p *Plugin) opModerate(ctx context.Context, op string, arg []byte) []byte {
+	if p.svc.Moderate == nil {
+		return errOut("twitch is not available")
+	}
+	var a struct {
+		MessageID string `json:"messageId"`
+		UserID    string `json:"userId"`
+		Seconds   int    `json:"seconds"`
+		Reason    string `json:"reason"`
+	}
+	if err := json.Unmarshal(arg, &a); err != nil {
+		return errOut("bad arguments: %v", err)
+	}
+	act := ModerateAction{Op: strings.TrimPrefix(op, "chat.")}
+	switch op {
+	case "chat.delete":
+		if !modIDRe.MatchString(a.MessageID) {
+			return errOut("messageId: message id expected")
+		}
+		act.MessageID = a.MessageID
+	case "chat.timeout", "chat.ban":
+		if !modIDRe.MatchString(a.UserID) {
+			return errOut("userId: user id expected")
+		}
+		act.UserID = a.UserID
+		if op == "chat.timeout" {
+			if a.Seconds < 1 || a.Seconds > modMaxSecs {
+				return errOut("seconds: 1..%d", modMaxSecs)
+			}
+			act.Seconds = a.Seconds
+		}
+		if utf8.RuneCountInString(a.Reason) > modMaxWhy {
+			return errOut("reason: up to %d characters", modMaxWhy)
+		}
+		act.Reason = a.Reason
+	}
+	if !p.modAllow(time.Now()) {
+		p.log.Warn("chat moderation: rate limit exceeded, action dropped", "op", op)
+		return errOut("rate limit exceeded")
+	}
+	ctx, cancel := context.WithTimeout(ctx, modTimeout)
+	defer cancel()
+	if err := p.svc.Moderate(ctx, act); err != nil {
+		p.log.Warn("chat moderation failed", "op", op, "err", err)
+		return errOut("%v", err)
+	}
 	return jsonOut(map[string]any{})
 }
 

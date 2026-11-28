@@ -24,13 +24,14 @@ import (
 // Поднимайте её на 1 в том же PR, где в API появляется новое право, событие или поле меты, и записывайте здесь, что вошло:
 //
 //	1 — всё до v2026.11.23.6 включительно;
-//	2 — право chat.read и событие chat.message, поле Widget.Surfaces (область виджета).
+//	2 — право chat.read и событие chat.message, поле Widget.Surfaces (область виджета), право chat.moderate
+//	    (операции chat.delete, chat.timeout, chat.ban).
 const APIVersion = 2
 
 // minAPI — с какой версии API доступны право или событие (нет в карте — с первой). Плагин, который их использует, обязан
 // объявить apiVersion не ниже: так более старый хост отклонит его по версии, а не по незнакомому названию.
 var (
-	permMinAPI  = map[string]int{PermChatRead: 2}
+	permMinAPI  = map[string]int{PermChatRead: 2, PermChatModerate: 2}
 	eventMinAPI = map[string]int{EventChatMessage: 2}
 )
 
@@ -51,6 +52,7 @@ const (
 	PermPublish         = "events.publish"    // публиковать события для подписчиков (виджеты, аддоны, deck)
 	PermChat            = "chat.send"         // писать в чат канала от имени бота
 	PermChatCommandRead = "chat.command.read" // получать команды чата («!np …») из Meta.Commands; весь чат плагин не видит
+	PermChatModerate    = "chat.moderate"     // удалять сообщения, давать timeout и бан в чате канала (от имени стримера)
 	PermChatRead        = "chat.read"         // получать все сообщения чата канала по умолчанию (событие chat.message)
 	maxRoutes           = 64
 	maxMetaBytes        = 64 << 10
@@ -77,7 +79,7 @@ var (
 	pathSegRe = regexp.MustCompile(`^[A-Za-z0-9._~-]+$`)
 )
 
-var knownPerms = map[string]bool{PermStorage: true, PermNetHTTP: true, PermNetLocal: true, PermRedeem: true, PermTimer: true, PermPublish: true, PermChat: true, PermChatCommandRead: true, PermChatRead: true}
+var knownPerms = map[string]bool{PermStorage: true, PermNetHTTP: true, PermNetLocal: true, PermRedeem: true, PermTimer: true, PermPublish: true, PermChat: true, PermChatCommandRead: true, PermChatRead: true, PermChatModerate: true}
 
 var knownEvents = map[string]bool{EventRedemption: true, EventChatCommand: true, EventChatMessage: true, EventTimer: true, EventHTTPResponse: true}
 

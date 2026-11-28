@@ -539,6 +539,93 @@ func TestChatSendUnavailableWithoutService(t *testing.T) {
 	}
 }
 
+func TestChatModerate(t *testing.T) {
+	meta := baseMeta("mod")
+	meta.Permissions = []string{PermChatModerate}
+	mod := &fakeModule{meta: meta, handler: func(*fakeInst, string, []byte) ([]byte, error) { return nil, nil }}
+	var got []ModerateAction
+	svc := Services{Moderate: func(_ context.Context, a ModerateAction) error { got = append(got, a); return nil }}
+	call := func(p *Plugin, op, arg string) map[string]any {
+		var m map[string]any
+		_ = json.Unmarshal(p.hostCall(context.Background(), op, []byte(arg)), &m)
+		return m
+	}
+
+	// без выданного права ничего не выполняется
+	denied := newTestPlugin(t, mod, svc)
+	if m := call(denied, "chat.ban", `{"userId":"1"}`); m["error"] == nil || len(got) != 0 {
+		t.Fatalf("без права бан не проходит: %v", m)
+	}
+
+	p := newTestPlugin(t, &fakeModule{meta: meta, handler: mod.handler}, svc, PermChatModerate)
+	if m := call(p, "chat.delete", `{"messageId":"abc-123","channel":"evil"}`); m["error"] != nil {
+		t.Fatalf("delete: %v", m)
+	}
+	if m := call(p, "chat.timeout", `{"userId":"42","seconds":600,"reason":"spam"}`); m["error"] != nil {
+		t.Fatalf("timeout: %v", m)
+	}
+	if m := call(p, "chat.ban", `{"userId":"42"}`); m["error"] != nil {
+		t.Fatalf("ban: %v", m)
+	}
+	want := []ModerateAction{{Op: "delete", MessageID: "abc-123"}, {Op: "timeout", UserID: "42", Seconds: 600, Reason: "spam"}, {Op: "ban", UserID: "42"}}
+	if len(got) != 3 || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
+		t.Fatalf("got %+v", got)
+	}
+
+	// неверные аргументы не доходят до хоста (и не тратят лимит: проверка идёт до лимитера)
+	got = nil
+	for op, args := range map[string][]string{
+		"chat.delete":  {`{}`, `{"messageId":"a b"}`, `{"messageId":"` + strings.Repeat("a", 65) + `"}`},
+		"chat.timeout": {`{"userId":"1"}`, `{"userId":"1","seconds":0}`, `{"userId":"1","seconds":1209601}`, `{"userId":"x y","seconds":60}`, `{"userId":"1","seconds":60,"reason":"` + strings.Repeat("я", 501) + `"}`},
+		"chat.ban":     {`{}`, `{"userId":"../1"}`, `nope`},
+	} {
+		for _, a := range args {
+			if m := call(p, op, a); m["error"] == nil {
+				t.Fatalf("%s %.30s должно отклоняться", op, a)
+			}
+		}
+	}
+	if len(got) != 0 {
+		t.Fatalf("неверные запросы дошли до хоста: %+v", got)
+	}
+}
+
+func TestChatModerateIsLimited(t *testing.T) {
+	meta := baseMeta("mod")
+	meta.Permissions = []string{PermChatModerate}
+	mod := &fakeModule{meta: meta, handler: func(*fakeInst, string, []byte) ([]byte, error) { return nil, nil }}
+	n := 0
+	p := newTestPlugin(t, mod, Services{Moderate: func(context.Context, ModerateAction) error { n++; return nil }}, PermChatModerate)
+	for i := 0; i < modBurst+3; i++ {
+		var m map[string]any
+		_ = json.Unmarshal(p.hostCall(context.Background(), "chat.delete", []byte(`{"messageId":"m1"}`)), &m)
+		if i >= modBurst && m["error"] != "rate limit exceeded" {
+			t.Fatalf("попытка %d должна упереться в лимит: %v", i, m)
+		}
+	}
+	if n != modBurst {
+		t.Fatalf("прошло %d, ожидалось %d", n, modBurst)
+	}
+}
+
+func TestChatModerateServiceErrorAndUnavailable(t *testing.T) {
+	meta := baseMeta("mod")
+	meta.Permissions = []string{PermChatModerate}
+	mod := &fakeModule{meta: meta, handler: func(*fakeInst, string, []byte) ([]byte, error) { return nil, nil }}
+	var m map[string]any
+	p := newTestPlugin(t, mod, Services{}, PermChatModerate)
+	_ = json.Unmarshal(p.hostCall(context.Background(), "chat.ban", []byte(`{"userId":"1"}`)), &m)
+	if m["error"] == nil {
+		t.Fatal("без сервиса модерация недоступна")
+	}
+	p2 := newTestPlugin(t, &fakeModule{meta: meta, handler: mod.handler}, Services{Moderate: func(context.Context, ModerateAction) error { return errors.New("connect it again") }}, PermChatModerate)
+	m = nil
+	_ = json.Unmarshal(p2.hostCall(context.Background(), "chat.ban", []byte(`{"userId":"1"}`)), &m)
+	if m["error"] != "connect it again" {
+		t.Fatalf("ошибка хоста должна дойти до плагина: %v", m)
+	}
+}
+
 // Subscribers — в этих тестах подписчиков нет: потоки net.local не запускаются.
 func (b *fakeBus) Subscribers(string, string) int { return 0 }
 

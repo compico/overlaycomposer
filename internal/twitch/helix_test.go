@@ -52,6 +52,10 @@ func newHelixFake(t *testing.T) *helixFake {
 				return
 			}
 			_, _ = w.Write([]byte(`{"data":[{}]}`))
+		case r.Method == "DELETE" && r.URL.Path == "/helix/moderation/chat":
+			w.WriteHeader(204)
+		case r.Method == "POST" && r.URL.Path == "/helix/moderation/bans":
+			_, _ = w.Write([]byte(`{"data":[{}]}`))
 		case r.Method == "POST" && r.URL.Path == "/helix/eventsub/subscriptions":
 			w.WriteHeader(202)
 			_, _ = w.Write([]byte(`{"data":[{}]}`))
@@ -166,5 +170,66 @@ func TestRewardsNeedScopesAndAccount(t *testing.T) {
 	}
 	if f.count() != 0 {
 		t.Fatal("без прав запросов к Twitch быть не должно")
+	}
+}
+
+func TestDeleteChatMessage(t *testing.T) {
+	m, f, _ := newRewardsManager(t, ScopeManageChatMessages)
+	if err := m.DeleteChatMessage(context.Background(), "abc-123"); err != nil {
+		t.Fatal(err)
+	}
+	c := f.last()
+	if c.Method != "DELETE" || c.Path != "/helix/moderation/chat" || c.Auth != "Bearer tok" {
+		t.Fatalf("%+v", c)
+	}
+	for _, want := range []string{"broadcaster_id=42", "moderator_id=42", "message_id=abc-123"} {
+		if !strings.Contains(c.Query, want) {
+			t.Fatalf("в запросе нет %s: %s", want, c.Query)
+		}
+	}
+	if err := m.DeleteChatMessage(context.Background(), "../x"); !errors.Is(err, ErrInvalidModeration) {
+		t.Fatalf("плохой id принят: %v", err)
+	}
+}
+
+func TestBanAndTimeout(t *testing.T) {
+	m, f, _ := newRewardsManager(t, ScopeManageBans)
+	ctx := context.Background()
+	if err := m.Ban(ctx, "777", 600, "spam"); err != nil {
+		t.Fatal(err)
+	}
+	c := f.last()
+	data, _ := c.Body["data"].(map[string]any)
+	if c.Method != "POST" || c.Path != "/helix/moderation/bans" || data["user_id"] != "777" || data["duration"] != float64(600) || data["reason"] != "spam" || !strings.Contains(c.Query, "moderator_id=42") {
+		t.Fatalf("timeout: %+v", c)
+	}
+	if err := m.Ban(ctx, "777", 0, ""); err != nil {
+		t.Fatal(err)
+	}
+	data, _ = f.last().Body["data"].(map[string]any)
+	if _, has := data["duration"]; has || data["user_id"] != "777" {
+		t.Fatalf("бан не должен нести duration: %+v", data)
+	}
+	n := f.count()
+	for _, bad := range []struct {
+		id  string
+		sec int
+	}{{"", 0}, {"a b", 0}, {"777", -1}, {"777", maxTimeoutSeconds + 1}} {
+		if err := m.Ban(ctx, bad.id, bad.sec, ""); !errors.Is(err, ErrInvalidModeration) {
+			t.Fatalf("%+v принято: %v", bad, err)
+		}
+	}
+	if f.count() != n {
+		t.Fatal("неверные запросы дошли до Twitch")
+	}
+}
+
+func TestModerationNeedsScopes(t *testing.T) {
+	m, f, _ := newRewardsManager(t) // только права на награды: старое подключение
+	if err := m.DeleteChatMessage(context.Background(), "abc"); !errors.Is(err, ErrNeedScopes) {
+		t.Fatalf("ожидалась ErrNeedScopes: %v", err)
+	}
+	if err := m.Ban(context.Background(), "777", 0, ""); !errors.Is(err, ErrNeedScopes) || f.count() != 0 {
+		t.Fatalf("ожидалась ErrNeedScopes без обращения к Twitch: %v", err)
 	}
 }

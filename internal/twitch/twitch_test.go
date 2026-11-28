@@ -55,7 +55,7 @@ func newFake(t *testing.T) *fake {
 				w.Write([]byte(`{"status":400,"message":"Invalid authorization code"}`))
 				return
 			}
-			w.Write([]byte(`{"access_token":"acc1","refresh_token":"ref1","expires_in":14000,"scope":["chat:read","chat:edit","channel:read:redemptions","channel:manage:redemptions"],"token_type":"bearer"}`))
+			w.Write([]byte(`{"access_token":"acc1","refresh_token":"ref1","expires_in":14000,"scope":["chat:read","chat:edit","channel:read:redemptions","channel:manage:redemptions","moderator:manage:chat_messages","moderator:manage:banned_users"],"token_type":"bearer"}`))
 		case "refresh_token":
 			f.refreshes.Add(1)
 			if f.failRef.Load() || r.Form.Get("refresh_token") == "" {
@@ -73,7 +73,7 @@ func newFake(t *testing.T) *fake {
 			w.WriteHeader(401)
 			return
 		}
-		w.Write([]byte(`{"client_id":"cid","login":"somestreamer","scopes":["chat:read","chat:edit","channel:read:redemptions","channel:manage:redemptions"],"user_id":"42","expires_in":14000}`))
+		w.Write([]byte(`{"client_id":"cid","login":"somestreamer","scopes":["chat:read","chat:edit","channel:read:redemptions","channel:manage:redemptions","moderator:manage:chat_messages","moderator:manage:banned_users"],"user_id":"42","expires_in":14000}`))
 	})
 	mux.HandleFunc("/oauth2/revoke", func(w http.ResponseWriter, r *http.Request) { f.revoked.Add(1) })
 	f.srv = httptest.NewServer(mux)

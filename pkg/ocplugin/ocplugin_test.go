@@ -395,6 +395,28 @@ func TestChatMessageEvent(t *testing.T) {
 	}
 }
 
+func TestModerationCalls(t *testing.T) {
+	f := useFakeHost(t)
+	if err := DeleteMessage("m1"); err != nil {
+		t.Fatal(err)
+	}
+	if c := f.last("chat.delete"); c.Arg["messageId"] != "m1" {
+		t.Fatalf("chat.delete: %+v", c)
+	}
+	if err := Timeout("42", 600, "spam"); err != nil {
+		t.Fatal(err)
+	}
+	if c := f.last("chat.timeout"); c.Arg["userId"] != "42" || c.Arg["seconds"] != float64(600) || c.Arg["reason"] != "spam" {
+		t.Fatalf("chat.timeout: %+v", c)
+	}
+	if err := Ban("42", ""); err != nil {
+		t.Fatal(err)
+	}
+	if c := f.last("chat.ban"); c.Arg["userId"] != "42" {
+		t.Fatalf("chat.ban: %+v", c)
+	}
+}
+
 func TestSayReply(t *testing.T) {
 	f := useFakeHost(t)
 	if err := SayReply("m1", "привет"); err != nil {
@@ -424,6 +446,11 @@ func TestAPIVersionNeeded(t *testing.T) {
 	chat.OnChatMessage(func(ChatEvent) {})
 	if v := apiOf(chat); v != 2 {
 		t.Fatalf("чтение чата — API 2, получили %d", v)
+	}
+	current = nil
+	mod := New(Meta{ID: "mod", Name: "M", Version: "0.1.0", Permissions: []string{PermChatModerate}})
+	if v := apiOf(mod); v != 2 {
+		t.Fatalf("модерация чата — API 2, получили %d", v)
 	}
 	current = nil
 }
